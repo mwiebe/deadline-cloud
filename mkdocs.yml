@@ -63,7 +63,8 @@ nav:
       - "progress_tracker": code_reference/job_attachments_progress_tracker.md
       - "upload": code_reference/job_attachments_upload.md
       - "vfs": code_reference/job_attachments_vfs.md
-  - Job Attachments Guide: job_attachments_guide.md
+  - Job Attachments Guide (draft): job_attachments_guide.md
+  - Job Attachments Guide (deprecated): job_attachments_guide_deprecated.md
   - MCP Guide: mcp_guide.md
 
 plugins:
