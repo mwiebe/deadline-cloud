@@ -31,9 +31,11 @@ class ManifestModelRegistry:
         """
         # Import here to avoid circular dependancies.
         from .v2023_03_03 import ManifestModel as _ManifestModel2023_03_03
+        from .v2025_12_04 import ManifestModel as _ManifestModel2025_12_04
 
         new_manifests = {
             ManifestVersion.v2023_03_03: _ManifestModel2023_03_03,
+            ManifestVersion.v2025_12_04: _ManifestModel2025_12_04,
         }
         cls._asset_manifest_mapping = {**cls._asset_manifest_mapping, **new_manifests}
 

@@ -13,6 +13,7 @@ from .base_manifest import BaseAssetManifest
 from .manifest_model import ManifestModelRegistry
 from .versions import ManifestVersion
 from .v2023_03_03.validate import validate_manifest_2023_03_03
+from .v2025_12_04.validate import validate_manifest_2025_12_04
 
 alphanum_regex = re.compile("[a-zA-Z0-9]+")
 
@@ -26,6 +27,8 @@ def validate_manifest(
     """
     if version == ManifestVersion.v2023_03_03:
         return validate_manifest_2023_03_03(manifest)
+    elif version == ManifestVersion.v2025_12_04:
+        return validate_manifest_2025_12_04(manifest)
     else:
         return False, f"Version {version} is not supported"
 
