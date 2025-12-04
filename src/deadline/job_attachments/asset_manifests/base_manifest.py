@@ -33,6 +33,10 @@ class BaseManifestDirectoryPath(ABC):
         return fields(self) == fields(other)
 
 
+# 256MB chunk size (256 * 2^20 bytes)
+CHUNK_SIZE_BYTES = 256 * 1024 * 1024
+
+
 @dataclass
 class BaseManifestPath(ABC):
     """
@@ -40,19 +44,25 @@ class BaseManifestPath(ABC):
 
     Fields:
         path: Relative file path within the manifest.
-        hash: File content hash (None for symlinks or chunked files).
-        size: File size in bytes.
-        mtime: Modification time as Unix timestamp.
+        hash: File content hash (None for symlinks, chunked files, or deleted entries).
+        size: File size in bytes (None for deleted entries).
+        mtime: Modification time as Unix timestamp (None for deleted entries).
         runnable: POSIX execute bit (v2025_12_04+).
         chunkhashes: List of chunk hashes for files > 256MB (v2025_12_04+).
         symlink_target: Target path for symlinks (v2025_12_04+).
         deleted: Deletion marker for diff manifests (v2025_12_04+).
+
+    Validation rules (v2025_12_04+):
+        - If deleted is True, only path may be set; all other fields must be None/False.
+        - Otherwise, exactly one of hash, chunkhashes, or symlink_target must be provided.
+        - If chunkhashes is provided, size must be > 256MB and len(chunkhashes) must match
+          ceil(size / CHUNK_SIZE).
     """
 
     path: str
     hash: Optional[str]
-    size: int
-    mtime: int
+    size: Optional[int]
+    mtime: Optional[int]
     runnable: bool
     chunkhashes: Optional[list[str]]
     symlink_target: Optional[str]
@@ -64,8 +74,8 @@ class BaseManifestPath(ABC):
         *,
         path: str,
         hash: Optional[str] = None,
-        size: int,
-        mtime: int,
+        size: Optional[int] = None,
+        mtime: Optional[int] = None,
         runnable: bool = False,
         chunkhashes: Optional[list[str]] = None,
         symlink_target: Optional[str] = None,
