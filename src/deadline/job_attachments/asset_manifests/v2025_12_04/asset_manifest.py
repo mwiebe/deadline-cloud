@@ -73,7 +73,7 @@ class AssetManifest(BaseAssetManifest):
         *,
         hash_alg: HashAlgorithm,
         dirs: list[BaseManifestDirectoryPath],
-        files: list[BaseManifestPath],
+        paths: list[BaseManifestPath],
         total_size: int,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
         parent_manifest_hash: Optional[str] = None,
@@ -88,7 +88,7 @@ class AssetManifest(BaseAssetManifest):
             hash_alg=hash_alg,
             manifest_type=manifest_type,
             dirs=dirs,
-            files=files,
+            paths=paths,
             parent_manifest_hash=parent_manifest_hash,
         )
         self.totalSize = total_size
@@ -122,7 +122,7 @@ class AssetManifest(BaseAssetManifest):
         ]
 
         # Decode files
-        files = [
+        paths = [
             ManifestFilePath(
                 path=f["name"],
                 hash=f.get("hash"),
@@ -139,7 +139,7 @@ class AssetManifest(BaseAssetManifest):
         return cls(
             hash_alg=hash_alg,
             dirs=dirs,
-            files=files,
+            paths=paths,
             total_size=manifest_data["totalSize"],
             manifest_type=manifest_type,
             parent_manifest_hash=parent_hash,
