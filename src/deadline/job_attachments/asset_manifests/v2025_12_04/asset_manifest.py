@@ -1,6 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-"""Module that defines the v2025-12-04 version of the asset manifest"""
+"""
+EXPERIMENTAL: Module that defines the v2025-12-04-beta version of the asset manifest.
+
+This format is under development and subject to change. Do not use in production.
+"""
 
 from __future__ import annotations
 
@@ -25,10 +29,10 @@ DEFAULT_HASH_ALG: HashAlgorithm = HashAlgorithm.XXH128
 @dataclass
 class ManifestDirectoryPath(BaseManifestDirectoryPath):
     """
-    Directory entry for version v2025-12-04 of the asset manifest.
+    EXPERIMENTAL: Directory entry for version v2025-12-04-beta of the asset manifest.
     """
 
-    manifest_version = ManifestVersion.v2025_12_04
+    manifest_version = ManifestVersion.v2025_12_04_beta
 
     def __init__(self, *, path: str, deleted: bool = False) -> None:
         super().__init__(path=path, deleted=deleted)
@@ -37,11 +41,11 @@ class ManifestDirectoryPath(BaseManifestDirectoryPath):
 @dataclass
 class ManifestFilePath(BaseManifestPath):
     """
-    File entry for version v2025-12-04 of the asset manifest.
+    EXPERIMENTAL: File entry for version v2025-12-04-beta of the asset manifest.
     Validation is performed in the base class.
     """
 
-    manifest_version = ManifestVersion.v2025_12_04
+    manifest_version = ManifestVersion.v2025_12_04_beta
 
     def __init__(
         self,
@@ -69,7 +73,7 @@ class ManifestFilePath(BaseManifestPath):
 
 @dataclass
 class AssetManifest(BaseAssetManifest):
-    """Version v2025-12-04 of the asset manifest"""
+    """EXPERIMENTAL: Version v2025-12-04-beta of the asset manifest."""
 
     totalSize: int
 
@@ -97,7 +101,7 @@ class AssetManifest(BaseAssetManifest):
             parent_manifest_hash=parent_manifest_hash,
         )
         self.totalSize = total_size
-        self.manifestVersion = ManifestVersion.v2025_12_04
+        self.manifestVersion = ManifestVersion.v2025_12_04_beta
 
     @classmethod
     def decode(cls, *, manifest_data: dict[str, Any]) -> AssetManifest:
@@ -165,10 +169,10 @@ class AssetManifest(BaseAssetManifest):
 
 class ManifestModel(BaseManifestModel):
     """
-    The asset manifest model for v2025-12-04
+    EXPERIMENTAL: The asset manifest model for v2025-12-04-beta.
     """
 
-    manifest_version: ManifestVersion = ManifestVersion.v2025_12_04
+    manifest_version: ManifestVersion = ManifestVersion.v2025_12_04_beta
     AssetManifest: Type[AssetManifest] = AssetManifest
     FilePath: Type[ManifestFilePath] = ManifestFilePath
     DirectoryPath: Type[ManifestDirectoryPath] = ManifestDirectoryPath

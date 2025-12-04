@@ -35,7 +35,7 @@ class ManifestModelRegistry:
 
         new_manifests = {
             ManifestVersion.v2023_03_03: _ManifestModel2023_03_03,
-            ManifestVersion.v2025_12_04: _ManifestModel2025_12_04,
+            ManifestVersion.v2025_12_04_beta: _ManifestModel2025_12_04,
         }
         cls._asset_manifest_mapping = {**cls._asset_manifest_mapping, **new_manifests}
 

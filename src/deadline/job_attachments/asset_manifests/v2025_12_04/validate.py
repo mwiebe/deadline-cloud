@@ -1,6 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-"""Contains functions validating Asset Manifests version 2025_12_04."""
+"""
+EXPERIMENTAL: Contains functions validating Asset Manifests version 2025-12-04-beta.
+
+This format is under development and subject to change. Do not use in production.
+"""
 
 from __future__ import annotations
 
