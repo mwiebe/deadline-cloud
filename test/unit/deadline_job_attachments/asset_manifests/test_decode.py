@@ -95,7 +95,7 @@ def test_decode_manifest_version_not_supported():
     with pytest.raises(
         ManifestDecodeValidationError,
         match=re.escape(
-            "Unknown manifest version: 1900-06-06 (Currently supported Manifest versions: 2023-03-03)"
+            "Unknown manifest version: 1900-06-06 (Currently supported Manifest versions: 2023-03-03, 2025-12-04)"
         ),
     ):
         decode.decode_manifest('{"manifestVersion": "1900-06-06"}')

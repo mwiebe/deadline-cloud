@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Type
 
-from .._canonical_json import canonical_path_comparator, manifest_to_canonical_json_string
+from .._canonical_json import canonical_path_comparator
 from ..base_manifest import BaseAssetManifest, BaseManifestPath
 from ..hash_algorithms import HashAlgorithm
 from ..manifest_model import BaseManifestModel
@@ -29,6 +30,15 @@ class ManifestPath(BaseManifestPath):
 
     def __init__(self, *, path: str, hash: str, size: int, mtime: int) -> None:
         super().__init__(path=path, hash=hash, size=size, mtime=mtime)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to v2023-03-03 format dict (only path, hash, size, mtime)."""
+        return {
+            "hash": self.hash,
+            "mtime": self.mtime,
+            "path": self.path,
+            "size": self.size,
+        }
 
 
 @dataclass
@@ -80,10 +90,25 @@ class AssetManifest(BaseAssetManifest):
 
     def encode(self) -> str:
         """
-        Return a canonicalized JSON string of the manifest
+        Return a canonicalized JSON string of the manifest.
+        Only includes v2023-03-03 fields: hashAlg, manifestVersion, paths, totalSize.
         """
         self.paths.sort(key=canonical_path_comparator)
-        return manifest_to_canonical_json_string(manifest=self)
+        manifest_dict = {
+            "hashAlg": self.hashAlg.value,
+            "manifestVersion": self.manifestVersion.value,
+            "paths": [
+                p.to_dict() if hasattr(p, "to_dict") else {
+                    "hash": p.hash,
+                    "mtime": p.mtime,
+                    "path": p.path,
+                    "size": p.size,
+                }
+                for p in self.paths
+            ],
+            "totalSize": self.totalSize,
+        }
+        return json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 class ManifestModel(BaseManifestModel):
