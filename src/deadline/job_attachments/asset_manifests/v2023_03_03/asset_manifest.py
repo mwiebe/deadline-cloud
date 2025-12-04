@@ -97,15 +97,7 @@ class AssetManifest(BaseAssetManifest):
         manifest_dict = {
             "hashAlg": self.hashAlg.value,
             "manifestVersion": self.manifestVersion.value,
-            "paths": [
-                p.to_dict() if hasattr(p, "to_dict") else {
-                    "hash": p.hash,
-                    "mtime": p.mtime,
-                    "path": p.path,
-                    "size": p.size,
-                }
-                for p in self.paths
-            ],
+            "paths": [p.to_dict() for p in self.paths],
             "totalSize": self.totalSize,
         }
         return json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
