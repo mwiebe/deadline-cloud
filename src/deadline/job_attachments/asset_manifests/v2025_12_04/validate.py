@@ -113,8 +113,8 @@ def validate_manifest_2025_12_04(manifest: dict[str, Any]) -> Tuple[bool, Option
         return False, f"manifest is missing required field(s) {missing}"
 
     manifest_version = manifest["manifestVersion"]
-    if not isinstance(manifest_version, str) or manifest_version != "2025-12-04":
-        return False, 'manifestVersion must be "2025-12-04"'
+    if not isinstance(manifest_version, str) or manifest_version != "2025-12-04-beta":
+        return False, 'manifestVersion must be "2025-12-04-beta"'
 
     hash_alg = manifest["hashAlg"]
     if not isinstance(hash_alg, str) or hash_alg not in _HASH_ALGS_2025_12_04:

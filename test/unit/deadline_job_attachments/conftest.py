@@ -242,6 +242,15 @@ def default_manifest_str_v2023_03_03() -> str:
 
 
 @pytest.fixture
+def default_manifest_str_v2025_12_04_beta() -> str:
+    manifest_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "data", "manifest_v2025_12_04_beta.json")
+    )
+    with open(manifest_file) as f:
+        return f.read()
+
+
+@pytest.fixture
 def farm_id():
     return "farm-1234567890abcdefghijklmnopqrstuv"
 

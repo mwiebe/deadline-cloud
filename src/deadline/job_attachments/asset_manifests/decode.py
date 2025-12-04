@@ -67,9 +67,17 @@ def decode_manifest(manifest: str) -> BaseAssetManifest:
 
     # Validate hashes are alphanumeric
     for path in decoded_manifest.paths:
-        if alphanum_regex.fullmatch(path.hash) is None:
+        # Skip validation for entries without hash (symlinks, chunked files, deleted)
+        if path.hash is not None and alphanum_regex.fullmatch(path.hash) is None:
             raise ManifestDecodeValidationError(
                 f"The hash {path.hash} for path {path.path} is not alphanumeric"
             )
+        # Also validate chunkhashes if present
+        if path.chunkhashes is not None:
+            for chunk_hash in path.chunkhashes:
+                if alphanum_regex.fullmatch(chunk_hash) is None:
+                    raise ManifestDecodeValidationError(
+                        f"The chunk hash {chunk_hash} for path {path.path} is not alphanumeric"
+                    )
 
     return decoded_manifest
