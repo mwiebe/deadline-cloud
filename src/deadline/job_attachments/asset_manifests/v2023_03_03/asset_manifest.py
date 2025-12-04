@@ -24,12 +24,14 @@ DEFAULT_HASH_ALG: HashAlgorithm = HashAlgorithm.XXH128
 class ManifestPath(BaseManifestPath):
     """
     Extension for version v2023-03-03 of the asset manifest.
+    Validation is disabled as v2023_03_03 only uses hash (not chunkhashes/symlinks).
     """
 
     manifest_version = ManifestVersion.v2023_03_03
 
     def __init__(self, *, path: str, hash: str, size: int, mtime: int) -> None:
-        super().__init__(path=path, hash=hash, size=size, mtime=mtime)
+        # Disable validation for v2023_03_03 - it only uses hash, not the new fields
+        super().__init__(path=path, hash=hash, size=size, mtime=mtime, validate=False)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to v2023-03-03 format dict (only path, hash, size, mtime)."""

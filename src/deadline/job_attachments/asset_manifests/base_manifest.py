@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from typing import Any, ClassVar, Optional
 
 from .hash_algorithms import HashAlgorithm
 from .versions import ManifestType, ManifestVersion
+from ..exceptions import ManifestDecodeValidationError
 
 
 @dataclass
@@ -80,6 +82,7 @@ class BaseManifestPath(ABC):
         chunkhashes: Optional[list[str]] = None,
         symlink_target: Optional[str] = None,
         deleted: bool = False,
+        validate: bool = True,
     ) -> None:
         self.path = path
         self.hash = hash
@@ -89,6 +92,79 @@ class BaseManifestPath(ABC):
         self.chunkhashes = chunkhashes
         self.symlink_target = symlink_target
         self.deleted = deleted
+
+        if validate:
+            self._validate()
+
+    def _validate(self) -> None:
+        """Validate the manifest path entry according to format rules."""
+        if self.deleted:
+            # Deleted entries can only have path set
+            if self.hash is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{self.path}' cannot have 'hash' field"
+                )
+            if self.chunkhashes is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{self.path}' cannot have 'chunkhashes' field"
+                )
+            if self.symlink_target is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{self.path}' cannot have 'symlink_target' field"
+                )
+            if self.runnable:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{self.path}' cannot have 'runnable' set to True"
+                )
+            if self.size is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{self.path}' cannot have 'size' field"
+                )
+            if self.mtime is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{self.path}' cannot have 'mtime' field"
+                )
+        else:
+            # Non-deleted entries must have exactly one of hash, chunkhashes, or symlink_target
+            content_fields = [
+                self.hash is not None,
+                self.chunkhashes is not None,
+                self.symlink_target is not None,
+            ]
+            if sum(content_fields) != 1:
+                raise ManifestDecodeValidationError(
+                    f"File '{self.path}' must have exactly one of 'hash', 'chunkhashes', "
+                    f"or 'symlink_target'"
+                )
+
+            # Symlinks don't need size/mtime, but regular files do
+            if self.symlink_target is None:
+                if self.size is None:
+                    raise ManifestDecodeValidationError(
+                        f"File '{self.path}' must have 'size' field"
+                    )
+                if self.mtime is None:
+                    raise ManifestDecodeValidationError(
+                        f"File '{self.path}' must have 'mtime' field"
+                    )
+
+            # Validate chunkhashes relationship with size
+            if self.chunkhashes is not None:
+                if self.size is None:
+                    raise ManifestDecodeValidationError(
+                        f"File '{self.path}' with chunkhashes must have 'size' field"
+                    )
+                if self.size <= CHUNK_SIZE_BYTES:
+                    raise ManifestDecodeValidationError(
+                        f"File '{self.path}' with chunkhashes must have size > {CHUNK_SIZE_BYTES} "
+                        f"(256MB), got {self.size}"
+                    )
+                expected_chunks = math.ceil(self.size / CHUNK_SIZE_BYTES)
+                if len(self.chunkhashes) != expected_chunks:
+                    raise ManifestDecodeValidationError(
+                        f"File '{self.path}' with size {self.size} should have {expected_chunks} "
+                        f"chunks, got {len(self.chunkhashes)}"
+                    )
 
     def __eq__(self, other: object) -> bool:
         """
