@@ -19,6 +19,13 @@ from deadline.job_attachments.asset_manifests.v2023_03_03 import (
     AssetManifest as AssetManifest_v2023_03_03,
 )
 from deadline.job_attachments.asset_manifests.v2023_03_03 import ManifestPath as Path_v2023_03_03
+from deadline.job_attachments.asset_manifests.v2025_12_04 import (
+    AssetManifest as AssetManifest_v2025_12_04,
+)
+from deadline.job_attachments.asset_manifests.v2025_12_04 import (
+    ManifestDirectoryPath as DirPath_v2025_12_04,
+    ManifestFilePath as FilePath_v2025_12_04,
+)
 from deadline.job_attachments.exceptions import ManifestDecodeValidationError
 
 
@@ -29,9 +36,14 @@ class ManifestParam:
 
 
 @pytest.fixture
-def manifest_params(default_manifest_str_v2023_03_03: str) -> list[ManifestParam]:
+def manifest_params(
+    default_manifest_str_v2023_03_03: str, default_manifest_str_v2025_12_04_beta: str
+) -> list[ManifestParam]:
     return [
         ManifestParam(default_manifest_str_v2023_03_03, versions.ManifestVersion.v2023_03_03),
+        ManifestParam(
+            default_manifest_str_v2025_12_04_beta, versions.ManifestVersion.v2025_12_04_beta
+        ),
     ]
 
 
@@ -86,6 +98,37 @@ def test_decode_manifest_v2023_03_03(default_manifest_str_v2023_03_03: str):
         ],
     )
     assert decode.decode_manifest(default_manifest_str_v2023_03_03) == expected_manifest
+
+
+def test_decode_manifest_v2025_12_04_beta(default_manifest_str_v2025_12_04_beta: str):
+    """
+    Test that a v2025-12-04-beta manifest string decodes to an AssetManifest object as expected.
+    """
+    manifest = decode.decode_manifest(default_manifest_str_v2025_12_04_beta)
+
+    # Verify it's the correct type
+    assert isinstance(manifest, AssetManifest_v2025_12_04)
+    assert manifest.hashAlg == HashAlgorithm.XXH128
+    assert manifest.totalSize == 536932693
+
+    # Verify directories
+    assert len(manifest.dirs) == 4
+
+    # Verify files - should have 6 files including chunked and symlink
+    assert len(manifest.paths) == 6
+
+    # Find the chunked file (512MB + 1 byte = 3 chunks)
+    chunked_file = next((f for f in manifest.paths if f.chunkhashes is not None), None)
+    assert chunked_file is not None
+    assert len(chunked_file.chunkhashes) == 3
+
+    # Find the symlink
+    symlink_file = next((f for f in manifest.paths if f.symlink_target is not None), None)
+    assert symlink_file is not None
+
+    # Find the runnable file
+    runnable_file = next((f for f in manifest.paths if f.runnable), None)
+    assert runnable_file is not None
 
 
 def test_decode_manifest_version_not_supported():
