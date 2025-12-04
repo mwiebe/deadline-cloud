@@ -7,7 +7,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Type
 
-from ..base_manifest import BaseAssetManifest, BaseManifestDirectoryPath, BaseManifestPath
+import math
+
+from ..base_manifest import (
+    CHUNK_SIZE_BYTES,
+    BaseAssetManifest,
+    BaseManifestDirectoryPath,
+    BaseManifestPath,
+)
 from ..hash_algorithms import HashAlgorithm
 from ..manifest_model import BaseManifestModel
 from ..versions import ManifestType, ManifestVersion
@@ -34,6 +41,12 @@ class ManifestDirectoryPath(BaseManifestDirectoryPath):
 class ManifestFilePath(BaseManifestPath):
     """
     File entry for version v2025-12-04 of the asset manifest.
+
+    Validation rules:
+        - If deleted is True, only path may be set; all other fields must be None/False.
+        - Otherwise, exactly one of hash, chunkhashes, or symlink_target must be provided.
+        - If chunkhashes is provided, size must be > 256MB and len(chunkhashes) must match
+          ceil(size / CHUNK_SIZE).
     """
 
     manifest_version = ManifestVersion.v2025_12_04
@@ -43,13 +56,82 @@ class ManifestFilePath(BaseManifestPath):
         *,
         path: str,
         hash: Optional[str] = None,
-        size: int,
-        mtime: int,
+        size: Optional[int] = None,
+        mtime: Optional[int] = None,
         runnable: bool = False,
         chunkhashes: Optional[list[str]] = None,
         symlink_target: Optional[str] = None,
         deleted: bool = False,
     ) -> None:
+        # Validate based on deleted status
+        if deleted:
+            # Deleted entries can only have path set
+            if hash is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{path}' cannot have 'hash' field"
+                )
+            if chunkhashes is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{path}' cannot have 'chunkhashes' field"
+                )
+            if symlink_target is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{path}' cannot have 'symlink_target' field"
+                )
+            if runnable:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{path}' cannot have 'runnable' set to True"
+                )
+            if size is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{path}' cannot have 'size' field"
+                )
+            if mtime is not None:
+                raise ManifestDecodeValidationError(
+                    f"Deleted file '{path}' cannot have 'mtime' field"
+                )
+        else:
+            # Non-deleted entries must have exactly one of hash, chunkhashes, or symlink_target
+            content_fields = [
+                hash is not None,
+                chunkhashes is not None,
+                symlink_target is not None,
+            ]
+            if sum(content_fields) != 1:
+                raise ManifestDecodeValidationError(
+                    f"File '{path}' must have exactly one of 'hash', 'chunkhashes', "
+                    f"or 'symlink_target'"
+                )
+
+            # Symlinks don't need size/mtime, but regular files do
+            if symlink_target is None:
+                if size is None:
+                    raise ManifestDecodeValidationError(
+                        f"File '{path}' must have 'size' field"
+                    )
+                if mtime is None:
+                    raise ManifestDecodeValidationError(
+                        f"File '{path}' must have 'mtime' field"
+                    )
+
+            # Validate chunkhashes relationship with size
+            if chunkhashes is not None:
+                if size is None:
+                    raise ManifestDecodeValidationError(
+                        f"File '{path}' with chunkhashes must have 'size' field"
+                    )
+                if size <= CHUNK_SIZE_BYTES:
+                    raise ManifestDecodeValidationError(
+                        f"File '{path}' with chunkhashes must have size > {CHUNK_SIZE_BYTES} "
+                        f"(256MB), got {size}"
+                    )
+                expected_chunks = math.ceil(size / CHUNK_SIZE_BYTES)
+                if len(chunkhashes) != expected_chunks:
+                    raise ManifestDecodeValidationError(
+                        f"File '{path}' with size {size} should have {expected_chunks} chunks, "
+                        f"got {len(chunkhashes)}"
+                    )
+
         super().__init__(
             path=path,
             hash=hash,
@@ -126,8 +208,8 @@ class AssetManifest(BaseAssetManifest):
             ManifestFilePath(
                 path=f["name"],
                 hash=f.get("hash"),
-                size=f.get("size", 0),
-                mtime=f.get("mtime", 0),
+                size=f.get("size"),
+                mtime=f.get("mtime"),
                 runnable=f.get("runnable", False),
                 chunkhashes=f.get("chunkhashes"),
                 symlink_target=f.get("symlink", {}).get("name") if "symlink" in f else None,
