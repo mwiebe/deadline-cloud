@@ -27,7 +27,7 @@ def validate_manifest(
     """
     if version == ManifestVersion.v2023_03_03:
         return validate_manifest_2023_03_03(manifest)
-    elif version == ManifestVersion.v2025_12_04:
+    elif version == ManifestVersion.v2025_12_04_beta:
         return validate_manifest_2025_12_04(manifest)
     else:
         return False, f"Version {version} is not supported"
