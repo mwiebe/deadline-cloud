@@ -13,7 +13,7 @@ from .versions import ManifestType, ManifestVersion
 
 
 @dataclass
-class BaseManifestDirectory(ABC):
+class BaseManifestDirectoryPath(ABC):
     """
     Data class for directories in the Asset Manifest.
     Supports empty directories and directory deletion markers (for diff manifests).
@@ -28,7 +28,7 @@ class BaseManifestDirectory(ABC):
         self.deleted = deleted
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, BaseManifestDirectory):
+        if not isinstance(other, BaseManifestDirectoryPath):
             return NotImplemented
         return fields(self) == fields(other)
 
@@ -116,7 +116,7 @@ class BaseAssetManifest(ABC):
     paths: list[BaseManifestPath]
     # v2025_12_04+ fields
     manifestType: ManifestType
-    dirs: list[BaseManifestDirectory]
+    dirs: list[BaseManifestDirectoryPath]
     files: list[BaseManifestPath]
     parentManifestHash: Optional[str]
 
@@ -126,7 +126,7 @@ class BaseAssetManifest(ABC):
         hash_alg: HashAlgorithm,
         paths: Optional[list[BaseManifestPath]] = None,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
-        dirs: Optional[list[BaseManifestDirectory]] = None,
+        dirs: Optional[list[BaseManifestDirectoryPath]] = None,
         files: Optional[list[BaseManifestPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ):
