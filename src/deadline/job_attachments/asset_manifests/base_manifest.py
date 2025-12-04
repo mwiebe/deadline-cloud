@@ -82,7 +82,6 @@ class BaseManifestPath(ABC):
         chunkhashes: Optional[list[str]] = None,
         symlink_target: Optional[str] = None,
         deleted: bool = False,
-        validate: bool = True,
     ) -> None:
         self.path = path
         self.hash = hash
@@ -93,8 +92,7 @@ class BaseManifestPath(ABC):
         self.symlink_target = symlink_target
         self.deleted = deleted
 
-        if validate:
-            self._validate()
+        self._validate()
 
     def _validate(self) -> None:
         """Validate the manifest path entry according to format rules."""
