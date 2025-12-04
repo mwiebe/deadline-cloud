@@ -103,21 +103,18 @@ class BaseAssetManifest(ABC):
     Fields:
         hashAlg: Hashing algorithm used for file content hashes.
         manifestVersion: Version of the manifest format.
+        paths: List of file entries.
         manifestType: Whether this is a snapshot or diff manifest (v2025_12_04+).
-        paths: List of file entries (v2023_03_03 compatibility).
         dirs: List of directory entries (v2025_12_04+).
-        files: List of file entries (v2025_12_04+, replaces paths).
         parentManifestHash: Hash of parent snapshot for diff manifests (v2025_12_04+).
     """
 
     hashAlg: HashAlgorithm
     manifestVersion: ManifestVersion
-    # v2023_03_03 compatibility
     paths: list[BaseManifestPath]
     # v2025_12_04+ fields
     manifestType: ManifestType
     dirs: list[BaseManifestDirectoryPath]
-    files: list[BaseManifestPath]
     parentManifestHash: Optional[str]
 
     def __init__(
@@ -127,17 +124,13 @@ class BaseAssetManifest(ABC):
         paths: Optional[list[BaseManifestPath]] = None,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
         dirs: Optional[list[BaseManifestDirectoryPath]] = None,
-        files: Optional[list[BaseManifestPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ):
         self.hashAlg = hash_alg
         self.manifestType = manifest_type
         self.dirs = dirs if dirs is not None else []
-        self.files = files if files is not None else []
+        self.paths = paths if paths is not None else []
         self.parentManifestHash = parent_manifest_hash
-
-        # v2023_03_03 compatibility: use paths if provided, otherwise use files
-        self.paths = paths if paths is not None else self.files
 
     @classmethod
     @abstractmethod
