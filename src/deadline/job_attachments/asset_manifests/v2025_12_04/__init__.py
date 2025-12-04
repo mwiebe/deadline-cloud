@@ -1,5 +1,5 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-from .asset_manifest import AssetManifest, ManifestDirectory, ManifestModel, ManifestPath
+from .asset_manifest import AssetManifest, ManifestDirectoryPath, ManifestFilePath, ManifestModel
 
-__all__ = ["ManifestModel", "ManifestDirectory", "ManifestPath", "AssetManifest"]
+__all__ = ["ManifestModel", "ManifestDirectoryPath", "ManifestFilePath", "AssetManifest"]

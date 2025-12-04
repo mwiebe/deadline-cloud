@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Type
 
-from ..base_manifest import BaseAssetManifest, BaseManifestDirectory, BaseManifestPath
+from ..base_manifest import BaseAssetManifest, BaseManifestDirectoryPath, BaseManifestPath
 from ..hash_algorithms import HashAlgorithm
 from ..manifest_model import BaseManifestModel
 from ..versions import ManifestType, ManifestVersion
@@ -19,7 +19,7 @@ DEFAULT_HASH_ALG: HashAlgorithm = HashAlgorithm.XXH128
 
 
 @dataclass
-class ManifestDirectory(BaseManifestDirectory):
+class ManifestDirectoryPath(BaseManifestDirectoryPath):
     """
     Directory entry for version v2025-12-04 of the asset manifest.
     """
@@ -31,7 +31,7 @@ class ManifestDirectory(BaseManifestDirectory):
 
 
 @dataclass
-class ManifestPath(BaseManifestPath):
+class ManifestFilePath(BaseManifestPath):
     """
     File entry for version v2025-12-04 of the asset manifest.
     """
@@ -72,7 +72,7 @@ class AssetManifest(BaseAssetManifest):
         self,
         *,
         hash_alg: HashAlgorithm,
-        dirs: list[BaseManifestDirectory],
+        dirs: list[BaseManifestDirectoryPath],
         files: list[BaseManifestPath],
         total_size: int,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
@@ -114,7 +114,7 @@ class AssetManifest(BaseAssetManifest):
 
         # Decode directories
         dirs = [
-            ManifestDirectory(
+            ManifestDirectoryPath(
                 path=d["name"],
                 deleted=d.get("delete", False),
             )
@@ -123,7 +123,7 @@ class AssetManifest(BaseAssetManifest):
 
         # Decode files
         files = [
-            ManifestPath(
+            ManifestFilePath(
                 path=f["name"],
                 hash=f.get("hash"),
                 size=f.get("size", 0),
@@ -165,5 +165,5 @@ class ManifestModel(BaseManifestModel):
 
     manifest_version: ManifestVersion = ManifestVersion.v2025_12_04
     AssetManifest: Type[AssetManifest] = AssetManifest
-    Path: Type[ManifestPath] = ManifestPath
-    Directory: Type[ManifestDirectory] = ManifestDirectory
+    FilePath: Type[ManifestFilePath] = ManifestFilePath
+    DirectoryPath: Type[ManifestDirectoryPath] = ManifestDirectoryPath
