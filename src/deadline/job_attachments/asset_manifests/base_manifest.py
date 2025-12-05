@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import math
+import os
+import posixpath
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 from typing import Any, ClassVar, Optional
@@ -89,10 +91,30 @@ class BaseManifestPath(ABC):
         self.mtime = mtime
         self.runnable = runnable
         self.chunkhashes = chunkhashes
-        self.symlink_target = symlink_target
+        self.symlink_target = self._normalize_symlink_target(symlink_target)
         self.deleted = deleted
 
         self._validate()
+
+    @staticmethod
+    def _normalize_symlink_target(symlink_target: Optional[str]) -> Optional[str]:
+        """
+        Normalize symlink target path to POSIX format.
+
+        - Converts Windows backslashes to forward slashes
+        - Collapses '..' and '.' components using posixpath.normpath
+        """
+        if symlink_target is None:
+            return None
+
+        # Convert Windows path separators to POSIX
+        if os.name == "nt":
+            normalized = symlink_target.replace("\\", "/")
+
+        # Normalize the path (collapse .., ., etc.)
+        normalized = posixpath.normpath(normalized)
+
+        return normalized
 
     def _validate(self) -> None:
         """Validate the manifest path entry according to format rules."""
@@ -163,6 +185,42 @@ class BaseManifestPath(ABC):
                         f"File '{self.path}' with size {self.size} should have {expected_chunks} "
                         f"chunks, got {len(self.chunkhashes)}"
                     )
+
+            # Validate symlink_target
+            if self.symlink_target is not None:
+                self._validate_symlink_target()
+
+    def _validate_symlink_target(self) -> None:
+        """Validate that symlink_target is a valid relative path within the manifest."""
+        target = self.symlink_target
+        if target is None:
+            return
+
+        # Must be a relative path (not absolute)
+        if posixpath.isabs(target):
+            raise ManifestDecodeValidationError(
+                f"Symlink '{self.path}' target must be a relative path, got absolute: '{target}'"
+            )
+
+        # Must not escape outside the manifest root (start with '..')
+        if target.startswith(".."):
+            raise ManifestDecodeValidationError(
+                f"Symlink '{self.path}' target escapes manifest root: '{target}'"
+            )
+
+        # Check for '..' components that could escape after path resolution
+        # Split and check each component
+        parts = target.split("/")
+        depth = 0
+        for part in parts:
+            if part == "..":
+                depth -= 1
+                if depth < 0:
+                    raise ManifestDecodeValidationError(
+                        f"Symlink '{self.path}' target escapes manifest root: '{target}'"
+                    )
+            elif part and part != ".":
+                depth += 1
 
     def __eq__(self, other: object) -> bool:
         """

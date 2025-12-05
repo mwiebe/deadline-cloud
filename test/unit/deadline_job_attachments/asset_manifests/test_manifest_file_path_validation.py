@@ -263,3 +263,85 @@ class TestManifestFilePathValidation:
                 size=size,
                 mtime=1234567890,
             )
+
+
+    # ==================== Symlink validation ====================
+
+    def test_symlink_target_normalized_from_windows_path(self):
+        """Symlink target with Windows backslashes is normalized to POSIX."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="subdir\\target.txt",
+        )
+        assert path.symlink_target == "subdir/target.txt"
+
+    def test_symlink_target_normalized_collapses_dot_dot(self):
+        """Symlink target with '..' components is normalized."""
+        path = ManifestFilePath(
+            path="subdir/link.txt",
+            symlink_target="subdir/../other/target.txt",
+        )
+        assert path.symlink_target == "other/target.txt"
+
+    def test_symlink_target_normalized_collapses_dot(self):
+        """Symlink target with '.' components is normalized."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="./subdir/./target.txt",
+        )
+        assert path.symlink_target == "subdir/target.txt"
+
+    def test_symlink_target_rejects_absolute_path(self):
+        """Symlink target cannot be an absolute path."""
+        with pytest.raises(
+            ManifestDecodeValidationError, match="must be a relative path"
+        ):
+            ManifestFilePath(
+                path="link.txt",
+                symlink_target="/absolute/path/target.txt",
+            )
+
+    def test_symlink_target_rejects_escape_with_leading_dotdot(self):
+        """Symlink target cannot start with '..' that escapes manifest root."""
+        with pytest.raises(
+            ManifestDecodeValidationError, match="escapes manifest root"
+        ):
+            ManifestFilePath(
+                path="link.txt",
+                symlink_target="../outside/target.txt",
+            )
+
+    def test_symlink_target_rejects_escape_with_multiple_dotdot(self):
+        """Symlink target cannot have '..' that escapes manifest root."""
+        with pytest.raises(
+            ManifestDecodeValidationError, match="escapes manifest root"
+        ):
+            ManifestFilePath(
+                path="link.txt",
+                symlink_target="subdir/../../outside/target.txt",
+            )
+
+    def test_symlink_target_allows_dotdot_within_manifest(self):
+        """Symlink target can use '..' as long as it stays within manifest."""
+        path = ManifestFilePath(
+            path="subdir/link.txt",
+            symlink_target="deep/nested/../sibling/target.txt",
+        )
+        # After normalization: deep/sibling/target.txt
+        assert path.symlink_target == "deep/sibling/target.txt"
+
+    def test_symlink_target_valid_relative_path(self):
+        """Valid relative symlink target is accepted."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="subdir/target.txt",
+        )
+        assert path.symlink_target == "subdir/target.txt"
+
+    def test_symlink_target_valid_same_directory(self):
+        """Symlink to file in same directory is valid."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="target.txt",
+        )
+        assert path.symlink_target == "target.txt"
