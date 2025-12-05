@@ -398,7 +398,9 @@ class TestDuplicateValidation:
             dirs=[],
             paths=[
                 ManifestFilePath(path="file.txt", deleted=True),
-                ManifestFilePath(path="file.txt", deleted=False, hash="hash_a", size=100, mtime=1000),
+                ManifestFilePath(
+                    path="file.txt", deleted=False, hash="hash_a", size=100, mtime=1000
+                ),
             ],
             total_size=100,
             manifest_type=ManifestType.DIFF,

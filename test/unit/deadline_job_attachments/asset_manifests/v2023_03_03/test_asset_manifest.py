@@ -164,9 +164,7 @@ class TestToDictValidation:
         path.symlink_target = None
         path.deleted = True
 
-        with pytest.raises(
-            ManifestDecodeValidationError, match="does not support 'deleted' field"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match="does not support 'deleted' field"):
             path.to_dict()
 
     def test_to_dict_accepts_valid_path(self) -> None:

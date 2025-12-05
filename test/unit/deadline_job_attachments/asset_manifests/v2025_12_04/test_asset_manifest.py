@@ -27,7 +27,9 @@ class TestEncode:
                 ManifestDirectoryPath(path="textures"),
             ],
             paths=[
-                ManifestFilePath(path="textures/tex.png", hash="abc123", size=100, mtime=1234567890),
+                ManifestFilePath(
+                    path="textures/tex.png", hash="abc123", size=100, mtime=1234567890
+                ),
             ],
         )
 
@@ -59,7 +61,10 @@ class TestEncode:
                     path="env_sandbox/env.blend", hash="hash1", size=100, mtime=1234567890
                 ),
                 ManifestFilePath(
-                    path="env_sandbox/RaceCarToy/car.blend", hash="hash2", size=100, mtime=1234567890
+                    path="env_sandbox/RaceCarToy/car.blend",
+                    hash="hash2",
+                    size=100,
+                    mtime=1234567890,
                 ),
                 ManifestFilePath(
                     path="env_sandbox/RaceCarToy/textures/tex.png",
@@ -121,7 +126,9 @@ class TestEncode:
                 ManifestDirectoryPath(path="data"),
             ],
             paths=[
-                ManifestFilePath(path="data/target.txt", hash="targethash", size=100, mtime=1234567890),
+                ManifestFilePath(
+                    path="data/target.txt", hash="targethash", size=100, mtime=1234567890
+                ),
                 ManifestFilePath(path="data/link.txt", symlink_target="data/target.txt"),
             ],
         )
@@ -217,7 +224,9 @@ class TestEncode:
                 ManifestFilePath(path="\r", hash="CarriageReturn", size=1, mtime=1234567890),
                 ManifestFilePath(path="1", hash="One", size=1, mtime=1234567890),
                 ManifestFilePath(path="😀", hash="EmojiGrinningFace", size=1, mtime=1234567890),
-                ManifestFilePath(path="ö", hash="LatinSmallLetterOWithDiaeresis", size=1, mtime=1234567890),
+                ManifestFilePath(
+                    path="ö", hash="LatinSmallLetterOWithDiaeresis", size=1, mtime=1234567890
+                ),
             ],
         )
 
