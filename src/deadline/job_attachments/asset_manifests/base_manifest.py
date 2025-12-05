@@ -35,8 +35,8 @@ class BaseManifestDirectoryPath(ABC):
         return fields(self) == fields(other)
 
 
-# 256MB chunk size (256 * 2^20 bytes)
-CHUNK_SIZE_BYTES = 256 * 1024 * 1024
+# 256MB chunk size for large files (256 * 2^20 bytes)
+FILE_CHUNK_SIZE_BYTES = 256 * 1024 * 1024
 
 
 @dataclass
@@ -152,12 +152,12 @@ class BaseManifestPath(ABC):
                     raise ManifestDecodeValidationError(
                         f"File '{self.path}' with chunkhashes must have 'size' field"
                     )
-                if self.size <= CHUNK_SIZE_BYTES:
+                if self.size <= FILE_CHUNK_SIZE_BYTES:
                     raise ManifestDecodeValidationError(
-                        f"File '{self.path}' with chunkhashes must have size > {CHUNK_SIZE_BYTES} "
+                        f"File '{self.path}' with chunkhashes must have size > {FILE_CHUNK_SIZE_BYTES} "
                         f"(256MB), got {self.size}"
                     )
-                expected_chunks = math.ceil(self.size / CHUNK_SIZE_BYTES)
+                expected_chunks = math.ceil(self.size / FILE_CHUNK_SIZE_BYTES)
                 if len(self.chunkhashes) != expected_chunks:
                     raise ManifestDecodeValidationError(
                         f"File '{self.path}' with size {self.size} should have {expected_chunks} "
