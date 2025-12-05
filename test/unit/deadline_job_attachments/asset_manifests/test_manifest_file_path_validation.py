@@ -63,7 +63,6 @@ class TestManifestFilePathValidation:
         assert path.size is None
         assert path.mtime is None
 
-
     def test_valid_chunked_file(self):
         """A large file with chunkhashes is valid when chunk count matches size."""
         # 300MB file = 2 chunks (256MB + 44MB)
@@ -226,9 +225,7 @@ class TestManifestFilePathValidation:
 
     def test_chunked_file_size_must_exceed_chunk_size(self):
         """File with chunkhashes must have size > 256MB."""
-        with pytest.raises(
-            ManifestDecodeValidationError, match=r"must have size > \d+ \(256MB\)"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match=r"must have size > \d+ \(256MB\)"):
             ManifestFilePath(
                 path="file.txt",
                 chunkhashes=["hash1"],
@@ -240,9 +237,7 @@ class TestManifestFilePathValidation:
         """Number of chunkhashes must match ceil(size / CHUNK_SIZE)."""
         # 300MB = 2 chunks, but we provide 3
         size = 300 * 1024 * 1024
-        with pytest.raises(
-            ManifestDecodeValidationError, match=r"should have \d+ chunks, got 3"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match=r"should have \d+ chunks, got 3"):
             ManifestFilePath(
                 path="file.txt",
                 chunkhashes=["hash1", "hash2", "hash3"],  # Wrong count
@@ -254,16 +249,13 @@ class TestManifestFilePathValidation:
         """Too few chunkhashes for the file size."""
         # 600MB = 3 chunks, but we provide 2
         size = 600 * 1024 * 1024
-        with pytest.raises(
-            ManifestDecodeValidationError, match=r"should have \d+ chunks, got 2"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match=r"should have \d+ chunks, got 2"):
             ManifestFilePath(
                 path="file.txt",
                 chunkhashes=["hash1", "hash2"],  # Too few
                 size=size,
                 mtime=1234567890,
             )
-
 
     # ==================== Symlink validation ====================
 
@@ -293,9 +285,7 @@ class TestManifestFilePathValidation:
 
     def test_symlink_target_rejects_absolute_path(self):
         """Symlink target cannot be an absolute path."""
-        with pytest.raises(
-            ManifestDecodeValidationError, match="must be a relative path"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match="must be a relative path"):
             ManifestFilePath(
                 path="link.txt",
                 symlink_target="/absolute/path/target.txt",
@@ -303,9 +293,7 @@ class TestManifestFilePathValidation:
 
     def test_symlink_target_rejects_escape_with_leading_dotdot(self):
         """Symlink target cannot start with '..' that escapes manifest root."""
-        with pytest.raises(
-            ManifestDecodeValidationError, match="escapes manifest root"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match="escapes manifest root"):
             ManifestFilePath(
                 path="link.txt",
                 symlink_target="../outside/target.txt",
@@ -313,9 +301,7 @@ class TestManifestFilePathValidation:
 
     def test_symlink_target_rejects_escape_with_multiple_dotdot(self):
         """Symlink target cannot have '..' that escapes manifest root."""
-        with pytest.raises(
-            ManifestDecodeValidationError, match="escapes manifest root"
-        ):
+        with pytest.raises(ManifestDecodeValidationError, match="escapes manifest root"):
             ManifestFilePath(
                 path="link.txt",
                 symlink_target="subdir/../../outside/target.txt",

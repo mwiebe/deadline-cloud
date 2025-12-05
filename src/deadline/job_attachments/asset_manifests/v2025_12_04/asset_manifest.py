@@ -295,9 +295,7 @@ class AssetManifest(BaseAssetManifest):
         # Directory not in index, return original path
         return path
 
-    def _validate_duplicate_file(
-        self, file: BaseManifestPath, existing: BaseManifestPath
-    ) -> None:
+    def _validate_duplicate_file(self, file: BaseManifestPath, existing: BaseManifestPath) -> None:
         """
         Validate that a duplicate file entry is identical to the existing one.
 
