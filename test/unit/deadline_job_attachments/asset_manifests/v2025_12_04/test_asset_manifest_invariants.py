@@ -322,3 +322,120 @@ class TestCombinedInvariance:
         )
 
         assert manifest_a.encode() == manifest_b.encode()
+
+
+class TestDuplicateValidation:
+    """Tests that duplicate entries with conflicting values raise errors."""
+
+    def test_duplicate_files_with_different_hash_raises_error(self) -> None:
+        """Duplicate files with different hash values must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(path="file.txt", hash="hash_a", size=100, mtime=1000),
+                ManifestFilePath(path="file.txt", hash="hash_b", size=100, mtime=1000),
+            ],
+            total_size=100,
+        )
+
+        with pytest.raises(Exception, match="conflicting 'hash' values"):
+            manifest.encode()
+
+    def test_duplicate_files_with_different_size_raises_error(self) -> None:
+        """Duplicate files with different size values must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(path="file.txt", hash="hash_a", size=100, mtime=1000),
+                ManifestFilePath(path="file.txt", hash="hash_a", size=200, mtime=1000),
+            ],
+            total_size=100,
+        )
+
+        with pytest.raises(Exception, match="conflicting 'size' values"):
+            manifest.encode()
+
+    def test_duplicate_files_with_different_mtime_raises_error(self) -> None:
+        """Duplicate files with different mtime values must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(path="file.txt", hash="hash_a", size=100, mtime=1000),
+                ManifestFilePath(path="file.txt", hash="hash_a", size=100, mtime=2000),
+            ],
+            total_size=100,
+        )
+
+        with pytest.raises(Exception, match="conflicting 'mtime' values"):
+            manifest.encode()
+
+    def test_duplicate_files_with_different_runnable_raises_error(self) -> None:
+        """Duplicate files with different runnable values must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path="script.sh", hash="hash_a", size=100, mtime=1000, runnable=True
+                ),
+                ManifestFilePath(
+                    path="script.sh", hash="hash_a", size=100, mtime=1000, runnable=False
+                ),
+            ],
+            total_size=100,
+        )
+
+        with pytest.raises(Exception, match="conflicting 'runnable' values"):
+            manifest.encode()
+
+    def test_duplicate_files_with_different_deleted_raises_error(self) -> None:
+        """Duplicate files with different deleted values must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(path="file.txt", deleted=True),
+                ManifestFilePath(path="file.txt", deleted=False, hash="hash_a", size=100, mtime=1000),
+            ],
+            total_size=100,
+            manifest_type=ManifestType.DIFF,
+            parent_manifest_hash="parent123",
+        )
+
+        with pytest.raises(Exception, match="conflicting 'deleted' values"):
+            manifest.encode()
+
+    def test_duplicate_dirs_with_different_deleted_raises_error(self) -> None:
+        """Duplicate directories with different deleted values must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[
+                ManifestDirectoryPath(path="mydir", deleted=False),
+                ManifestDirectoryPath(path="mydir", deleted=True),
+            ],
+            paths=[],
+            total_size=0,
+            manifest_type=ManifestType.DIFF,
+            parent_manifest_hash="parent123",
+        )
+
+        with pytest.raises(Exception, match="conflicting 'deleted' values"):
+            manifest.encode()
+
+    def test_duplicate_symlinks_with_different_target_raises_error(self) -> None:
+        """Duplicate symlinks with different targets must raise an error."""
+        manifest = AssetManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(path="link.txt", symlink_target="target_a.txt"),
+                ManifestFilePath(path="link.txt", symlink_target="target_b.txt"),
+            ],
+            total_size=0,
+        )
+
+        with pytest.raises(Exception, match="conflicting 'symlink_target' values"):
+            manifest.encode()
