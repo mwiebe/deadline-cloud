@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 from .base_manifest import (
-    CHUNK_SIZE_BYTES,
+    FILE_CHUNK_SIZE_BYTES,
     BaseAssetManifest,
     BaseManifestDirectoryPath,
     BaseManifestPath,
@@ -11,7 +11,7 @@ from .manifest_model import BaseManifestModel, ManifestModelRegistry
 from .versions import ManifestContentType, ManifestType, ManifestVersion
 
 __all__ = [
-    "CHUNK_SIZE_BYTES",
+    "FILE_CHUNK_SIZE_BYTES",
     "ManifestVersion",
     "ManifestType",
     "ManifestContentType",

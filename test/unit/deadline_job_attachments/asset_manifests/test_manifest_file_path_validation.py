@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from deadline.job_attachments.asset_manifests import CHUNK_SIZE_BYTES
+from deadline.job_attachments.asset_manifests import FILE_CHUNK_SIZE_BYTES
 from deadline.job_attachments.asset_manifests.v2025_12_04 import ManifestFilePath
 from deadline.job_attachments.exceptions import ManifestDecodeValidationError
 
@@ -68,7 +68,7 @@ class TestManifestFilePathValidation:
         """A large file with chunkhashes is valid when chunk count matches size."""
         # 300MB file = 2 chunks (256MB + 44MB)
         size = 300 * 1024 * 1024
-        expected_chunks = math.ceil(size / CHUNK_SIZE_BYTES)
+        expected_chunks = math.ceil(size / FILE_CHUNK_SIZE_BYTES)
         chunkhashes = ["hash1", "hash2"]
         assert len(chunkhashes) == expected_chunks
 
@@ -83,7 +83,7 @@ class TestManifestFilePathValidation:
 
     def test_valid_chunked_file_exact_boundary(self):
         """A file exactly at chunk boundary + 1 byte needs 2 chunks."""
-        size = CHUNK_SIZE_BYTES + 1
+        size = FILE_CHUNK_SIZE_BYTES + 1
         expected_chunks = 2
         chunkhashes = ["hash1", "hash2"]
 
