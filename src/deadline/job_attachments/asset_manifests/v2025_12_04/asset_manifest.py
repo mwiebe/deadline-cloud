@@ -171,8 +171,14 @@ class AssetManifest(BaseAssetManifest):
         - Keys sorted alphabetically within each object
         - No whitespace between JSON tokens
         """
-        # Sort directories by full path for canonical output
-        sorted_dirs = sorted(self.dirs, key=lambda d: d.path)
+        # Sort and deduplicate directories by full path for canonical output
+        seen_dirs: set[str] = set()
+        unique_dirs: list[BaseManifestDirectoryPath] = []
+        for d in self.dirs:
+            if d.path not in seen_dirs:
+                seen_dirs.add(d.path)
+                unique_dirs.append(d)
+        sorted_dirs = sorted(unique_dirs, key=lambda d: d.path)
 
         # Build directory index mapping: full_path -> index
         dir_index: dict[str, int] = {}
@@ -188,9 +194,15 @@ class AssetManifest(BaseAssetManifest):
                 dir_entry["delete"] = True
             dirs_json.append(dir_entry)
 
-        # Sort files by full path (UTF-16 BE for canonical ordering)
+        # Sort and deduplicate files by full path (UTF-16 BE for canonical ordering)
+        seen_files: set[str] = set()
+        unique_files: list[BaseManifestPath] = []
+        for f in self.paths:
+            if f.path not in seen_files:
+                seen_files.add(f.path)
+                unique_files.append(f)
         sorted_files = sorted(
-            self.paths,
+            unique_files,
             key=lambda f: f.path.encode("utf-16_be", errors="surrogatepass"),
         )
 
