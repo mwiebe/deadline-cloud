@@ -33,7 +33,28 @@ class ManifestPath(BaseManifestPath):
         super().__init__(path=path, hash=hash, size=size, mtime=mtime)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to v2023-03-03 format dict (only path, hash, size, mtime)."""
+        """Convert to v2023-03-03 format dict (only path, hash, size, mtime).
+
+        Raises ManifestDecodeValidationError if any v2025_12_04-specific fields are set.
+        """
+        # Validate that v2025_12_04-specific fields are not set
+        if self.runnable:
+            raise ManifestDecodeValidationError(
+                f"v2023-03-03 format does not support 'runnable' field (path: {self.path})"
+            )
+        if self.chunkhashes is not None:
+            raise ManifestDecodeValidationError(
+                f"v2023-03-03 format does not support 'chunkhashes' field (path: {self.path})"
+            )
+        if self.symlink_target is not None:
+            raise ManifestDecodeValidationError(
+                f"v2023-03-03 format does not support 'symlink_target' field (path: {self.path})"
+            )
+        if self.deleted:
+            raise ManifestDecodeValidationError(
+                f"v2023-03-03 format does not support 'deleted' field (path: {self.path})"
+            )
+
         return {
             "hash": self.hash,
             "mtime": self.mtime,
