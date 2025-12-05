@@ -240,19 +240,19 @@ class BaseAssetManifest(ABC):
 
     hashAlg: HashAlgorithm
     manifestVersion: ManifestVersion
-    paths: list[BaseManifestPath]
+    paths: list
     # v2025_12_04+ fields
     manifestType: ManifestType
-    dirs: list[BaseManifestDirectoryPath]
+    dirs: list
     parentManifestHash: Optional[str]
 
     def __init__(
         self,
         *,
         hash_alg: HashAlgorithm,
-        paths: Optional[list[BaseManifestPath]] = None,
+        paths: list,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
-        dirs: Optional[list[BaseManifestDirectoryPath]] = None,
+        dirs: Optional[list] = None,
         parent_manifest_hash: Optional[str] = None,
     ):
         self.hashAlg = hash_alg
