@@ -89,3 +89,95 @@ def test_decode(default_manifest_str_v2023_03_03: str):
     assert (
         AssetManifest.decode(manifest_data=json.loads(default_manifest_str_v2023_03_03)) == expected
     )
+
+
+import pytest
+
+from deadline.job_attachments.asset_manifests.base_manifest import BaseManifestPath
+from deadline.job_attachments.exceptions import ManifestDecodeValidationError
+
+
+class TestToDictValidation:
+    """Tests for to_dict() validation of v2025_12_04-specific fields."""
+
+    def test_to_dict_rejects_runnable_field(self) -> None:
+        """to_dict() should reject paths with runnable=True."""
+        # Create a path with runnable set via base class
+        path = BaseManifestPath.__new__(ManifestPath)
+        path.path = "script.sh"
+        path.hash = "abc123"
+        path.size = 100
+        path.mtime = 1234567890
+        path.runnable = True
+        path.chunkhashes = None
+        path.symlink_target = None
+        path.deleted = False
+
+        with pytest.raises(
+            ManifestDecodeValidationError, match="does not support 'runnable' field"
+        ):
+            path.to_dict()
+
+    def test_to_dict_rejects_chunkhashes_field(self) -> None:
+        """to_dict() should reject paths with chunkhashes set."""
+        path = BaseManifestPath.__new__(ManifestPath)
+        path.path = "large.bin"
+        path.hash = None
+        path.size = 536870913
+        path.mtime = 1234567890
+        path.runnable = False
+        path.chunkhashes = ["chunk1", "chunk2", "chunk3"]
+        path.symlink_target = None
+        path.deleted = False
+
+        with pytest.raises(
+            ManifestDecodeValidationError, match="does not support 'chunkhashes' field"
+        ):
+            path.to_dict()
+
+    def test_to_dict_rejects_symlink_target_field(self) -> None:
+        """to_dict() should reject paths with symlink_target set."""
+        path = BaseManifestPath.__new__(ManifestPath)
+        path.path = "link.txt"
+        path.hash = None
+        path.size = None
+        path.mtime = None
+        path.runnable = False
+        path.chunkhashes = None
+        path.symlink_target = "target.txt"
+        path.deleted = False
+
+        with pytest.raises(
+            ManifestDecodeValidationError, match="does not support 'symlink_target' field"
+        ):
+            path.to_dict()
+
+    def test_to_dict_rejects_deleted_field(self) -> None:
+        """to_dict() should reject paths with deleted=True."""
+        path = BaseManifestPath.__new__(ManifestPath)
+        path.path = "deleted.txt"
+        path.hash = None
+        path.size = None
+        path.mtime = None
+        path.runnable = False
+        path.chunkhashes = None
+        path.symlink_target = None
+        path.deleted = True
+
+        with pytest.raises(
+            ManifestDecodeValidationError, match="does not support 'deleted' field"
+        ):
+            path.to_dict()
+
+    def test_to_dict_accepts_valid_path(self) -> None:
+        """to_dict() should accept paths with only v2023-03-03 fields."""
+        path = ManifestPath(path="file.txt", hash="abc123", size=100, mtime=1234567890)
+
+        result = path.to_dict()
+
+        assert result == {
+            "hash": "abc123",
+            "mtime": 1234567890,
+            "path": "file.txt",
+            "size": 100,
+        }
