@@ -172,11 +172,18 @@ class AssetManifest(BaseAssetManifest):
         - No whitespace between JSON tokens
         """
         # Sort and deduplicate directories by full path for canonical output
-        seen_dirs: set[str] = set()
+        # Validate that duplicate paths have identical content
+        seen_dirs: dict[str, BaseManifestDirectoryPath] = {}
         unique_dirs: list[BaseManifestDirectoryPath] = []
         for d in self.dirs:
-            if d.path not in seen_dirs:
-                seen_dirs.add(d.path)
+            if d.path in seen_dirs:
+                existing = seen_dirs[d.path]
+                if d.deleted != existing.deleted:
+                    raise ManifestDecodeValidationError(
+                        f"Duplicate directory '{d.path}' has conflicting 'deleted' values"
+                    )
+            else:
+                seen_dirs[d.path] = d
                 unique_dirs.append(d)
         sorted_dirs = sorted(unique_dirs, key=lambda d: d.path)
 
@@ -195,11 +202,15 @@ class AssetManifest(BaseAssetManifest):
             dirs_json.append(dir_entry)
 
         # Sort and deduplicate files by full path (UTF-16 BE for canonical ordering)
-        seen_files: set[str] = set()
+        # Validate that duplicate paths have identical content
+        seen_files: dict[str, BaseManifestPath] = {}
         unique_files: list[BaseManifestPath] = []
         for f in self.paths:
-            if f.path not in seen_files:
-                seen_files.add(f.path)
+            if f.path in seen_files:
+                existing = seen_files[f.path]
+                self._validate_duplicate_file(f, existing)
+            else:
+                seen_files[f.path] = f
                 unique_files.append(f)
         sorted_files = sorted(
             unique_files,
@@ -283,6 +294,45 @@ class AssetManifest(BaseAssetManifest):
 
         # Directory not in index, return original path
         return path
+
+    def _validate_duplicate_file(
+        self, file: BaseManifestPath, existing: BaseManifestPath
+    ) -> None:
+        """
+        Validate that a duplicate file entry is identical to the existing one.
+
+        Raises ManifestDecodeValidationError if any field differs.
+        """
+        path = file.path
+        # Check deleted first as it's the most fundamental difference
+        if file.deleted != existing.deleted:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'deleted' values"
+            )
+        if file.hash != existing.hash:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'hash' values"
+            )
+        if file.size != existing.size:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'size' values"
+            )
+        if file.mtime != existing.mtime:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'mtime' values"
+            )
+        if file.runnable != existing.runnable:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'runnable' values"
+            )
+        if file.chunkhashes != existing.chunkhashes:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'chunkhashes' values"
+            )
+        if file.symlink_target != existing.symlink_target:
+            raise ManifestDecodeValidationError(
+                f"Duplicate file '{path}' has conflicting 'symlink_target' values"
+            )
 
 
 class ManifestModel(BaseManifestModel):
