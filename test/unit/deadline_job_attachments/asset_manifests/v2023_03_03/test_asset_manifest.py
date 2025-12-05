@@ -4,11 +4,15 @@
 
 import json
 
+import pytest
+
+from deadline.job_attachments.asset_manifests import HashAlgorithm
+from deadline.job_attachments.asset_manifests.base_manifest import BaseManifestPath
 from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
     AssetManifest,
     ManifestPath,
 )
-from deadline.job_attachments.asset_manifests import HashAlgorithm
+from deadline.job_attachments.exceptions import ManifestDecodeValidationError
 
 
 def test_encode():
@@ -89,12 +93,6 @@ def test_decode(default_manifest_str_v2023_03_03: str):
     assert (
         AssetManifest.decode(manifest_data=json.loads(default_manifest_str_v2023_03_03)) == expected
     )
-
-
-import pytest
-
-from deadline.job_attachments.asset_manifests.base_manifest import BaseManifestPath
-from deadline.job_attachments.exceptions import ManifestDecodeValidationError
 
 
 class TestToDictValidation:

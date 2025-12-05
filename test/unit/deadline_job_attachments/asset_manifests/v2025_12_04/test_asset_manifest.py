@@ -4,8 +4,6 @@
 
 import json
 
-import pytest
-
 from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
     AssetManifest,
     ManifestDirectoryPath,

@@ -92,7 +92,7 @@ class TestManifestFilePathValidation:
             size=size,
             mtime=1234567890,
         )
-        assert len(path.chunkhashes) == expected_chunks
+        assert path.chunkhashes is not None and len(path.chunkhashes) == expected_chunks
 
     # ==================== Deleted file validation errors ====================
 

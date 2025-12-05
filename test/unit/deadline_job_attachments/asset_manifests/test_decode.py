@@ -22,10 +22,6 @@ from deadline.job_attachments.asset_manifests.v2023_03_03 import ManifestPath as
 from deadline.job_attachments.asset_manifests.v2025_12_04 import (
     AssetManifest as AssetManifest_v2025_12_04,
 )
-from deadline.job_attachments.asset_manifests.v2025_12_04 import (
-    ManifestDirectoryPath as DirPath_v2025_12_04,
-    ManifestFilePath as FilePath_v2025_12_04,
-)
 from deadline.job_attachments.exceptions import ManifestDecodeValidationError
 
 

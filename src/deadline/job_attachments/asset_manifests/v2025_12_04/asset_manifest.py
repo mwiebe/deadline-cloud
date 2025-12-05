@@ -82,8 +82,8 @@ class AssetManifest(BaseAssetManifest):
         self,
         *,
         hash_alg: HashAlgorithm,
-        dirs: list[BaseManifestDirectoryPath],
-        paths: list[BaseManifestPath],
+        dirs: list[ManifestDirectoryPath],
+        paths: list[ManifestFilePath],
         total_size: int,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
         parent_manifest_hash: Optional[str] = None,
@@ -173,12 +173,12 @@ class AssetManifest(BaseAssetManifest):
         """
         # Sort and deduplicate directories by full path for canonical output
         # Validate that duplicate paths have identical content
-        seen_dirs: dict[str, BaseManifestDirectoryPath] = {}
-        unique_dirs: list[BaseManifestDirectoryPath] = []
+        seen_dirs: dict[str, ManifestDirectoryPath] = {}
+        unique_dirs: list[ManifestDirectoryPath] = []
         for d in self.dirs:
             if d.path in seen_dirs:
-                existing = seen_dirs[d.path]
-                if d.deleted != existing.deleted:
+                existing_dir = seen_dirs[d.path]
+                if d.deleted != existing_dir.deleted:
                     raise ManifestDecodeValidationError(
                         f"Duplicate directory '{d.path}' has conflicting 'deleted' values"
                     )
@@ -203,12 +203,12 @@ class AssetManifest(BaseAssetManifest):
 
         # Sort and deduplicate files by full path (UTF-16 BE for canonical ordering)
         # Validate that duplicate paths have identical content
-        seen_files: dict[str, BaseManifestPath] = {}
-        unique_files: list[BaseManifestPath] = []
+        seen_files: dict[str, ManifestFilePath] = {}
+        unique_files: list[ManifestFilePath] = []
         for f in self.paths:
             if f.path in seen_files:
-                existing = seen_files[f.path]
-                self._validate_duplicate_file(f, existing)
+                existing_file = seen_files[f.path]
+                self._validate_duplicate_file(f, existing_file)
             else:
                 seen_files[f.path] = f
                 unique_files.append(f)
@@ -295,7 +295,7 @@ class AssetManifest(BaseAssetManifest):
         # Directory not in index, return original path
         return path
 
-    def _validate_duplicate_file(self, file: BaseManifestPath, existing: BaseManifestPath) -> None:
+    def _validate_duplicate_file(self, file: ManifestFilePath, existing: ManifestFilePath) -> None:
         """
         Validate that a duplicate file entry is identical to the existing one.
 

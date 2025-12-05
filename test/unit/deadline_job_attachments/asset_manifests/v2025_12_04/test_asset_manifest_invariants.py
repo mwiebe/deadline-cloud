@@ -149,8 +149,6 @@ class TestDuplicateFileInvariance:
 
     def test_duplicate_files_produce_identical_encoding_to_single(self) -> None:
         """If paths has duplicated entries in A but not in B, encoded versions must be identical."""
-        file_entry = ManifestFilePath(path="file.txt", hash="hash_a", size=100, mtime=1000)
-
         # A has duplicates
         manifest_a = AssetManifest(
             hash_alg=HashAlgorithm.XXH128,
