@@ -534,7 +534,7 @@ def _download_file(
 
     local_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if file.size > 1024 * 1024:
+    if (file.size or 0) > 1024 * 1024:
         download_file = _download_file_with_transfer_manager
     else:
         download_file = _download_file_with_get_object
@@ -589,7 +589,7 @@ def _download_file(
         raise AssetSyncError(e) from e
 
     # The modified time in the manifest is in microseconds, but utime requires the time be expressed in seconds.
-    modified_time_override = file.mtime / 1000000  # type: ignore[attr-defined]
+    modified_time_override = (file.mtime or 0) / 1000000  # type: ignore[attr-defined]
     os.utime(local_file_path, (modified_time_override, modified_time_override))  # type: ignore[arg-type]
 
     # Verify that what we downloaded has the correct file size from the manifest.
@@ -633,7 +633,7 @@ def _download_manifest_paths(
     progress_tracker = ProgressTracker(
         status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
         total_files=len(manifest_paths_to_download),
-        total_bytes=sum(manifest_path.size for manifest_path in manifest_paths_to_download),
+        total_bytes=sum(manifest_path.size or 0 for manifest_path in manifest_paths_to_download),
         on_progress_callback=on_downloading_files,
     )
 

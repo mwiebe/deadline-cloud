@@ -70,7 +70,11 @@ class AssetManifest(BaseAssetManifest):
     totalSize: int  # pyline: disable=invalid-name
 
     def __init__(
-        self, *, hash_alg: HashAlgorithm, paths: list[BaseManifestPath], total_size: int
+        self,
+        *,
+        hash_alg: HashAlgorithm,
+        paths: list[BaseManifestPath] | list[ManifestPath],
+        total_size: int,
     ) -> None:
         if hash_alg not in SUPPORTED_HASH_ALGS:
             raise ManifestDecodeValidationError(

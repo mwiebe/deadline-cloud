@@ -1180,7 +1180,9 @@ def _incremental_output_download(
     # Print a summary of all the paths before starting the download
     local_path_list = [manifest_path.path for manifest_path in manifest_paths_to_download]
     file_size_by_path = {
-        manifest_path.path: manifest_path.size for manifest_path in manifest_paths_to_download
+        manifest_path.path: manifest_path.size
+        for manifest_path in manifest_paths_to_download
+        if manifest_path.size is not None
     }
     print_function_callback("")
     print_function_callback("Summary of paths to download:")

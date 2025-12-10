@@ -180,7 +180,7 @@ def _fast_file_list_to_manifest_diff(
                 )
             # Check file mtime, allow 1 microsecond diff to prevent false positive
             # utime set from microsecond to nanosecond conversion could create 1 microsecond diff upon division
-            elif abs(trunc(file_stat.st_mtime_ns / 1000) - input_file.mtime) > 1:
+            elif abs(trunc(file_stat.st_mtime_ns / 1000) - (input_file.mtime or 0)) > 1:
                 changed_paths.append((return_path, FileStatus.MODIFIED))
                 print_function_callback(
                     f"Found time difference at: {root_relative_path}, Status: FileStatus.MODIFIED"

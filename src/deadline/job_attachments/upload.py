@@ -624,10 +624,11 @@ class S3AssetUploader:
         small_file_queue: list[base_manifest.BaseManifestPath] = []
         large_file_queue: list[base_manifest.BaseManifestPath] = []
         for file in files_to_upload:
-            if file.size <= size_threshold:
-                small_file_queue.append(file)
-            else:
-                large_file_queue.append(file)
+            if file.size is not None:
+                if file.size <= size_threshold:
+                    small_file_queue.append(file)
+                else:
+                    large_file_queue.append(file)
         return (small_file_queue, large_file_queue)
 
     def _get_current_timestamp(self) -> str:
@@ -700,7 +701,7 @@ class S3AssetUploader:
             )
         )
 
-        return (is_uploaded, file.size)
+        return (is_uploaded, file.size or 0)
 
     def _snapshot_object_to_cas(
         self,

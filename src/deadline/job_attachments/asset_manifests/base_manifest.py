@@ -190,21 +190,38 @@ class BaseManifestPath(ABC):
                 self._validate_symlink_target()
 
     def _validate_symlink_target(self) -> None:
-        """Validate that symlink_target is a valid relative path within the manifest."""
+        """Validate that symlink_target is a valid relative path within the manifest.
+
+        Note: This validation is intentionally permissive about '..' in targets.
+        A symlink in a subdirectory (e.g., 'subdir/link.txt') can legitimately
+        point to '../target.txt' if the target is within the manifest root.
+        Full validation with path context happens at collection time in
+        _create_symlink_entry().
+        """
         target = self.symlink_target
         if target is None:
             return
 
         # Must be a relative path (not absolute)
+        # Check both POSIX and Windows absolute path formats
         if posixpath.isabs(target):
             raise ManifestDecodeValidationError(
                 f"Symlink '{self.path}' target must be a relative path, got absolute: '{target}'"
             )
 
-        # Must not escape outside the manifest root (start with '..')
-        # No need to check the rest of the path because
-        # the path is normalized before validation.
-        if target.startswith(".."):
+        # Check Windows-style absolute paths (drive letter or UNC)
+        if len(target) >= 2 and target[1] == ":" and target[0].isalpha():
+            raise ManifestDecodeValidationError(
+                f"Symlink '{self.path}' target must be a relative path, got absolute: '{target}'"
+            )
+        if target.startswith("\\\\") or target.startswith("//"):
+            raise ManifestDecodeValidationError(
+                f"Symlink '{self.path}' target must be a relative path, got absolute: '{target}'"
+            )
+
+        # Check if target would escape from root when symlink is at root level
+        # A symlink at root level (no '/' in path) cannot have target starting with '..'
+        if "/" not in self.path and target.startswith(".."):
             raise ManifestDecodeValidationError(
                 f"Symlink '{self.path}' target escapes manifest root: '{target}'"
             )

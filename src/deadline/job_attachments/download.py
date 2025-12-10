@@ -440,7 +440,7 @@ def download_files_in_directory(
     for path_group in all_grouped_paths.values():
         for hash_alg, path_list in path_group.files_by_hash_alg.items():
             files_list = [file for file in path_list if file.path.startswith(directory_path + "/")]
-            files_size = sum([file.size for file in files_list])
+            files_size = sum([file.size or 0 for file in files_list])
             total_bytes += files_size
             total_files += len(files_list)
             files_to_download[hash_alg].extend(files_list)
@@ -502,9 +502,9 @@ def download_file(
     transfer_manager = get_s3_transfer_manager(s3_client=s3_client)
 
     # The modified time in the manifest is in microseconds, but utime requires the time be expressed in seconds.
-    modified_time_override = file.mtime / 1000000  # type: ignore[attr-defined]
+    modified_time_override = (file.mtime or 0) / 1000000  # type: ignore[attr-defined]
 
-    file_bytes = file.size
+    file_bytes = file.size or 0
 
     # Python will handle the path separator '/' correctly on every platform.
     local_file_path: Path = _get_long_path_compatible_path(
