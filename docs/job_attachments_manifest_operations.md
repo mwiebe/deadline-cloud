@@ -25,6 +25,9 @@ The manifest system uses four composable operations that can be combined to impl
 │  4. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
 │     _compute_diff_manifest(parent, current, parent_hash, ignore_hashes) │
 │                                                                         │
+│  5. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
+│     _compose_manifests(manifests) → BaseAssetManifest                   │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -47,6 +50,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
+| `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
 
 ## Operation Details
 
@@ -356,6 +360,85 @@ Output:
 New: 3, Deleted: 1
 Diff manifest type: ManifestType.DIFF
 Parent hash: f8e9d0c1b2a34567...
+```
+
+### 5. COMPOSE: `_compose_manifests()`
+
+**Location:** `_compose_manifest.py`
+
+Layers multiple manifests together into a single manifest, as if applying each manifest as a set of changes in order:
+
+```python
+def _compose_manifests(
+    manifests: List[BaseAssetManifest],
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+) -> BaseAssetManifest:
+```
+
+**Behavior by version:**
+
+| Version | Input | Output | Description |
+|---------|-------|--------|-------------|
+| v2023-03-03 | (manifest₁, manifest₂, ...) | snapshot | Layer snapshots; later entries override earlier |
+| v2025-12-04-beta | (snapshot, diff, diff, ...) | snapshot | Apply diffs to base snapshot |
+| v2025-12-04-beta | (diff, diff, ...) | diff | Combine diffs into single equivalent diff |
+
+**Composition semantics:**
+
+The result represents the directory tree you would get by:
+1. Starting with the first manifest's directory tree
+2. Applying each subsequent manifest as a "patch"—adding new entries, updating modified entries, and removing deleted entries
+
+For v2023-03-03 (no deletion markers):
+- Later manifests override earlier ones for the same path
+- Files only in earlier manifests are preserved
+- No way to express deletions
+
+For v2025-12-04-beta (with deletion markers):
+- Diff manifests can add, modify, or delete entries
+- `deleted=True` markers remove entries from the result
+- Composing (snapshot + diffs) produces a snapshot
+- Composing (diffs only) produces a combined diff
+
+**Key implementation details:**
+
+- All manifests must be the same version
+- Entries are keyed by path; later entries replace earlier ones
+- Deleted markers remove the entry entirely from the result (v2025)
+- Total size is recomputed from the final entry set
+- For v2025 diff composition, `parentManifestHash` comes from the first diff
+
+**Example:**
+
+```python
+from deadline.job_attachments.asset_manifests._compose_manifest import _compose_manifests
+from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+# Load a base snapshot and incremental diffs
+with open("base.manifest") as f:
+    base = decode_manifest(f.read())
+with open("day1.manifest") as f:
+    diff1 = decode_manifest(f.read())
+with open("day2.manifest") as f:
+    diff2 = decode_manifest(f.read())
+
+# Compose into a single snapshot representing the final state
+final = _compose_manifests([base, diff1, diff2])
+
+print(f"Final manifest has {len(final.paths)} entries")
+print(f"Manifest type: {final.manifestType}")  # SNAPSHOT
+```
+
+For v2023 format (layering snapshots):
+
+```python
+# Multiple output manifests from different render tasks
+task1_output = decode_manifest(read_file("task1_output.manifest"))
+task2_output = decode_manifest(read_file("task2_output.manifest"))
+task3_output = decode_manifest(read_file("task3_output.manifest"))
+
+# Merge into single manifest (later tasks override earlier for same paths)
+merged = _compose_manifests([task1_output, task2_output, task3_output])
 ```
 
 ## Workflow Examples
