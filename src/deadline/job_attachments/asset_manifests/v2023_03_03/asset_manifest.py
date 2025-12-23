@@ -67,8 +67,6 @@ class ManifestPath(BaseManifestPath):
 class AssetManifest(BaseAssetManifest):
     """Version v2023-03-03 of the asset manifest"""
 
-    totalSize: int  # pyline: disable=invalid-name
-
     def __init__(
         self,
         *,
@@ -81,8 +79,7 @@ class AssetManifest(BaseAssetManifest):
                 f"Unsupported hashing algorithm: {hash_alg}. Must be one of: {[e.value for e in SUPPORTED_HASH_ALGS]}"
             )
 
-        super().__init__(hash_alg=hash_alg, paths=paths)
-        self.totalSize = total_size
+        super().__init__(hash_alg=hash_alg, paths=paths, total_size=total_size)
         self.manifestVersion = ManifestVersion.v2023_03_03
 
     @classmethod

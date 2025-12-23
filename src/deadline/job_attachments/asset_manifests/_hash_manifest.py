@@ -206,9 +206,7 @@ def _hash_manifest_v2025(
                 )
 
             # Compute chunk hashes
-            chunk_hashes = _hash_file_chunked(
-                abs_path, manifest.hashAlg, FILE_CHUNK_SIZE_BYTES
-            )
+            chunk_hashes = _hash_file_chunked(abs_path, manifest.hashAlg, FILE_CHUNK_SIZE_BYTES)
 
             hashed_paths.append(
                 ManifestFilePath2025(

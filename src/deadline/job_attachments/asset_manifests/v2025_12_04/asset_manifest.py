@@ -76,8 +76,6 @@ class ManifestFilePath(BaseManifestPath):
 class AssetManifest(BaseAssetManifest):
     """EXPERIMENTAL: Version v2025-12-04-beta of the asset manifest."""
 
-    totalSize: int
-
     def __init__(
         self,
         *,
@@ -99,9 +97,9 @@ class AssetManifest(BaseAssetManifest):
             manifest_type=manifest_type,
             dirs=dirs,
             paths=paths,
+            total_size=total_size,
             parent_manifest_hash=parent_manifest_hash,
         )
-        self.totalSize = total_size
         self.manifestVersion = ManifestVersion.v2025_12_04_beta
 
     @classmethod

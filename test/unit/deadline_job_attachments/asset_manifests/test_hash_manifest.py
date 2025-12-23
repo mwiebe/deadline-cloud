@@ -17,12 +17,10 @@ import os
 import pytest
 from pathlib import Path
 from typing import List
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from deadline.job_attachments.asset_manifests._hash_manifest import (
     _hash_manifest,
-    _hash_manifest_v2023,
-    _hash_manifest_v2025,
     _get_or_compute_hash,
     _hash_file_chunked,
 )
@@ -303,9 +301,7 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = _hash_manifest(
-                collected, tmp_path, hash_cache=hash_cache, force_rehash=True
-            )
+            hashed = _hash_manifest(collected, tmp_path, hash_cache=hash_cache, force_rehash=True)
 
             # Should compute new hash despite cache hit
             assert hashed.paths[0].hash != fake_hash

@@ -250,6 +250,7 @@ class BaseAssetManifest(ABC):
         hashAlg: Hashing algorithm used for file content hashes.
         manifestVersion: Version of the manifest format.
         paths: List of file entries.
+        totalSize: Total size of all files in the manifest (in bytes).
         manifestType: Whether this is a snapshot or diff manifest (v2025_12_04+).
         dirs: List of directory entries (v2025_12_04+).
         parentManifestHash: Hash of parent snapshot for diff manifests (v2025_12_04+).
@@ -258,6 +259,7 @@ class BaseAssetManifest(ABC):
     hashAlg: HashAlgorithm
     manifestVersion: ManifestVersion
     paths: list
+    totalSize: int
     # v2025_12_04+ fields
     manifestType: ManifestType
     dirs: list
@@ -268,12 +270,14 @@ class BaseAssetManifest(ABC):
         *,
         hash_alg: HashAlgorithm,
         paths: list,
+        total_size: int = 0,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
         dirs: Optional[list] = None,
         parent_manifest_hash: Optional[str] = None,
     ):
         self.hashAlg = hash_alg
         self.manifestType = manifest_type
+        self.totalSize = total_size
         self.dirs = dirs if dirs is not None else []
         self.paths = paths if paths is not None else []
         self.parentManifestHash = parent_manifest_hash
