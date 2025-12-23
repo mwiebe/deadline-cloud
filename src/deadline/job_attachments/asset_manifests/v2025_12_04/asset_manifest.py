@@ -116,9 +116,17 @@ class AssetManifest(BaseAssetManifest):
                 f"Must be one of: {[e.value for e in SUPPORTED_HASH_ALGS]}"
             )
 
-        # Determine manifest type from presence of parentManifestHash
+        # Determine manifest type from manifestType field (defaults to snapshot)
+        manifest_type_str = manifest_data.get("manifestType", ManifestType.SNAPSHOT.value)
+        try:
+            manifest_type = ManifestType(manifest_type_str)
+        except ValueError:
+            raise ManifestDecodeValidationError(
+                f"Unsupported manifest type: {manifest_type_str}. "
+                f"Must be one of: {[e.value for e in ManifestType]}"
+            )
+
         parent_hash = manifest_data.get("parentManifestHash")
-        manifest_type = ManifestType.DIFF if parent_hash else ManifestType.SNAPSHOT
 
         # Decode directories
         dirs = [
@@ -252,12 +260,13 @@ class AssetManifest(BaseAssetManifest):
             "dirs": dirs_json,
             "files": files_json,
             "hashAlg": self.hashAlg.value,
+            "manifestType": self.manifestType.value,
             "manifestVersion": self.manifestVersion.value,
             "totalSize": self.totalSize,
         }
 
-        # Add parentManifestHash for diff manifests
-        if self.manifestType == ManifestType.DIFF and self.parentManifestHash:
+        # Add parentManifestHash if present (optional for both snapshot and diff)
+        if self.parentManifestHash is not None:
             manifest_dict["parentManifestHash"] = self.parentManifestHash
 
         return json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True)

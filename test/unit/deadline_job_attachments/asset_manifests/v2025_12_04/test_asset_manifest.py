@@ -370,6 +370,7 @@ class TestDecode:
         manifest_data = {
             "hashAlg": "xxh128",
             "manifestVersion": "2025-12-04-beta",
+            "manifestType": "diff",
             "parentManifestHash": "parenthash123",
             "dirs": [{"name": "deleted_dir", "delete": True}],
             "files": [

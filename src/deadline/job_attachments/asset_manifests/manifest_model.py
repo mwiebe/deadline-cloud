@@ -27,7 +27,7 @@ class ManifestModelRegistry:
     @classmethod
     def register(cls) -> None:
         """
-        Register the availble manifest models.
+        Register the available manifest models.
         """
         # Import here to avoid circular dependancies.
         from .v2023_03_03 import ManifestModel as _ManifestModel2023_03_03

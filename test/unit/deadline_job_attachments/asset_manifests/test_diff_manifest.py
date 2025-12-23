@@ -1,0 +1,1298 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+"""
+Tests for _compute_diff_manifest and related functions.
+
+These tests cover:
+- Basic diff computation for both v2023 and v2025 formats
+- New file detection
+- Modified file detection (by hash comparison)
+- Deleted file detection (v2025 only - v2023 doesn't support deletion markers)
+- Directory change detection (v2025 only)
+- Symlink change detection (v2025 only)
+- Parent manifest hash computation
+- Version mismatch error handling
+
+Note: The diff operation is a pure comparison - it does NOT compute hashes.
+Both input manifests must already have hashes computed via _hash_manifest().
+"""
+
+import pytest
+from pathlib import Path
+from typing import List
+
+from deadline.job_attachments.asset_manifests._diff_manifest import (
+    _compute_diff_manifest,
+    _entries_differ,
+)
+from deadline.job_attachments.asset_manifests._filter_manifest import (
+    _filter_manifest,
+    IncludeExcludePathsFilter,
+)
+from deadline.job_attachments.asset_manifests.versions import (
+    ManifestType,
+    ManifestVersion,
+)
+from deadline.job_attachments.asset_manifests.hash_algorithms import (
+    HashAlgorithm,
+    hash_data,
+)
+from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
+    AssetManifest as AssetManifest2023,
+    ManifestPath as ManifestPath2023,
+)
+from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+    AssetManifest as AssetManifest2025,
+    ManifestDirectoryPath as ManifestDirectoryPath2025,
+    ManifestFilePath as ManifestFilePath2025,
+)
+
+
+class TestComputeDiffManifestV2023:
+    """Tests for v2023-03-03 diff computation."""
+
+    def _create_v2023_manifest(
+        self, paths: List[tuple[str, str, int, int]]
+    ) -> AssetManifest2023:
+        """Helper to create a v2023 manifest.
+
+        Args:
+            paths: List of (path, hash, size, mtime) tuples
+        """
+        entries = [
+            ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths
+        ]
+        total_size = sum(s for _, _, s, _ in paths)
+        return AssetManifest2023(
+            hash_alg=HashAlgorithm.XXH128,
+            paths=entries,
+            total_size=total_size,
+        )
+
+    def test_no_changes_returns_empty(self) -> None:
+        """No changes between parent and current returns empty manifest."""
+        parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 0
+
+    def test_new_file_detected(self) -> None:
+        """New file in current is included in diff."""
+        parent = self._create_v2023_manifest([("old.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest(
+            [
+                ("old.txt", "hash1", 100, 1000),
+                ("new.txt", "hash2", 50, 2000),
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "new.txt"
+        assert diff.paths[0].hash == "hash2"
+
+    def test_modified_file_detected(self) -> None:
+        """Modified file (different hash) is detected."""
+        parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest([("file.txt", "hash2", 100, 2000)])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].hash == "hash2"
+
+    def test_same_hash_different_mtime_is_modified(self) -> None:
+        """Same hash but different mtime IS considered modified in v2023."""
+        parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest([("file.txt", "hash1", 100, 2000)])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Different mtime = modified (even with same hash)
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].mtime == 2000
+
+    def test_same_hash_different_size_is_modified(self) -> None:
+        """Same hash but different size IS considered modified in v2023."""
+        parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest([("file.txt", "hash1", 200, 1000)])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Different size = modified (even with same hash)
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].size == 200
+
+    def test_all_same_not_modified(self) -> None:
+        """File with same hash, size, and mtime is not modified."""
+        parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Everything same = not modified
+        assert len(diff.paths) == 0
+
+    def test_unchanged_file_not_in_diff(self) -> None:
+        """Unchanged file is not included in diff."""
+        parent = self._create_v2023_manifest(
+            [
+                ("unchanged.txt", "hash1", 100, 1000),
+                ("changed.txt", "hash2", 200, 2000),
+            ]
+        )
+        current = self._create_v2023_manifest(
+            [
+                ("unchanged.txt", "hash1", 100, 1000),
+                ("changed.txt", "hash3", 200, 3000),  # Different hash
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        paths = {p.path for p in diff.paths}
+        assert "unchanged.txt" not in paths
+        assert "changed.txt" in paths
+
+    def test_v2023_no_deletion_markers(self) -> None:
+        """v2023 format doesn't include deletion markers."""
+        parent = self._create_v2023_manifest(
+            [
+                ("keep.txt", "hash1", 100, 1000),
+                ("delete.txt", "hash2", 200, 2000),
+            ]
+        )
+        current = self._create_v2023_manifest([("keep.txt", "hash1", 100, 1000)])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # v2023 doesn't track deletions, so diff should be empty
+        assert len(diff.paths) == 0
+
+    def test_total_size_calculated(self) -> None:
+        """Total size is sum of changed entries."""
+        parent = self._create_v2023_manifest([("old.txt", "hash1", 100, 1000)])
+        current = self._create_v2023_manifest(
+            [
+                ("old.txt", "hash1", 100, 1000),
+                ("new1.txt", "hash2", 50, 2000),
+                ("new2.txt", "hash3", 75, 3000),
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.totalSize == 125  # 50 + 75
+
+
+class TestComputeDiffManifestV2025:
+    """Tests for v2025-12-04-beta diff computation."""
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+        manifest_type: ManifestType = ManifestType.SNAPSHOT,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+            manifest_type=manifest_type,
+        )
+
+    def test_no_changes_returns_empty_diff(self) -> None:
+        """No changes returns diff manifest with no entries."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.manifestType == ManifestType.DIFF
+        assert len(diff.paths) == 0
+        assert len(diff.dirs) == 0
+
+    def test_parent_manifest_hash_stored(self) -> None:
+        """parentManifestHash is stored when provided."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        parent_hash = "abc123def456"
+
+        diff = _compute_diff_manifest(parent, current, parent_manifest_hash=parent_hash)
+
+        assert diff.parentManifestHash == parent_hash
+
+    def test_parent_manifest_hash_optional(self) -> None:
+        """parentManifestHash is optional."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.parentManifestHash is None
+
+    def test_new_file_detected(self) -> None:
+        """New file in current is included in diff."""
+        parent = self._create_v2025_manifest(
+            [{"path": "old.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {"path": "old.txt", "hash": "hash1", "size": 100, "mtime": 1000},
+                {"path": "new.txt", "hash": "hash2", "size": 50, "mtime": 2000},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        new_entry = next((p for p in diff.paths if p.path == "new.txt"), None)
+        assert new_entry is not None
+        assert new_entry.hash == "hash2"
+        assert not new_entry.deleted
+
+    def test_deleted_file_has_marker(self) -> None:
+        """Deleted file has deleted=True marker in diff."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "keep.txt", "hash": "hash1", "size": 100, "mtime": 1000},
+                {"path": "delete.txt", "hash": "hash2", "size": 200, "mtime": 2000},
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "keep.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        deleted_entry = next((p for p in diff.paths if p.path == "delete.txt"), None)
+        assert deleted_entry is not None
+        assert deleted_entry.deleted is True
+
+    def test_modified_file_detected(self) -> None:
+        """Modified file (different hash) is detected."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash2", "size": 100, "mtime": 2000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].hash == "hash2"
+
+    def test_new_directory_included(self) -> None:
+        """New directory is included in diff."""
+        parent = self._create_v2025_manifest(files=[], dirs=[{"path": "old_dir"}])
+        current = self._create_v2025_manifest(
+            files=[], dirs=[{"path": "old_dir"}, {"path": "new_dir"}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        dir_paths = {d.path for d in diff.dirs}
+        assert "new_dir" in dir_paths
+
+    def test_deleted_directory_has_marker(self) -> None:
+        """Deleted directory has deleted=True marker."""
+        parent = self._create_v2025_manifest(
+            files=[], dirs=[{"path": "keep_dir"}, {"path": "delete_dir"}]
+        )
+        current = self._create_v2025_manifest(files=[], dirs=[{"path": "keep_dir"}])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        deleted_dir = next((d for d in diff.dirs if d.path == "delete_dir"), None)
+        assert deleted_dir is not None
+        assert deleted_dir.deleted is True
+
+    def test_symlink_change_detected(self) -> None:
+        """Changed symlink target is detected."""
+        parent = self._create_v2025_manifest(
+            [{"path": "link.txt", "symlink_target": "old_target.txt"}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "link.txt", "symlink_target": "new_target.txt"}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "link.txt"
+        assert diff.paths[0].symlink_target == "new_target.txt"
+
+    def test_new_symlink_included(self) -> None:
+        """New symlink is included in diff."""
+        parent = self._create_v2025_manifest(files=[])
+        current = self._create_v2025_manifest(
+            [{"path": "link.txt", "symlink_target": "target.txt"}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].symlink_target == "target.txt"
+
+    def test_deleted_symlink_has_marker(self) -> None:
+        """Deleted symlink has deleted=True marker."""
+        parent = self._create_v2025_manifest(
+            [{"path": "link.txt", "symlink_target": "target.txt"}]
+        )
+        current = self._create_v2025_manifest(files=[])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "link.txt"
+        assert diff.paths[0].deleted is True
+
+    def test_preserves_runnable_flag(self) -> None:
+        """Runnable flag is preserved for changed files."""
+        parent = self._create_v2025_manifest(files=[])
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.paths[0].runnable is True
+
+    def test_preserves_chunkhashes(self) -> None:
+        """Chunkhashes are preserved for large files."""
+        parent = self._create_v2025_manifest(files=[])
+        # 512MB file = 2 chunks
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["chunk1", "chunk2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.paths[0].chunkhashes == ["chunk1", "chunk2"]
+
+    def test_chunked_file_modification_detected(self) -> None:
+        """Modified chunked file (different chunkhashes) is detected."""
+        parent = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["chunk1", "chunk2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["chunk1", "chunk3"],  # Second chunk changed
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 2000,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].chunkhashes == ["chunk1", "chunk3"]
+
+    def test_total_size_calculated(self) -> None:
+        """Total size is sum of non-deleted, non-symlink entries."""
+        parent = self._create_v2025_manifest(
+            [{"path": "delete.txt", "hash": "h1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "new.txt", "hash": "h2", "size": 50, "mtime": 2000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Should include new.txt (50) but not deleted.txt
+        assert diff.totalSize == 50
+
+    def test_symlinks_not_counted_in_total_size(self) -> None:
+        """Symlinks don't contribute to total size."""
+        parent = self._create_v2025_manifest(files=[])
+        current = self._create_v2025_manifest(
+            [
+                {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "link.txt", "symlink_target": "file.txt"},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.totalSize == 100  # Only file.txt, not symlink
+
+
+class TestComputeDiffManifestValidation:
+    """Tests for validation and error handling."""
+
+    def test_version_mismatch_raises_error(self) -> None:
+        """Mismatched versions raise ValueError."""
+        parent = AssetManifest2023(
+            hash_alg=HashAlgorithm.XXH128,
+            paths=[],
+            total_size=0,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[],
+            total_size=0,
+        )
+
+        with pytest.raises(ValueError, match="does not match"):
+            _compute_diff_manifest(parent, current)
+
+    def test_type_error_for_wrong_manifest_type_v2023(self) -> None:
+        """TypeError raised if manifest type doesn't match version for v2023."""
+        parent = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[],
+            total_size=0,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[],
+            total_size=0,
+        )
+        # Manually override version to trigger type check
+        parent.manifestVersion = ManifestVersion.v2023_03_03
+        current.manifestVersion = ManifestVersion.v2023_03_03
+
+        with pytest.raises(TypeError, match="Expected AssetManifest2023"):
+            _compute_diff_manifest(parent, current)
+
+
+class TestComputeDiffWithFilter:
+    """Tests for diff computation with filtering.
+
+    These tests verify the critical requirement that both parent and current
+    must be filtered with the same filter for correct diff computation.
+    """
+
+    def test_filter_both_for_correct_deletions(self) -> None:
+        """Filtering both manifests gives correct deletion detection.
+
+        Scenario:
+        - Parent has: [model.blend, texture.png]
+        - Current has: [model.blend, new.blend]
+        - Filter: *.blend
+
+        Without filtering parent, texture.png would incorrectly appear as deleted.
+        With filtering both, only new.blend appears as added.
+        """
+        parent = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath2025(path="model.blend", hash="h1", size=100, mtime=1000),
+                ManifestFilePath2025(path="texture.png", hash="h2", size=200, mtime=2000),
+            ],
+            total_size=300,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath2025(path="model.blend", hash="h1", size=100, mtime=1000),
+                ManifestFilePath2025(path="new.blend", hash="h3", size=150, mtime=3000),
+            ],
+            total_size=250,
+        )
+
+        # Filter BOTH with same filter
+        filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
+        filtered_parent = _filter_manifest(parent, filter_obj)
+        filtered_current = _filter_manifest(current, filter_obj)
+
+        diff = _compute_diff_manifest(filtered_parent, filtered_current)
+
+        # Should only have new.blend as added, no deletions
+        paths = {p.path for p in diff.paths}
+        assert "new.blend" in paths
+        assert "texture.png" not in paths  # Not deleted because it was filtered out
+
+        # Verify no deletion markers
+        deleted = [p for p in diff.paths if p.deleted]
+        assert len(deleted) == 0
+
+
+class TestEntriesDiffer:
+    """Tests for _entries_differ helper."""
+
+    # === Regular file comparisons ===
+
+    def test_same_hash_not_different(self) -> None:
+        """Same hash means entries don't differ."""
+        e1 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=1000)
+        e2 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=1000)
+        assert _entries_differ(e1, e2) is False
+
+    def test_different_hash_is_different(self) -> None:
+        """Different hash means entries differ."""
+        e1 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=1000)
+        e2 = ManifestFilePath2025(path="f.txt", hash="def456", size=10, mtime=1000)
+        assert _entries_differ(e1, e2) is True
+
+    def test_different_mtime_is_different(self) -> None:
+        """Different mtime means entries differ."""
+        e1 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=1000)
+        e2 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=2000)
+        assert _entries_differ(e1, e2) is True
+
+    def test_different_runnable_is_different(self) -> None:
+        """Different runnable flag means entries differ."""
+        e1 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=1000, runnable=False)
+        e2 = ManifestFilePath2025(path="f.txt", hash="abc123", size=10, mtime=1000, runnable=True)
+        assert _entries_differ(e1, e2) is True
+
+    def test_runnable_false_to_true_is_different(self) -> None:
+        """Changing runnable from False to True is detected."""
+        e1 = ManifestFilePath2025(path="script.sh", hash="abc123", size=10, mtime=1000, runnable=False)
+        e2 = ManifestFilePath2025(path="script.sh", hash="abc123", size=10, mtime=1000, runnable=True)
+        assert _entries_differ(e1, e2) is True
+
+    def test_runnable_true_to_false_is_different(self) -> None:
+        """Changing runnable from True to False is detected."""
+        e1 = ManifestFilePath2025(path="script.sh", hash="abc123", size=10, mtime=1000, runnable=True)
+        e2 = ManifestFilePath2025(path="script.sh", hash="abc123", size=10, mtime=1000, runnable=False)
+        assert _entries_differ(e1, e2) is True
+
+    # === Chunked file comparisons ===
+
+    def test_same_chunkhashes_not_different(self) -> None:
+        """Same chunkhashes means entries don't differ."""
+        e1 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        e2 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        assert _entries_differ(e1, e2) is False
+
+    def test_different_chunkhashes_is_different(self) -> None:
+        """Different chunkhashes means entries differ."""
+        e1 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        e2 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h3"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        assert _entries_differ(e1, e2) is True
+
+    def test_chunked_file_different_mtime_is_different(self) -> None:
+        """Different mtime on chunked file means entries differ."""
+        e1 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        e2 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=2000,
+        )
+        assert _entries_differ(e1, e2) is True
+
+    def test_chunked_file_different_runnable_is_different(self) -> None:
+        """Different runnable on chunked file means entries differ."""
+        e1 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+            runnable=False,
+        )
+        e2 = ManifestFilePath2025(
+            path="large.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+            runnable=True,
+        )
+        assert _entries_differ(e1, e2) is True
+
+    # === Symlink comparisons ===
+
+    def test_same_symlink_target_not_different(self) -> None:
+        """Same symlink target means entries don't differ."""
+        e1 = ManifestFilePath2025(path="link.txt", symlink_target="target.txt")
+        e2 = ManifestFilePath2025(path="link.txt", symlink_target="target.txt")
+        assert _entries_differ(e1, e2) is False
+
+    def test_different_symlink_target_is_different(self) -> None:
+        """Different symlink target means entries differ."""
+        e1 = ManifestFilePath2025(path="link.txt", symlink_target="target1.txt")
+        e2 = ManifestFilePath2025(path="link.txt", symlink_target="target2.txt")
+        assert _entries_differ(e1, e2) is True
+
+    # === Type transitions ===
+
+    def test_regular_file_to_symlink_is_different(self) -> None:
+        """Regular file becoming a symlink is detected."""
+        e1 = ManifestFilePath2025(path="file.txt", hash="abc123", size=10, mtime=1000)
+        e2 = ManifestFilePath2025(path="file.txt", symlink_target="other.txt")
+        assert _entries_differ(e1, e2) is True
+
+    def test_symlink_to_regular_file_is_different(self) -> None:
+        """Symlink becoming a regular file is detected."""
+        e1 = ManifestFilePath2025(path="file.txt", symlink_target="other.txt")
+        e2 = ManifestFilePath2025(path="file.txt", hash="abc123", size=10, mtime=1000)
+        assert _entries_differ(e1, e2) is True
+
+    def test_regular_file_to_chunked_file_is_different(self) -> None:
+        """Regular file becoming a chunked file is detected."""
+        e1 = ManifestFilePath2025(path="file.bin", hash="abc123", size=100, mtime=1000)
+        e2 = ManifestFilePath2025(
+            path="file.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=2000,
+        )
+        assert _entries_differ(e1, e2) is True
+
+    def test_chunked_file_to_regular_file_is_different(self) -> None:
+        """Chunked file becoming a regular file is detected."""
+        e1 = ManifestFilePath2025(
+            path="file.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        e2 = ManifestFilePath2025(path="file.bin", hash="abc123", size=100, mtime=2000)
+        assert _entries_differ(e1, e2) is True
+
+    def test_symlink_to_chunked_file_is_different(self) -> None:
+        """Symlink becoming a chunked file is detected."""
+        e1 = ManifestFilePath2025(path="file.bin", symlink_target="other.bin")
+        e2 = ManifestFilePath2025(
+            path="file.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        assert _entries_differ(e1, e2) is True
+
+    def test_chunked_file_to_symlink_is_different(self) -> None:
+        """Chunked file becoming a symlink is detected."""
+        e1 = ManifestFilePath2025(
+            path="file.bin",
+            chunkhashes=["h1", "h2"],
+            size=512 * 1024 * 1024,
+            mtime=1000,
+        )
+        e2 = ManifestFilePath2025(path="file.bin", symlink_target="other.bin")
+        assert _entries_differ(e1, e2) is True
+
+
+class TestProgressCallback:
+    """Tests for progress callback functionality."""
+
+    def test_callback_for_new_files(self) -> None:
+        """Progress callback is called for new files."""
+        parent = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[],
+            total_size=0,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath2025(path="new.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
+        )
+
+        messages: List[str] = []
+        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+
+        assert any("New" in msg and "new.txt" in msg for msg in messages)
+
+    def test_callback_for_modified_files(self) -> None:
+        """Progress callback is called for modified files."""
+        parent = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath2025(path="file.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath2025(path="file.txt", hash="h2", size=10, mtime=2000)],
+            total_size=10,
+        )
+
+        messages: List[str] = []
+        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+
+        assert any("Modified" in msg and "file.txt" in msg for msg in messages)
+
+    def test_callback_for_deleted_files(self) -> None:
+        """Progress callback is called for deleted files."""
+        parent = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath2025(path="old.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[],
+            total_size=0,
+        )
+
+        messages: List[str] = []
+        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+
+        assert any("Deleted" in msg and "old.txt" in msg for msg in messages)
+
+    def test_callback_for_deleted_dirs(self) -> None:
+        """Progress callback is called for deleted directories."""
+        parent = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[ManifestDirectoryPath2025(path="old_dir")],
+            paths=[],
+            total_size=0,
+        )
+        current = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[],
+            total_size=0,
+        )
+
+        messages: List[str] = []
+        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+
+        assert any("Deleted dir" in msg and "old_dir" in msg for msg in messages)
+
+
+class TestComputeDiffManifestMetadataChanges:
+    """Tests for diff manifest detection of metadata changes (mtime, runnable)."""
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_mtime_change_detected(self) -> None:
+        """File with changed mtime (but same hash) is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 2000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].mtime == 2000
+
+    def test_runnable_change_detected(self) -> None:
+        """File with changed runnable flag (but same hash) is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "script.sh"
+        assert diff.paths[0].runnable is True
+
+    def test_runnable_removed_detected(self) -> None:
+        """File with runnable flag removed is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "script.sh"
+        assert diff.paths[0].runnable is False
+
+    def test_multiple_metadata_changes(self) -> None:
+        """File with multiple metadata changes is detected."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 2000, "runnable": True}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].mtime == 2000
+        assert diff.paths[0].runnable is True
+
+    def test_chunked_file_mtime_change_detected(self) -> None:
+        """Chunked file with changed mtime is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 2000,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].mtime == 2000
+
+    def test_chunked_file_runnable_change_detected(self) -> None:
+        """Chunked file with changed runnable flag is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                    "runnable": False,
+                }
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                    "runnable": True,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].runnable is True
+
+
+class TestComputeDiffManifestTypeTransitions:
+    """Tests for diff manifest detection of entry type transitions."""
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_regular_file_to_symlink(self) -> None:
+        """Regular file becoming a symlink is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "symlink_target": "other.txt"}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].symlink_target == "other.txt"
+        assert diff.paths[0].hash is None
+
+    def test_symlink_to_regular_file(self) -> None:
+        """Symlink becoming a regular file is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "symlink_target": "other.txt"}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+        assert diff.paths[0].hash == "hash1"
+        assert diff.paths[0].symlink_target is None
+
+    def test_regular_file_to_chunked_file(self) -> None:
+        """Regular file becoming a chunked file is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.bin", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "file.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 2000,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.bin"
+        assert diff.paths[0].chunkhashes == ["h1", "h2"]
+        assert diff.paths[0].hash is None
+
+    def test_chunked_file_to_regular_file(self) -> None:
+        """Chunked file becoming a regular file is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [
+                {
+                    "path": "file.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.bin", "hash": "hash1", "size": 100, "mtime": 2000}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.bin"
+        assert diff.paths[0].hash == "hash1"
+        assert diff.paths[0].chunkhashes is None
+
+    def test_symlink_to_chunked_file(self) -> None:
+        """Symlink becoming a chunked file is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.bin", "symlink_target": "other.bin"}]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "file.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.bin"
+        assert diff.paths[0].chunkhashes == ["h1", "h2"]
+        assert diff.paths[0].symlink_target is None
+
+    def test_chunked_file_to_symlink(self) -> None:
+        """Chunked file becoming a symlink is detected as modified."""
+        parent = self._create_v2025_manifest(
+            [
+                {
+                    "path": "file.bin",
+                    "chunkhashes": ["h1", "h2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.bin", "symlink_target": "other.bin"}]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.bin"
+        assert diff.paths[0].symlink_target == "other.bin"
+        assert diff.paths[0].chunkhashes is None
+
+    def test_multiple_type_transitions(self) -> None:
+        """Multiple files with different type transitions are all detected."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "file2.txt", "symlink_target": "target.txt"},
+                {
+                    "path": "file3.bin",
+                    "chunkhashes": ["c1", "c2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                },
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                # file1: regular -> symlink
+                {"path": "file1.txt", "symlink_target": "other.txt"},
+                # file2: symlink -> regular
+                {"path": "file2.txt", "hash": "h2", "size": 50, "mtime": 2000},
+                # file3: chunked -> regular
+                {"path": "file3.bin", "hash": "h3", "size": 100, "mtime": 2000},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 3
+        paths = {p.path: p for p in diff.paths}
+
+        assert paths["file1.txt"].symlink_target == "other.txt"
+        assert paths["file2.txt"].hash == "h2"
+        assert paths["file3.bin"].hash == "h3"
+
+
+class TestComputeDiffManifestMixedChanges:
+    """Tests for diff manifest with mixed change types."""
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_mixed_new_modified_deleted(self) -> None:
+        """Diff with new, modified, and deleted files."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "unchanged.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "modified.txt", "hash": "h2", "size": 200, "mtime": 1000},
+                {"path": "deleted.txt", "hash": "h3", "size": 300, "mtime": 1000},
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {"path": "unchanged.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "modified.txt", "hash": "h2_new", "size": 200, "mtime": 2000},
+                {"path": "new.txt", "hash": "h4", "size": 400, "mtime": 2000},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        paths = {p.path: p for p in diff.paths}
+        assert "unchanged.txt" not in paths
+        assert "modified.txt" in paths
+        assert paths["modified.txt"].hash == "h2_new"
+        assert "deleted.txt" in paths
+        assert paths["deleted.txt"].deleted is True
+        assert "new.txt" in paths
+        assert paths["new.txt"].hash == "h4"
+
+    def test_mixed_content_and_metadata_changes(self) -> None:
+        """Diff with both content and metadata changes."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "content_change.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "mtime_change.txt", "hash": "h2", "size": 200, "mtime": 1000},
+                {"path": "runnable_change.sh", "hash": "h3", "size": 300, "mtime": 1000, "runnable": False},
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {"path": "content_change.txt", "hash": "h1_new", "size": 100, "mtime": 2000},
+                {"path": "mtime_change.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "runnable_change.sh", "hash": "h3", "size": 300, "mtime": 1000, "runnable": True},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        assert len(diff.paths) == 3
+        paths = {p.path: p for p in diff.paths}
+
+        assert paths["content_change.txt"].hash == "h1_new"
+        assert paths["mtime_change.txt"].mtime == 2000
+        assert paths["runnable_change.sh"].runnable is True
+
+    def test_mixed_type_transitions_and_deletions(self) -> None:
+        """Diff with type transitions and deletions."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "file_to_symlink.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "symlink_to_delete.txt", "symlink_target": "target.txt"},
+                {"path": "chunked_to_delete.bin", "chunkhashes": ["c1", "c2"], "size": 512 * 1024 * 1024, "mtime": 1000},
+            ],
+            dirs=[{"path": "dir_to_delete"}],
+        )
+        current = self._create_v2025_manifest(
+            [
+                {"path": "file_to_symlink.txt", "symlink_target": "new_target.txt"},
+            ],
+            dirs=[],
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        paths = {p.path: p for p in diff.paths}
+        dirs = {d.path: d for d in diff.dirs}
+
+        # Type transition
+        assert paths["file_to_symlink.txt"].symlink_target == "new_target.txt"
+
+        # Deletions
+        assert paths["symlink_to_delete.txt"].deleted is True
+        assert paths["chunked_to_delete.bin"].deleted is True
+        assert dirs["dir_to_delete"].deleted is True
+
+    def test_unchanged_symlink_not_in_diff(self) -> None:
+        """Unchanged symlink is not included in diff."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "link.txt", "symlink_target": "target.txt"},
+                {"path": "changed.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {"path": "link.txt", "symlink_target": "target.txt"},
+                {"path": "changed.txt", "hash": "h2", "size": 100, "mtime": 2000},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        paths = {p.path for p in diff.paths}
+        assert "link.txt" not in paths
+        assert "changed.txt" in paths
+
+    def test_unchanged_chunked_file_not_in_diff(self) -> None:
+        """Unchanged chunked file is not included in diff."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "large.bin", "chunkhashes": ["c1", "c2"], "size": 512 * 1024 * 1024, "mtime": 1000},
+                {"path": "changed.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {"path": "large.bin", "chunkhashes": ["c1", "c2"], "size": 512 * 1024 * 1024, "mtime": 1000},
+                {"path": "changed.txt", "hash": "h2", "size": 100, "mtime": 2000},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        paths = {p.path for p in diff.paths}
+        assert "large.bin" not in paths
+        assert "changed.txt" in paths
