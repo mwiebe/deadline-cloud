@@ -329,8 +329,16 @@ class TestHashFileChunked:
         """Small file produces single chunk hash."""
         test_file = tmp_path / "small.txt"
         test_file.write_text("small content")
+        file_size = test_file.stat().st_size
 
-        chunk_hashes = _hash_file_chunked(str(test_file), HashAlgorithm.XXH128, 1024)
+        chunk_hashes = _hash_file_chunked(
+            file_path=test_file,
+            rel_path="small.txt",
+            file_size=file_size,
+            mtime=12345,
+            hash_alg=HashAlgorithm.XXH128,
+            chunk_size=1024,
+        )
 
         assert len(chunk_hashes) == 1
         assert len(chunk_hashes[0]) == 32
@@ -343,7 +351,14 @@ class TestHashFileChunked:
         content = b"x" * 350  # 3.5 chunks worth
         test_file.write_bytes(content)
 
-        chunk_hashes = _hash_file_chunked(str(test_file), HashAlgorithm.XXH128, chunk_size)
+        chunk_hashes = _hash_file_chunked(
+            file_path=test_file,
+            rel_path="large.bin",
+            file_size=350,
+            mtime=12345,
+            hash_alg=HashAlgorithm.XXH128,
+            chunk_size=chunk_size,
+        )
 
         assert len(chunk_hashes) == 4  # ceil(350/100) = 4
 
@@ -355,7 +370,14 @@ class TestHashFileChunked:
         content = b"a" * 100 + b"b" * 100 + b"c" * 100
         test_file.write_bytes(content)
 
-        chunk_hashes = _hash_file_chunked(str(test_file), HashAlgorithm.XXH128, chunk_size)
+        chunk_hashes = _hash_file_chunked(
+            file_path=test_file,
+            rel_path="varied.bin",
+            file_size=300,
+            mtime=12345,
+            hash_alg=HashAlgorithm.XXH128,
+            chunk_size=chunk_size,
+        )
 
         assert len(chunk_hashes) == 3
         # All hashes should be different
@@ -368,10 +390,99 @@ class TestHashFileChunked:
         content = b"x" * 100 + b"x" * 100  # Two identical chunks
         test_file.write_bytes(content)
 
-        chunk_hashes = _hash_file_chunked(str(test_file), HashAlgorithm.XXH128, chunk_size)
+        chunk_hashes = _hash_file_chunked(
+            file_path=test_file,
+            rel_path="repeated.bin",
+            file_size=200,
+            mtime=12345,
+            hash_alg=HashAlgorithm.XXH128,
+            chunk_size=chunk_size,
+        )
 
         assert len(chunk_hashes) == 2
         assert chunk_hashes[0] == chunk_hashes[1]
+
+    def test_uses_cache_for_chunks(self, tmp_path: Path) -> None:
+        """Chunk hashes are cached and retrieved from cache."""
+        test_file = tmp_path / "cached.bin"
+        chunk_size = 100
+        content = b"a" * 100 + b"b" * 100
+        test_file.write_bytes(content)
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        with HashCache(str(cache_dir)) as hash_cache:
+            # First call - computes and caches
+            chunk_hashes_1 = _hash_file_chunked(
+                file_path=test_file,
+                rel_path="cached.bin",
+                file_size=200,
+                mtime=12345,
+                hash_alg=HashAlgorithm.XXH128,
+                chunk_size=chunk_size,
+                hash_cache=hash_cache,
+            )
+
+            # Verify chunks were cached
+            entry_0 = hash_cache.get_entry("cached.bin", HashAlgorithm.XXH128, 0, 100)
+            entry_1 = hash_cache.get_entry("cached.bin", HashAlgorithm.XXH128, 100, 200)
+            assert entry_0 is not None
+            assert entry_1 is not None
+            assert entry_0.file_hash == chunk_hashes_1[0]
+            assert entry_1.file_hash == chunk_hashes_1[1]
+
+            # Second call - should use cache
+            chunk_hashes_2 = _hash_file_chunked(
+                file_path=test_file,
+                rel_path="cached.bin",
+                file_size=200,
+                mtime=12345,
+                hash_alg=HashAlgorithm.XXH128,
+                chunk_size=chunk_size,
+                hash_cache=hash_cache,
+            )
+
+            assert chunk_hashes_1 == chunk_hashes_2
+
+    def test_force_rehash_ignores_chunk_cache(self, tmp_path: Path) -> None:
+        """Force rehash recomputes chunk hashes even with cache."""
+        test_file = tmp_path / "force.bin"
+        chunk_size = 100
+        content = b"x" * 100
+        test_file.write_bytes(content)
+
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        with HashCache(str(cache_dir)) as hash_cache:
+            # Pre-populate cache with fake hash
+            from deadline.job_attachments.caches.hash_cache import HashCacheEntry
+            hash_cache.put_entry(
+                HashCacheEntry(
+                    file_path="force.bin",
+                    hash_algorithm=HashAlgorithm.XXH128,
+                    file_hash="fakehash" + "0" * 24,
+                    last_modified_time="12345",
+                    range_start=0,
+                    range_end=100,
+                )
+            )
+
+            # With force_rehash, should compute real hash
+            chunk_hashes = _hash_file_chunked(
+                file_path=test_file,
+                rel_path="force.bin",
+                file_size=100,
+                mtime=12345,
+                hash_alg=HashAlgorithm.XXH128,
+                chunk_size=chunk_size,
+                hash_cache=hash_cache,
+                force_rehash=True,
+            )
+
+            assert chunk_hashes[0] != "fakehash" + "0" * 24
+            assert len(chunk_hashes[0]) == 32
 
 
 class TestLargeFileChunking:

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 from .base_manifest import BaseAssetManifest, FILE_CHUNK_SIZE_BYTES
-from .hash_algorithms import HashAlgorithm, hash_file, hash_data
+from .hash_algorithms import HashAlgorithm, hash_file
 from .versions import ManifestVersion
 from .v2023_03_03.asset_manifest import (
     AssetManifest as AssetManifest2023,
@@ -31,7 +31,7 @@ from .v2025_12_04.asset_manifest import (
     ManifestDirectoryPath as ManifestDirectoryPath2025,
     ManifestFilePath as ManifestFilePath2025,
 )
-from ..caches.hash_cache import HashCache, HashCacheEntry
+from ..caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
 
 def _hash_manifest(
@@ -206,7 +206,16 @@ def _hash_manifest_v2025(
                 )
 
             # Compute chunk hashes
-            chunk_hashes = _hash_file_chunked(abs_path, manifest.hashAlg, FILE_CHUNK_SIZE_BYTES)
+            chunk_hashes = _hash_file_chunked(
+                file_path=abs_path,
+                rel_path=entry.path,
+                file_size=entry.size,
+                mtime=entry.mtime,
+                hash_alg=manifest.hashAlg,
+                chunk_size=FILE_CHUNK_SIZE_BYTES,
+                hash_cache=hash_cache,
+                force_rehash=force_rehash,
+            )
 
             hashed_paths.append(
                 ManifestFilePath2025(
@@ -283,9 +292,13 @@ def _get_or_compute_hash(
     hash_alg: HashAlgorithm,
     hash_cache: Optional[HashCache],
     force_rehash: bool,
+    range_start: int = 0,
+    range_end: int = WHOLE_FILE_RANGE_END,
 ) -> str:
     """
     Get hash from cache or compute it.
+
+    Supports both whole-file hashes and byte-range hashes for chunked files.
 
     Args:
         file_path: Absolute path to the file
@@ -294,6 +307,8 @@ def _get_or_compute_hash(
         hash_alg: Hash algorithm to use
         hash_cache: Optional hash cache
         force_rehash: If True, ignore cache
+        range_start: Start byte offset (0 for whole-file or chunk start)
+        range_end: End byte offset (-1 for whole-file, or chunk end exclusive)
 
     Returns:
         The file hash as a hex string
@@ -303,12 +318,12 @@ def _get_or_compute_hash(
 
     # Try cache first (unless force_rehash)
     if hash_cache is not None and not force_rehash:
-        cache_entry = hash_cache.get_entry(rel_path, hash_alg)
+        cache_entry = hash_cache.get_entry(rel_path, hash_alg, range_start, range_end)
         if cache_entry is not None and cache_entry.last_modified_time == mtime_str:
             return cache_entry.file_hash
 
-    # Compute hash
-    file_hash = hash_file(str(file_path), hash_alg)
+    # Compute hash (works for both whole-file and byte-range)
+    file_hash = hash_file(str(file_path), hash_alg, range_start, range_end)
 
     # Update cache
     if hash_cache is not None:
@@ -318,6 +333,8 @@ def _get_or_compute_hash(
                 hash_algorithm=hash_alg,
                 file_hash=file_hash,
                 last_modified_time=mtime_str,
+                range_start=range_start,
+                range_end=range_end,
             )
         )
 
@@ -325,28 +342,53 @@ def _get_or_compute_hash(
 
 
 def _hash_file_chunked(
-    file_path: Path | str,
+    file_path: Path,
+    rel_path: str,
+    file_size: int,
+    mtime: Optional[int],
     hash_alg: HashAlgorithm,
     chunk_size: int,
+    hash_cache: Optional[HashCache] = None,
+    force_rehash: bool = False,
 ) -> List[str]:
     """
     Hash a file in chunks, returning a list of chunk hashes.
 
+    Uses the hash cache for each chunk when available, allowing it to
+    resume part-way through a file without recomputing hashes when
+    hashing is interrupted.
+
     Args:
-        file_path: Path to the file
+        file_path: Absolute path to the file
+        rel_path: Relative path (used as cache key)
+        file_size: Size of the file in bytes
+        mtime: File modification time in microseconds
         hash_alg: Hash algorithm to use
         chunk_size: Size of each chunk in bytes
+        hash_cache: Optional hash cache for efficiency
+        force_rehash: If True, ignore cache and recalculate all hashes
 
     Returns:
         List of hash strings, one per chunk
     """
     chunk_hashes: List[str] = []
+    offset = 0
 
-    with open(file_path, "rb") as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            chunk_hashes.append(hash_data(chunk, hash_alg))
+    while offset < file_size:
+        range_start = offset
+        range_end = min(offset + chunk_size, file_size)
+
+        chunk_hash = _get_or_compute_hash(
+            file_path=file_path,
+            rel_path=rel_path,
+            mtime=mtime,
+            hash_alg=hash_alg,
+            hash_cache=hash_cache,
+            force_rehash=force_rehash,
+            range_start=range_start,
+            range_end=range_end,
+        )
+        chunk_hashes.append(chunk_hash)
+        offset = range_end
 
     return chunk_hashes
