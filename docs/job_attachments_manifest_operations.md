@@ -379,7 +379,7 @@ def _compose_manifests(
 
 | Version | Input | Output | Description |
 |---------|-------|--------|-------------|
-| v2023-03-03 | (manifest₁, manifest₂, ...) | snapshot | Layer snapshots; later entries override earlier |
+| v2023-03-03 | (snapshot, snapshot, ...) | snapshot | Layer snapshots; later entries override earlier |
 | v2025-12-04-beta | (snapshot, diff, diff, ...) | snapshot | Apply diffs to base snapshot |
 | v2025-12-04-beta | (diff, diff, ...) | diff | Combine diffs into single equivalent diff |
 
@@ -395,10 +395,11 @@ For v2023-03-03 (no deletion markers):
 - No way to express deletions
 
 For v2025-12-04-beta (with deletion markers):
-- Diff manifests can add, modify, or delete entries
+- First manifest determines the composition type:
+  - If snapshot: subsequent must be diffs, result is a snapshot
+  - If diff: all must be diffs, result is a combined diff
 - `deleted=True` markers remove entries from the result
-- Composing (snapshot + diffs) produces a snapshot
-- Composing (diffs only) produces a combined diff
+- For diff composition, `parentManifestHash` comes from the first diff
 
 **Key implementation details:**
 
@@ -406,7 +407,8 @@ For v2025-12-04-beta (with deletion markers):
 - Entries are keyed by path; later entries replace earlier ones
 - Deleted markers remove the entry entirely from the result (v2025)
 - Total size is recomputed from the final entry set
-- For v2025 diff composition, `parentManifestHash` comes from the first diff
+- For v2025 snapshot+diffs: first must be snapshot, rest must be diffs
+- For v2025 diff composition: all must be diffs, `parentManifestHash` from first diff
 
 **Example:**
 
@@ -564,6 +566,15 @@ Deleted entries can only have:
 - `deleted=True` (required)
 
 All other fields must be None/False.
+
+### Directory Deletion Semantics (v2025-12-04-beta)
+
+A directory deletion marker means "delete this empty directory". To delete a non-empty directory, you must explicitly delete all its contents first:
+- All files and symlinks within the directory
+- All subdirectories (recursively, following the same rule)
+- Finally, the directory itself
+
+This explicit deletion requirement ensures that diff manifests are fully composable—each deletion is self-contained and doesn't depend on knowing the parent snapshot's contents.
 
 ## Benefits of Composable Design
 
