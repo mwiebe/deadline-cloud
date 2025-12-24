@@ -20,14 +20,14 @@ from pathlib import Path
 import stat
 from typing import Any, Callable, List, Optional
 
-from .base_manifest import BaseAssetManifest
-from .hash_algorithms import HashAlgorithm
-from .versions import ManifestType, ManifestVersion
-from .v2023_03_03.asset_manifest import (
+from ..base_manifest import BaseAssetManifest
+from ..hash_algorithms import HashAlgorithm
+from ..versions import ManifestType, ManifestVersion
+from ..v2023_03_03.asset_manifest import (
     AssetManifest as AssetManifest2023,
     ManifestPath as ManifestPath2023,
 )
-from .v2025_12_04.asset_manifest import (
+from ..v2025_12_04.asset_manifest import (
     AssetManifest as AssetManifest2025,
     ManifestDirectoryPath as ManifestDirectoryPath2025,
     ManifestFilePath as ManifestFilePath2025,

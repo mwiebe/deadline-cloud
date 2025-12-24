@@ -29,13 +29,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from .base_manifest import BaseAssetManifest, BaseManifestPath
-from .versions import ManifestType, ManifestVersion
-from .v2023_03_03.asset_manifest import (
+from ..base_manifest import BaseAssetManifest, BaseManifestPath
+from ..versions import ManifestType, ManifestVersion
+from ..v2023_03_03.asset_manifest import (
     AssetManifest as AssetManifest2023,
     ManifestPath as ManifestPath2023,
 )
-from .v2025_12_04.asset_manifest import (
+from ..v2025_12_04.asset_manifest import (
     AssetManifest as AssetManifest2025,
     ManifestDirectoryPath as ManifestDirectoryPath2025,
     ManifestFilePath as ManifestFilePath2025,
@@ -168,14 +168,15 @@ def _compute_diff_manifest_v2023(
         # Check if any content or metadata changed
         if ignore_hashes:
             # Fast mode: only compare metadata (size, mtime)
-            if (parent_entry.size != current_entry.size or
-                parent_entry.mtime != current_entry.mtime):
+            if parent_entry.size != current_entry.size or parent_entry.mtime != current_entry.mtime:
                 modified_paths.add(path)
         else:
             # Full mode: compare hash and metadata
-            if (parent_entry.hash != current_entry.hash or
-                parent_entry.size != current_entry.size or
-                parent_entry.mtime != current_entry.mtime):
+            if (
+                parent_entry.hash != current_entry.hash
+                or parent_entry.size != current_entry.size
+                or parent_entry.mtime != current_entry.mtime
+            ):
                 modified_paths.add(path)
 
     # Build result entries
@@ -343,7 +344,9 @@ def _compute_diff_manifest_v2025(
     )
 
 
-def _entries_differ(parent: BaseManifestPath, current: BaseManifestPath, ignore_hashes: bool = False) -> bool:
+def _entries_differ(
+    parent: BaseManifestPath, current: BaseManifestPath, ignore_hashes: bool = False
+) -> bool:
     """
     Check if two file entries differ in any meaningful way.
 

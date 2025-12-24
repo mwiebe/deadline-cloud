@@ -19,12 +19,12 @@ from pathlib import Path
 from typing import List
 from unittest.mock import patch
 
-from deadline.job_attachments.asset_manifests._hash_manifest import (
+from deadline.job_attachments.asset_manifests._operations._hash_manifest import (
     _hash_manifest,
     _get_or_compute_hash,
     _hash_file_chunked,
 )
-from deadline.job_attachments.asset_manifests._collect_manifest import (
+from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
     _collect_manifest_structure,
 )
 from deadline.job_attachments.asset_manifests.versions import (
@@ -458,6 +458,7 @@ class TestHashFileChunked:
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with fake hash
             from deadline.job_attachments.caches.hash_cache import HashCacheEntry
+
             hash_cache.put_entry(
                 HashCacheEntry(
                     file_path="force.bin",
@@ -504,7 +505,7 @@ class TestLargeFileChunking:
 
         # Mock _hash_file_chunked to avoid creating huge file
         with patch(
-            "deadline.job_attachments.asset_manifests._hash_manifest._hash_file_chunked"
+            "deadline.job_attachments.asset_manifests._operations._hash_manifest._hash_file_chunked"
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
@@ -582,7 +583,7 @@ class TestInputValidation:
         collected.paths[0].chunkhashes = ["", "", ""]  # Correct count, empty placeholders
 
         with patch(
-            "deadline.job_attachments.asset_manifests._hash_manifest._hash_file_chunked"
+            "deadline.job_attachments.asset_manifests._operations._hash_manifest._hash_file_chunked"
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2", "hash3"]
 

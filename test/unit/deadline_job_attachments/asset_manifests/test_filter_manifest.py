@@ -18,7 +18,7 @@ These tests cover:
 import pytest
 from typing import List, Union
 
-from deadline.job_attachments.asset_manifests._filter_manifest import (
+from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
     _filter_manifest,
     _filter_manifest_v2023,
     _filter_manifest_v2025,

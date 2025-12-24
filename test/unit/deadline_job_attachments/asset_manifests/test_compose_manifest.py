@@ -20,14 +20,13 @@ from __future__ import annotations
 import pytest
 from typing import List
 
-from deadline.job_attachments.asset_manifests._compose_manifest import (
+from deadline.job_attachments.asset_manifests._operations._compose_manifest import (
     _compose_manifests,
     _ManifestTrieNode,
     _split_path,
 )
 from deadline.job_attachments.asset_manifests.versions import (
     ManifestType,
-    ManifestVersion,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
@@ -189,14 +188,10 @@ class TestManifestTrieNode:
         root = _ManifestTrieNode()
 
         file1 = root.insert_path(["file1.txt"])
-        file1.file_entry = ManifestFilePath2025(
-            path="file1.txt", hash="h1", size=100, mtime=1000
-        )
+        file1.file_entry = ManifestFilePath2025(path="file1.txt", hash="h1", size=100, mtime=1000)
 
         file2 = root.insert_path(["file2.txt"])
-        file2.file_entry = ManifestFilePath2025(
-            path="file2.txt", hash="h2", size=200, mtime=2000
-        )
+        file2.file_entry = ManifestFilePath2025(path="file2.txt", hash="h2", size=200, mtime=2000)
         file2.deleted = True
 
         files = list(root.iter_files())
@@ -353,13 +348,9 @@ class TestComposeManifestsValidation:
 class TestComposeManifestsV2023:
     """Tests for v2023-03-03 manifest composition."""
 
-    def _create_v2023_manifest(
-        self, paths: List[tuple[str, str, int, int]]
-    ) -> AssetManifest2023:
+    def _create_v2023_manifest(self, paths: List[tuple[str, str, int, int]]) -> AssetManifest2023:
         """Helper to create a v2023 manifest."""
-        entries = [
-            ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths
-        ]
+        entries = [ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
         total_size = sum(s for _, _, s, _ in paths)
         return AssetManifest2023(
             hash_alg=HashAlgorithm.XXH128,
@@ -390,14 +381,18 @@ class TestComposeManifestsV2023:
 
     def test_three_manifests_layered(self) -> None:
         """Three manifests are layered correctly."""
-        m1 = self._create_v2023_manifest([
-            ("file.txt", "v1", 100, 1000),
-            ("only_in_m1.txt", "h1", 50, 500),
-        ])
-        m2 = self._create_v2023_manifest([
-            ("file.txt", "v2", 100, 2000),
-            ("only_in_m2.txt", "h2", 60, 600),
-        ])
+        m1 = self._create_v2023_manifest(
+            [
+                ("file.txt", "v1", 100, 1000),
+                ("only_in_m1.txt", "h1", 50, 500),
+            ]
+        )
+        m2 = self._create_v2023_manifest(
+            [
+                ("file.txt", "v2", 100, 2000),
+                ("only_in_m2.txt", "h2", 60, 600),
+            ]
+        )
         m3 = self._create_v2023_manifest([("file.txt", "v3", 100, 3000)])
 
         result = _compose_manifests([m1, m2, m3])
@@ -466,9 +461,11 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_snapshot_with_no_diffs_returns_snapshot(self) -> None:
         """Single snapshot returns as-is."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
 
         result = _compose_manifests([snapshot])
 
@@ -476,12 +473,16 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_diff_adds_new_file(self) -> None:
         """Diff adds a new file to the snapshot."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "existing.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
-        diff = self._create_v2025_diff([
-            {"path": "new.txt", "hash": "h2", "size": 200, "mtime": 2000},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "existing.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+        diff = self._create_v2025_diff(
+            [
+                {"path": "new.txt", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff])
 
@@ -491,12 +492,16 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_diff_modifies_existing_file(self) -> None:
         """Diff modifies an existing file."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
-        diff = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "h2", "size": 200, "mtime": 2000},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+        diff = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff])
 
@@ -507,10 +512,12 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_diff_deletes_file(self) -> None:
         """Diff deletes a file from the snapshot."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
-            {"path": "delete.txt", "hash": "h2", "size": 200, "mtime": 2000},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "delete.txt", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
         diff = self._create_v2025_diff([{"path": "delete.txt", "deleted": True}])
 
         result = _compose_manifests([snapshot, diff])
@@ -537,15 +544,21 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_multiple_diffs_applied_in_order(self) -> None:
         """Multiple diffs are applied in order."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "file.txt", "hash": "v1", "size": 100, "mtime": 1000},
-        ])
-        diff1 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "v2", "size": 100, "mtime": 2000},
-        ])
-        diff2 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "v3", "size": 100, "mtime": 3000},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "file.txt", "hash": "v1", "size": 100, "mtime": 1000},
+            ]
+        )
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "v2", "size": 100, "mtime": 2000},
+            ]
+        )
+        diff2 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "v3", "size": 100, "mtime": 3000},
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff1, diff2])
 
@@ -554,9 +567,11 @@ class TestComposeManifestsSnapshotDiffsV2025:
     def test_add_then_delete_removes_file(self) -> None:
         """File added then deleted is not in result."""
         snapshot = self._create_v2025_snapshot([])
-        diff1 = self._create_v2025_diff([
-            {"path": "temp.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "temp.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
         diff2 = self._create_v2025_diff([{"path": "temp.txt", "deleted": True}])
 
         result = _compose_manifests([snapshot, diff1, diff2])
@@ -565,13 +580,17 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_delete_then_add_restores_file(self) -> None:
         """File deleted then added is in result."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "file.txt", "hash": "v1", "size": 100, "mtime": 1000},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "file.txt", "hash": "v1", "size": 100, "mtime": 1000},
+            ]
+        )
         diff1 = self._create_v2025_diff([{"path": "file.txt", "deleted": True}])
-        diff2 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "v2", "size": 200, "mtime": 3000},
-        ])
+        diff2 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "v2", "size": 200, "mtime": 3000},
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff1, diff2])
 
@@ -580,12 +599,16 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_symlink_handling(self) -> None:
         """Symlinks are handled correctly."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "link.txt", "symlink_target": "old_target.txt"},
-        ])
-        diff = self._create_v2025_diff([
-            {"path": "link.txt", "symlink_target": "new_target.txt"},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "link.txt", "symlink_target": "old_target.txt"},
+            ]
+        )
+        diff = self._create_v2025_diff(
+            [
+                {"path": "link.txt", "symlink_target": "new_target.txt"},
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff])
 
@@ -593,12 +616,16 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_runnable_flag_preserved(self) -> None:
         """Runnable flag is preserved in composition."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False},
-        ])
-        diff = self._create_v2025_diff([
-            {"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": True},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False},
+            ]
+        )
+        diff = self._create_v2025_diff(
+            [
+                {"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": True},
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff])
 
@@ -607,12 +634,16 @@ class TestComposeManifestsSnapshotDiffsV2025:
     def test_chunkhashes_preserved(self) -> None:
         """Chunkhashes are preserved for large files."""
         snapshot = self._create_v2025_snapshot([])
-        diff = self._create_v2025_diff([{
-            "path": "large.bin",
-            "chunkhashes": ["c1", "c2", "c3"],
-            "size": 768 * 1024 * 1024,
-            "mtime": 1000,
-        }])
+        diff = self._create_v2025_diff(
+            [
+                {
+                    "path": "large.bin",
+                    "chunkhashes": ["c1", "c2", "c3"],
+                    "size": 768 * 1024 * 1024,
+                    "mtime": 1000,
+                }
+            ]
+        )
 
         result = _compose_manifests([snapshot, diff])
 
@@ -620,10 +651,12 @@ class TestComposeManifestsSnapshotDiffsV2025:
 
     def test_total_size_excludes_symlinks(self) -> None:
         """Total size excludes symlinks."""
-        snapshot = self._create_v2025_snapshot([
-            {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-            {"path": "link.txt", "symlink_target": "file.txt"},
-        ])
+        snapshot = self._create_v2025_snapshot(
+            [
+                {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "link.txt", "symlink_target": "file.txt"},
+            ]
+        )
 
         result = _compose_manifests([snapshot])
 
@@ -669,12 +702,16 @@ class TestComposeManifestsDiffsV2025:
 
     def test_result_is_diff_type(self) -> None:
         """Composed diffs result in a diff manifest."""
-        diff1 = self._create_v2025_diff([
-            {"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
-        diff2 = self._create_v2025_diff([
-            {"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
-        ])
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+        diff2 = self._create_v2025_diff(
+            [
+                {"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
 
         result = _compose_manifests([diff1, diff2])
 
@@ -697,12 +734,16 @@ class TestComposeManifestsDiffsV2025:
 
     def test_additions_merged(self) -> None:
         """Additions from multiple diffs are merged."""
-        diff1 = self._create_v2025_diff([
-            {"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
-        diff2 = self._create_v2025_diff([
-            {"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
-        ])
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+        diff2 = self._create_v2025_diff(
+            [
+                {"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
 
         result = _compose_manifests([diff1, diff2])
 
@@ -711,12 +752,16 @@ class TestComposeManifestsDiffsV2025:
 
     def test_later_modification_overrides_earlier(self) -> None:
         """Later modification overrides earlier one."""
-        diff1 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "v1", "size": 100, "mtime": 1000},
-        ])
-        diff2 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "v2", "size": 200, "mtime": 2000},
-        ])
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "v1", "size": 100, "mtime": 1000},
+            ]
+        )
+        diff2 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "v2", "size": 200, "mtime": 2000},
+            ]
+        )
 
         result = _compose_manifests([diff1, diff2])
 
@@ -733,9 +778,11 @@ class TestComposeManifestsDiffsV2025:
 
     def test_add_then_delete_preserves_deletion(self) -> None:
         """File added then deleted still has deletion marker."""
-        diff1 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
         diff2 = self._create_v2025_diff([{"path": "file.txt", "deleted": True}])
 
         result = _compose_manifests([diff1, diff2])
@@ -746,9 +793,11 @@ class TestComposeManifestsDiffsV2025:
     def test_delete_then_add_clears_deletion(self) -> None:
         """File deleted then added clears the deletion marker."""
         diff1 = self._create_v2025_diff([{"path": "file.txt", "deleted": True}])
-        diff2 = self._create_v2025_diff([
-            {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-        ])
+        diff2 = self._create_v2025_diff(
+            [
+                {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
 
         result = _compose_manifests([diff1, diff2])
 
@@ -811,10 +860,12 @@ class TestComposeManifestsDiffsV2025:
 
     def test_total_size_excludes_deleted_entries(self) -> None:
         """Total size excludes deleted entries."""
-        diff1 = self._create_v2025_diff([
-            {"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
-            {"path": "delete.txt", "deleted": True},
-        ])
+        diff1 = self._create_v2025_diff(
+            [
+                {"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "delete.txt", "deleted": True},
+            ]
+        )
 
         result = _compose_manifests([diff1])
 

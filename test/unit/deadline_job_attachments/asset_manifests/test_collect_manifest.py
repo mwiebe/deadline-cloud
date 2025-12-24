@@ -19,7 +19,7 @@ import pytest
 from pathlib import Path
 from typing import List
 
-from deadline.job_attachments.asset_manifests._collect_manifest import (
+from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
     _collect_manifest_structure,
     _collect_manifest_structure_v2023,
     _collect_manifest_structure_v2025,

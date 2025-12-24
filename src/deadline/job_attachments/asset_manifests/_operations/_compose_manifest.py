@@ -20,15 +20,15 @@ Supported compositions:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-from .base_manifest import BaseAssetManifest
-from .versions import ManifestType, ManifestVersion
-from .v2023_03_03.asset_manifest import (
+from ..base_manifest import BaseAssetManifest
+from ..versions import ManifestType, ManifestVersion
+from ..v2023_03_03.asset_manifest import (
     AssetManifest as AssetManifest2023,
     ManifestPath as ManifestPath2023,
 )
-from .v2025_12_04.asset_manifest import (
+from ..v2025_12_04.asset_manifest import (
     AssetManifest as AssetManifest2025,
     ManifestDirectoryPath as ManifestDirectoryPath2025,
     ManifestFilePath as ManifestFilePath2025,
@@ -171,9 +171,7 @@ class _ManifestTrieNode:
         node.deleted = True
         return node
 
-    def iter_files(
-        self, path_prefix: List[str] = []
-    ) -> Iterator[Tuple[str, ManifestFilePath2025]]:
+    def iter_files(self, path_prefix: List[str] = []) -> Iterator[Tuple[str, ManifestFilePath2025]]:
         """
         Iterate over all file entries in the trie (excludes deleted nodes).
 
@@ -439,7 +437,7 @@ def _compose_manifests_snapshot_diffs_v2025(
         components = _split_path(dir_entry.path)
         root.insert_path(components)
 
-    print_function_callback(f"Base snapshot loaded into trie")
+    print_function_callback("Base snapshot loaded into trie")
 
     # Apply each diff in order
     for diff_index, diff_manifest in enumerate(manifests[1:], start=1):
@@ -456,16 +454,12 @@ def _compose_manifests_snapshot_diffs_v2025(
 
         # Apply directory deletions (empty directories only)
         # Sort by path length descending so subdirectories are deleted before parents
-        deleted_dirs = [
-            dir_entry for dir_entry in diff_manifest.dirs if dir_entry.deleted
-        ]
+        deleted_dirs = [dir_entry for dir_entry in diff_manifest.dirs if dir_entry.deleted]
         deleted_dirs.sort(key=lambda d: len(d.path), reverse=True)
         for dir_entry in deleted_dirs:
             components = _split_path(dir_entry.path)
             if root.delete_if_empty(components):
-                print_function_callback(
-                    f"Diff {diff_index}: deleted empty dir {dir_entry.path}"
-                )
+                print_function_callback(f"Diff {diff_index}: deleted empty dir {dir_entry.path}")
 
         # Apply file additions/modifications
         for entry in diff_manifest.paths:
@@ -503,9 +497,7 @@ def _compose_manifests_snapshot_diffs_v2025(
         result_dirs.append(ManifestDirectoryPath2025(path=dir_path))
 
     # Calculate total size (non-symlink entries only)
-    total_size = sum(
-        entry.size or 0 for entry in result_paths if entry.symlink_target is None
-    )
+    total_size = sum(entry.size or 0 for entry in result_paths if entry.symlink_target is None)
 
     return AssetManifest2025(
         hash_alg=first.hashAlg,
@@ -548,8 +540,7 @@ def _compose_manifests_diffs_v2025(
             )
         if manifest.manifestType != ManifestType.DIFF:
             raise ValueError(
-                f"Manifest {i} must be a DIFF for diff composition, "
-                f"got {manifest.manifestType}"
+                f"Manifest {i} must be a DIFF for diff composition, got {manifest.manifestType}"
             )
 
     first = manifests[0]
@@ -581,9 +572,7 @@ def _compose_manifests_diffs_v2025(
             if dir_entry.deleted:
                 # Mark directory as deleted
                 root.mark_deleted(components)
-                print_function_callback(
-                    f"Diff {diff_index}: deleted empty dir {dir_entry.path}"
-                )
+                print_function_callback(f"Diff {diff_index}: deleted empty dir {dir_entry.path}")
 
         # Apply file additions/modifications
         for entry in diff_manifest.paths:

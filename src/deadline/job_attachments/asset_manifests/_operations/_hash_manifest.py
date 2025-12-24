@@ -19,19 +19,19 @@ import os
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
-from .base_manifest import BaseAssetManifest, FILE_CHUNK_SIZE_BYTES
-from .hash_algorithms import HashAlgorithm, hash_file
-from .versions import ManifestVersion
-from .v2023_03_03.asset_manifest import (
+from ..base_manifest import BaseAssetManifest, FILE_CHUNK_SIZE_BYTES
+from ..hash_algorithms import HashAlgorithm, hash_file
+from ..versions import ManifestVersion
+from ..v2023_03_03.asset_manifest import (
     AssetManifest as AssetManifest2023,
     ManifestPath as ManifestPath2023,
 )
-from .v2025_12_04.asset_manifest import (
+from ..v2025_12_04.asset_manifest import (
     AssetManifest as AssetManifest2025,
     ManifestDirectoryPath as ManifestDirectoryPath2025,
     ManifestFilePath as ManifestFilePath2025,
 )
-from ..caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
+from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
 
 def _hash_manifest(
