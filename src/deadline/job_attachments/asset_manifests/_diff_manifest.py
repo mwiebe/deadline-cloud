@@ -226,6 +226,16 @@ def _compute_diff_manifest_v2025(
 
     Comparison is done by hash (unless ignore_hashes=True) and metadata.
     When ignore_hashes=False, both manifests must already have hashes computed.
+
+    Directory Deletion Semantics:
+    A directory deletion marker means "delete this empty directory". To delete
+    a non-empty directory, all its contents must be explicitly deleted first:
+    - All files and symlinks within the directory
+    - All subdirectories (recursively, following the same rule)
+    - Finally, the directory itself
+
+    This ensures diff manifests are fully composable—each deletion is
+    self-contained and doesn't depend on knowing the parent snapshot's contents.
     """
 
     # Build path lookups for files
@@ -256,6 +266,22 @@ def _compute_diff_manifest_v2025(
 
         if _entries_differ(parent_entry, current_entry, ignore_hashes=ignore_hashes):
             modified_files.add(path)
+
+    # Ensure deleted directories have all their contents deleted too.
+    # For each deleted directory, find all files and subdirectories that were
+    # contained within it in the parent manifest and add them to the deleted sets.
+    for deleted_dir in list(deleted_dirs):
+        dir_prefix = deleted_dir + "/"
+
+        # Find all files within this deleted directory
+        for file_path in parent_file_set:
+            if file_path.startswith(dir_prefix) and file_path not in current_file_set:
+                deleted_files.add(file_path)
+
+        # Find all subdirectories within this deleted directory
+        for dir_path in parent_dir_paths:
+            if dir_path.startswith(dir_prefix) and dir_path not in current_dir_paths:
+                deleted_dirs.add(dir_path)
 
     # Build file entries for diff manifest
     file_entries: List[ManifestFilePath2025] = []
@@ -301,7 +327,9 @@ def _compute_diff_manifest_v2025(
         dir_entries.append(ManifestDirectoryPath2025(path=path))
 
     # Add deletion markers for deleted directories
-    for path in sorted(deleted_dirs):
+    # Sort by path length descending so subdirectories come before parents
+    # (though the order in the manifest doesn't affect semantics, it's cleaner)
+    for path in sorted(deleted_dirs, key=lambda p: (-len(p), p)):
         dir_entries.append(ManifestDirectoryPath2025(path=path, deleted=True))
         print_function_callback(f"Deleted dir: {path}")
 

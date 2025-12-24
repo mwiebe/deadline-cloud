@@ -1296,3 +1296,188 @@ class TestComputeDiffManifestMixedChanges:
         paths = {p.path for p in diff.paths}
         assert "large.bin" not in paths
         assert "changed.txt" in paths
+
+
+class TestDirectoryDeletionSemantics:
+    """Tests for directory deletion semantics in diff manifests.
+
+    Per the design document, a directory deletion marker means "delete this empty
+    directory". To delete a non-empty directory, all its contents must be explicitly
+    deleted first:
+    - All files and symlinks within the directory
+    - All subdirectories (recursively, following the same rule)
+    - Finally, the directory itself
+
+    This ensures diff manifests are fully composable—each deletion is self-contained
+    and doesn't depend on knowing the parent snapshot's contents.
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_deleted_directory_includes_contained_files(self) -> None:
+        """When a directory is deleted, all files within it must also be deleted."""
+        parent = self._create_v2025_manifest(
+            files=[
+                {"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "deleted_dir/file1.txt", "hash": "h2", "size": 200, "mtime": 1000},
+                {"path": "deleted_dir/file2.txt", "hash": "h3", "size": 300, "mtime": 1000},
+            ],
+            dirs=[{"path": "deleted_dir"}],
+        )
+        current = self._create_v2025_manifest(
+            files=[{"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000}],
+            dirs=[],
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Check that the directory is marked as deleted
+        deleted_dirs = {d.path for d in diff.dirs if d.deleted}
+        assert "deleted_dir" in deleted_dirs
+
+        # Check that all files within the directory are also marked as deleted
+        deleted_files = {p.path for p in diff.paths if p.deleted}
+        assert "deleted_dir/file1.txt" in deleted_files
+        assert "deleted_dir/file2.txt" in deleted_files
+
+        # The kept file should not be in the diff
+        assert "keep.txt" not in {p.path for p in diff.paths}
+
+    def test_deleted_directory_includes_nested_subdirectories(self) -> None:
+        """When a directory is deleted, all subdirectories must also be deleted."""
+        parent = self._create_v2025_manifest(
+            files=[
+                {"path": "deleted_dir/subdir/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+            dirs=[
+                {"path": "deleted_dir"},
+                {"path": "deleted_dir/subdir"},
+            ],
+        )
+        current = self._create_v2025_manifest(files=[], dirs=[])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Check that both directories are marked as deleted
+        deleted_dirs = {d.path for d in diff.dirs if d.deleted}
+        assert "deleted_dir" in deleted_dirs
+        assert "deleted_dir/subdir" in deleted_dirs
+
+        # Check that the file is also marked as deleted
+        deleted_files = {p.path for p in diff.paths if p.deleted}
+        assert "deleted_dir/subdir/file.txt" in deleted_files
+
+    def test_deleted_directory_with_deep_nesting(self) -> None:
+        """Deeply nested directory deletion includes all contents."""
+        parent = self._create_v2025_manifest(
+            files=[
+                {"path": "a/b/c/d/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "a/b/other.txt", "hash": "h2", "size": 200, "mtime": 1000},
+            ],
+            dirs=[
+                {"path": "a"},
+                {"path": "a/b"},
+                {"path": "a/b/c"},
+                {"path": "a/b/c/d"},
+            ],
+        )
+        current = self._create_v2025_manifest(files=[], dirs=[])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # All directories should be deleted
+        deleted_dirs = {d.path for d in diff.dirs if d.deleted}
+        assert deleted_dirs == {"a", "a/b", "a/b/c", "a/b/c/d"}
+
+        # All files should be deleted
+        deleted_files = {p.path for p in diff.paths if p.deleted}
+        assert deleted_files == {"a/b/c/d/file.txt", "a/b/other.txt"}
+
+    def test_partial_directory_deletion(self) -> None:
+        """When only some files in a directory are deleted, directory is not deleted."""
+        parent = self._create_v2025_manifest(
+            files=[
+                {"path": "dir/keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "dir/delete.txt", "hash": "h2", "size": 200, "mtime": 1000},
+            ],
+            dirs=[{"path": "dir"}],
+        )
+        current = self._create_v2025_manifest(
+            files=[{"path": "dir/keep.txt", "hash": "h1", "size": 100, "mtime": 1000}],
+            dirs=[{"path": "dir"}],
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Directory should NOT be deleted (it still has files)
+        deleted_dirs = {d.path for d in diff.dirs if d.deleted}
+        assert "dir" not in deleted_dirs
+
+        # Only the deleted file should be marked
+        deleted_files = {p.path for p in diff.paths if p.deleted}
+        assert deleted_files == {"dir/delete.txt"}
+
+    def test_deleted_directory_with_symlinks(self) -> None:
+        """Deleted directory includes symlinks within it."""
+        parent = self._create_v2025_manifest(
+            files=[
+                {"path": "deleted_dir/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "deleted_dir/link.txt", "symlink_target": "file.txt"},
+            ],
+            dirs=[{"path": "deleted_dir"}],
+        )
+        current = self._create_v2025_manifest(files=[], dirs=[])
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # Directory should be deleted
+        deleted_dirs = {d.path for d in diff.dirs if d.deleted}
+        assert "deleted_dir" in deleted_dirs
+
+        # Both file and symlink should be deleted
+        deleted_files = {p.path for p in diff.paths if p.deleted}
+        assert "deleted_dir/file.txt" in deleted_files
+        assert "deleted_dir/link.txt" in deleted_files
+
+    def test_multiple_directories_deleted(self) -> None:
+        """Multiple independent directories can be deleted."""
+        parent = self._create_v2025_manifest(
+            files=[
+                {"path": "dir1/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "dir2/file.txt", "hash": "h2", "size": 200, "mtime": 1000},
+                {"path": "keep_dir/file.txt", "hash": "h3", "size": 300, "mtime": 1000},
+            ],
+            dirs=[{"path": "dir1"}, {"path": "dir2"}, {"path": "keep_dir"}],
+        )
+        current = self._create_v2025_manifest(
+            files=[{"path": "keep_dir/file.txt", "hash": "h3", "size": 300, "mtime": 1000}],
+            dirs=[{"path": "keep_dir"}],
+        )
+
+        diff = _compute_diff_manifest(parent, current)
+
+        # dir1 and dir2 should be deleted, keep_dir should not
+        deleted_dirs = {d.path for d in diff.dirs if d.deleted}
+        assert deleted_dirs == {"dir1", "dir2"}
+
+        # Files in deleted directories should be deleted
+        deleted_files = {p.path for p in diff.paths if p.deleted}
+        assert deleted_files == {"dir1/file.txt", "dir2/file.txt"}
