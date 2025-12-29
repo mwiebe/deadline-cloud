@@ -14,7 +14,7 @@ The manifest system uses four composable operations that can be combined to impl
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  1. COLLECT: Directory → Manifest (with hash="" for files)              │
-│     _collect_manifest_structure(root, version) → BaseAssetManifest      │
+│     _collect_manifest_directory_tree(root, version) → BaseAssetManifest │
 │                                                                         │
 │  2. HASH: Manifest → Manifest (fills in hashes)                         │
 │     _hash_manifest(manifest, root, hash_cache, force_rehash)            │
@@ -54,19 +54,30 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 ## Operation Details
 
-### 1. COLLECT: `_collect_manifest_structure()`
+### 1. COLLECT: `_collect_manifest_directory_tree()`
 
 **Location:** `_collect_manifest.py`
 
-Scans a directory and creates a manifest structure WITHOUT computing hashes:
+Scans a directory tree and creates a manifest WITHOUT computing hashes:
 
 ```python
-def _collect_manifest_structure(
+def _collect_manifest_directory_tree(
     root: Path | str,
     version: ManifestVersion,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    *,
+    absolute_paths: bool = False,
 ) -> BaseAssetManifest:
 ```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `root` | Root directory path to scan |
+| `version` | Manifest version to create (determines features) |
+| `print_function_callback` | Progress callback for status messages |
+| `absolute_paths` | If `True`, store absolute paths instead of relative. Useful for intermediate in-memory processing. Default `False` produces standard relative paths for on-disk storage. When `True`, symlink targets are also stored as absolute paths. |
 
 **Behavior by version:**
 
@@ -92,11 +103,11 @@ def _collect_manifest_structure(
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest_structure
+from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest_directory_tree
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 
 # Collect a v2025 manifest from a project directory
-manifest = _collect_manifest_structure(
+manifest = _collect_manifest_directory_tree(
     root="/projects/my_scene",
     version=ManifestVersion.v2025_12_04_beta,
 )
@@ -126,7 +137,7 @@ Found 8 directories
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `_collect_manifest_structure()`:
+Fills in hashes for a manifest that was created by `_collect_manifest_directory_tree()`:
 
 ```python
 def _hash_manifest(
@@ -172,13 +183,13 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest_structure
+from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest_directory_tree
 from deadline.job_attachments.asset_manifests._hash_manifest import _hash_manifest
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 
-# First collect the structure
-unhashed = _collect_manifest_structure(
+# First collect the directory tree
+unhashed = _collect_manifest_directory_tree(
     root="/projects/my_scene",
     version=ManifestVersion.v2025_12_04_beta,
 )
@@ -454,8 +465,8 @@ Directory ──[collect]──► Unhashed ──[hash]──► Hashed ──[
 ```
 
 ```python
-# Step 1: Collect directory structure (no hashes yet)
-unhashed = _collect_manifest_structure(root, version)
+# Step 1: Collect directory tree (no hashes yet)
+unhashed = _collect_manifest_directory_tree(root, version)
 
 # Step 2: Hash all files
 hashed = _hash_manifest(unhashed, root, hash_cache)
@@ -487,7 +498,7 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect current directory (no hashes)
-current_unhashed = _collect_manifest_structure(root, version)
+current_unhashed = _collect_manifest_directory_tree(root, version)
 
 # Filter BOTH with same patterns
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
@@ -523,7 +534,7 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect and hash current directory
-current_unhashed = _collect_manifest_structure(root, version)
+current_unhashed = _collect_manifest_directory_tree(root, version)
 current_hashed = _hash_manifest(current_unhashed, root, hash_cache, force_rehash=True)
 
 # Filter BOTH with same patterns

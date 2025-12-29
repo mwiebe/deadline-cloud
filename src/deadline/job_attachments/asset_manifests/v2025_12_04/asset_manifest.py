@@ -176,7 +176,15 @@ class AssetManifest(BaseAssetManifest):
         - Files sorted lexicographically by full path (UTF-16 BE encoding)
         - Keys sorted alphabetically within each object
         - No whitespace between JSON tokens
+
+        Raises:
+            ManifestDecodeValidationError: If any symlink target is an absolute path.
         """
+        # Validate symlink targets before serialization (must be relative paths)
+        for f in self.paths:
+            if f.symlink_target is not None:
+                f._validate_symlink_target()
+
         # Sort and deduplicate directories by full path for canonical output
         # Validate that duplicate paths have identical content
         seen_dirs: dict[str, ManifestDirectoryPath] = {}

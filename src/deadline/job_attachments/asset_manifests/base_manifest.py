@@ -185,9 +185,8 @@ class BaseManifestPath(ABC):
                         f"chunks, got {len(self.chunkhashes)}"
                     )
 
-            # Validate symlink_target
-            if self.symlink_target is not None:
-                self._validate_symlink_target()
+            # Note: symlink_target validation (relative path check) is deferred to
+            # encode() time to allow intermediate in-memory manifests with absolute paths.
 
     def _validate_symlink_target(self) -> None:
         """Validate that symlink_target is a valid relative path within the manifest.

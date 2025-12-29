@@ -34,25 +34,30 @@ from ..v2025_12_04.asset_manifest import (
 )
 
 
-def _collect_manifest_structure(
+def _collect_manifest_directory_tree(
     root: Path | str,
     version: ManifestVersion,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    *,
+    absolute_paths: bool = False,
 ) -> BaseAssetManifest:
     """
-    Scan a directory and create a manifest structure WITHOUT hashes.
+    Scan a directory tree and create a manifest WITHOUT hashes.
 
     This function:
     1. Walks the directory tree
     2. Collects all files, symlinks, and directories
     3. Captures metadata (mtime, size, permissions)
     4. Sets hash="" (empty string) for all file entries
-    5. Returns a manifest structure ready for hashing
+    5. Returns a manifest ready for hashing
 
     Args:
         root: Root directory path to scan
         version: Manifest version to create (determines features)
         print_function_callback: Progress callback
+        absolute_paths: If True, store absolute paths in manifest entries instead
+            of paths relative to root. Useful for intermediate in-memory processing.
+            Default False produces standard relative paths for on-disk storage.
 
     Returns:
         A manifest with all entries but hash="" for files
@@ -65,19 +70,21 @@ def _collect_manifest_structure(
     """
     root_path = Path(os.path.normpath(os.path.abspath(root)))
     if version == ManifestVersion.v2023_03_03:
-        return _collect_manifest_structure_v2023(root_path, print_function_callback)
+        return _collect_manifest_directory_tree_v2023(root_path, print_function_callback, absolute_paths=absolute_paths)
     elif version == ManifestVersion.v2025_12_04_beta:
-        return _collect_manifest_structure_v2025(root_path, print_function_callback)
+        return _collect_manifest_directory_tree_v2025(root_path, print_function_callback, absolute_paths=absolute_paths)
     else:
         raise ValueError(f"Unsupported manifest version: {version}")
 
 
-def _collect_manifest_structure_v2023(
+def _collect_manifest_directory_tree_v2023(
     root_path: Path,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    *,
+    absolute_paths: bool = False,
 ) -> AssetManifest2023:
     """
-    Scan directory and create a v2023-03-03 manifest structure WITHOUT hashes.
+    Scan directory tree and create a v2023-03-03 manifest WITHOUT hashes.
 
     This function:
     1. Walks the directory tree
@@ -104,27 +111,30 @@ def _collect_manifest_structure_v2023(
             if not full_path.is_file():
                 continue
 
-            rel_path = full_path.relative_to(root_path).as_posix()
+            if absolute_paths:
+                entry_path = full_path.absolute().as_posix()
+            else:
+                entry_path = full_path.relative_to(root_path).as_posix()
 
             try:
                 stat_info = full_path.stat()
             except OSError as e:
-                print_function_callback(f"Skipping inaccessible file {rel_path}: {e}")
+                print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
                 continue
 
             file_size = stat_info.st_size
-            mtime_us = int(stat_info.st_mtime * 1_000_000)  # microseconds
+            mtime_us = stat_info.st_mtime_ns // 1000  # nanoseconds to microseconds
 
             file_entries.append(
                 ManifestPath2023(
-                    path=rel_path,
+                    path=entry_path,
                     hash="",  # Empty string - to be filled by _hash_manifest()
                     size=file_size,
                     mtime=mtime_us,
                 )
             )
             total_size += file_size
-            print_function_callback(f"Collected: {rel_path}")
+            print_function_callback(f"Collected: {entry_path}")
 
     return AssetManifest2023(
         hash_alg=HashAlgorithm.XXH128,
@@ -133,12 +143,14 @@ def _collect_manifest_structure_v2023(
     )
 
 
-def _collect_manifest_structure_v2025(
+def _collect_manifest_directory_tree_v2025(
     root_path: Path,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    *,
+    absolute_paths: bool = False,
 ) -> AssetManifest2025:
     """
-    Scan directory and create a v2025-12-04-beta manifest structure WITHOUT hashes.
+    Scan directory tree and create a v2025-12-04-beta manifest WITHOUT hashes.
 
     This function:
     1. Walks the directory tree
@@ -159,47 +171,57 @@ def _collect_manifest_structure_v2025(
 
         # Record directory (except root)
         if rel_dir != Path("."):
-            dir_entries.append(ManifestDirectoryPath2025(path=rel_dir.as_posix()))
-            print_function_callback(f"Collected dir: {rel_dir.as_posix()}")
+            if absolute_paths:
+                dir_path = Path(dirpath).absolute().as_posix()
+            else:
+                dir_path = rel_dir.as_posix()
+            dir_entries.append(ManifestDirectoryPath2025(path=dir_path))
+            print_function_callback(f"Collected dir: {dir_path}")
 
         # Check for symlinks to directories (they appear in dirnames)
         for name in list(dirnames):
             full_path = Path(dirpath) / name
             if full_path.is_symlink():
-                rel_path = full_path.relative_to(root_path).as_posix()
+                if absolute_paths:
+                    entry_path = full_path.absolute().as_posix()
+                else:
+                    entry_path = full_path.relative_to(root_path).as_posix()
                 try:
-                    entry = _create_symlink_entry(full_path, rel_path, root_path)
+                    entry = _create_symlink_entry(full_path, entry_path, root_path, absolute_paths=absolute_paths)
                     file_entries.append(entry)
-                    print_function_callback(f"Collected symlink dir: {rel_path}")
+                    print_function_callback(f"Collected symlink dir: {entry_path}")
                     # Remove from dirnames to prevent os.walk from following it
                     dirnames.remove(name)
                 except ValueError as e:
-                    print_function_callback(f"Skipping invalid symlink {rel_path}: {e}")
+                    print_function_callback(f"Skipping invalid symlink {entry_path}: {e}")
                     dirnames.remove(name)
 
         # Process files
         for name in filenames:
             full_path = Path(dirpath) / name
             stat_info = full_path.stat(follow_symlinks=False)
-            rel_path = full_path.relative_to(root_path).as_posix()
+            if absolute_paths:
+                entry_path = full_path.absolute().as_posix()
+            else:
+                entry_path = full_path.relative_to(root_path).as_posix()
 
             if stat.S_ISLNK(stat_info.st_mode):
                 # Create symlink entry (no hash needed)
                 try:
-                    entry = _create_symlink_entry(full_path, rel_path, root_path)
+                    entry = _create_symlink_entry(full_path, entry_path, root_path, absolute_paths=absolute_paths)
                     file_entries.append(entry)
-                    print_function_callback(f"Collected symlink: {rel_path}")
+                    print_function_callback(f"Collected symlink: {entry_path}")
                 except ValueError as e:
-                    print_function_callback(f"Skipping invalid symlink {rel_path}: {e}")
+                    print_function_callback(f"Skipping invalid symlink {entry_path}: {e}")
             else:
                 # Create file entry WITHOUT hash
                 try:
-                    entry = _create_unhashed_file_entry(full_path, rel_path, stat_info)
+                    entry = _create_unhashed_file_entry(full_path, entry_path, stat_info)
                     file_entries.append(entry)
                     total_size += entry.size or 0
-                    print_function_callback(f"Collected: {rel_path}")
+                    print_function_callback(f"Collected: {entry_path}")
                 except OSError as e:
-                    print_function_callback(f"Skipping inaccessible file {rel_path}: {e}")
+                    print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
 
     return AssetManifest2025(
         hash_alg=HashAlgorithm.XXH128,
@@ -259,16 +281,22 @@ def _remove_longpath_prefix(path: Path) -> Path:
 
 def _create_symlink_entry(
     full_path: Path,
-    rel_path: str,
+    entry_path: str,
     root_path: Path,
+    *,
+    absolute_paths: bool = False,
 ) -> ManifestFilePath2025:
     """
     Create a ManifestFilePath entry for a symlink.
 
     Args:
         full_path: Absolute path to the symlink
-        rel_path: Relative path from root (for manifest entry)
+        entry_path: Path for the manifest entry (relative or absolute depending on mode)
         root_path: Root directory path (for validation)
+        absolute_paths: If True, store absolute symlink target. If False, store
+            target relative to root_path. Note: original symlink relative paths cannot
+            be preserved because they are rooted at the symlink location, not at the
+            manifest root.
 
     Returns:
         ManifestFilePath with symlink_target set
@@ -279,15 +307,28 @@ def _create_symlink_entry(
     # Get the symlink target as an absolute path
     target = full_path.parent / os.readlink(full_path)
 
-    # resolve() doesn't remove Windows "\\?" prefixes, remove them manually if needed
-    root_path = _remove_longpath_prefix(root_path)
-    target = _remove_longpath_prefix(target)
+    # absolute() doesn't remove Windows "\\?" prefixes, remove them manually if needed
+    root_path_clean = _remove_longpath_prefix(root_path)
+    target_clean = _remove_longpath_prefix(target)
 
-    # Normalize target path to be POSIX and relative to root_path. This will
-    # raise a ValueError if target is not a subpath of root_path.
-    normalized_target = target.resolve().relative_to(root_path.resolve())
+    # Convert to absolute path and normalize it (collapse .. components) without
+    # resolving symlinks. We use os.path.normpath() to collapse .. while keeping
+    # symlink chains intact, unlike resolve() which would follow symlinks.
+    absolute_target = Path(os.path.normpath(target_clean.absolute()))
+    absolute_root = Path(os.path.normpath(root_path_clean.absolute()))
+
+    # Validate that the target is within root_path.
+    # This will raise a ValueError if target is not a subpath of root_path.
+    absolute_target.relative_to(absolute_root)
+
+    if absolute_paths:
+        # Store absolute path to the target
+        symlink_target = absolute_target.as_posix()
+    else:
+        # Store path relative to manifest root
+        symlink_target = absolute_target.relative_to(absolute_root).as_posix()
 
     return ManifestFilePath2025(
-        path=rel_path,
-        symlink_target=normalized_target.as_posix(),
+        path=entry_path,
+        symlink_target=symlink_target,
     )
