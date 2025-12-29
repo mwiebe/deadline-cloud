@@ -6,7 +6,7 @@ This document describes the composable operations design for job attachment mani
 
 ## Overview
 
-The manifest system uses four composable operations that can be combined to implement various workflows:
+The manifest system uses composable operations that can be combined to implement various workflows:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -27,6 +27,9 @@ The manifest system uses four composable operations that can be combined to impl
 │                                                                         │
 │  5. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
 │     _compose_manifests(manifests) → BaseAssetManifest                   │
+│                                                                         │
+│  6. SUBTREE: (Manifest, subtree_path) → Manifest                        │
+│     _subtree_manifest(manifest, subtree, symlink_policy)                │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -51,6 +54,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
+| `_subtree_manifest.py` | SUBTREE | Extracts a subtree as a new manifest |
 
 ## Operation Details
 
@@ -512,6 +516,192 @@ task3_output = decode_manifest(read_file("task3_output.manifest"))
 
 # Merge into single manifest (later tasks override earlier for same paths)
 merged = _compose_manifests([task1_output, task2_output, task3_output])
+```
+
+### 6. SUBTREE: `_subtree_manifest()`
+
+**Location:** `_subtree_manifest.py`
+
+Extracts a subtree from a manifest, producing a new manifest rooted at the specified subdirectory:
+
+```python
+def _subtree_manifest(
+    manifest: BaseAssetManifest,
+    subtree: str,
+    *,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+) -> BaseAssetManifest:
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `manifest` | The source manifest to extract from |
+| `subtree` | Path to the subtree root (relative or absolute, must match manifest path style) |
+| `symlink_policy` | How to handle symlinks that escape the new subtree root (see below) |
+| `print_function_callback` | Progress callback for status messages |
+
+**Conceptual Model:**
+
+SUBTREE is a virtual re-rooting operation. Given a manifest rooted at `/projects/scene` and a subtree path of `assets/textures`, the result is a new manifest that represents only the `assets/textures` directory as if it were the root:
+
+```
+Original manifest root: /projects/scene
+├── assets/
+│   ├── textures/
+│   │   ├── wood.png
+│   │   └── metal.png
+│   └── models/
+│       └── chair.blend
+└── scripts/
+    └── render.py
+
+SUBTREE(manifest, "assets/textures") produces:
+
+New manifest root: /projects/scene/assets/textures
+├── wood.png
+└── metal.png
+```
+
+The operation:
+1. Filters to entries within the subtree
+2. Rebases paths relative to the new root (strips the subtree prefix)
+3. Handles symlinks according to `symlink_policy`
+
+**Path Style Requirements:**
+
+The `subtree` path must match the path style used in the manifest:
+
+| Manifest Paths | Subtree Path | Valid |
+|----------------|--------------|-------|
+| Relative (`assets/file.txt`) | Relative (`assets`) | ✓ |
+| Absolute (`/projects/scene/assets/file.txt`) | Absolute (`/projects/scene/assets`) | ✓ |
+| Relative | Absolute | ✗ Error |
+| Absolute | Relative | ✗ Error |
+
+**Output:**
+
+The output manifest always uses relative paths, regardless of whether the input used absolute paths. This makes the result suitable for storage or transport.
+
+**Symlink Handling:**
+
+When re-rooting a manifest, symlinks that were previously "within root" may now "escape" the new subtree root. The `symlink_policy` parameter controls how these are handled:
+
+| Policy | Behavior for Escaping Symlinks |
+|--------|-------------------------------|
+| `COLLAPSE` | Replace all symlinks with their target's content (if target is in original manifest) |
+| `COLLAPSE_ESCAPING` | Collapse only symlinks escaping the new subtree; preserve symlinks within subtree |
+| `EXCLUDE` | Remove symlinks that escape the new subtree |
+
+**Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported for SUBTREE. Since the output always uses relative paths, escaping symlinks cannot be represented—a relative symlink target like `../outside/file.txt` would point outside the manifest root, which is invalid. Therefore, escaping symlinks must either be collapsed or excluded.
+
+**Note:** Unlike COLLECT, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
+
+**Symlink Collapse Behavior:**
+
+When collapsing a symlink, the operation looks up the target path in the original manifest:
+
+- **File target:** The symlink entry is replaced with a copy of the target file entry (using the symlink's path, but the target's hash, size, mtime, runnable)
+- **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current -> ../v2` with target containing `../v2/a.txt` and `../v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
+- **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT), the symlink is excluded with a warning
+
+**Preserved Symlink Target Rebasing:**
+
+Symlinks that are preserved (not collapsed) must have their `symlink_target` rebased relative to the new subtree root. For example:
+
+```
+Original manifest (rooted at /projects/scene):
+  assets/textures/wood.png
+  assets/textures/current -> ../shared/v2/latest.png  (escapes subtree)
+  assets/textures/alt -> ./variants/dark.png          (within subtree)
+  assets/shared/v2/latest.png
+
+SUBTREE(manifest, "assets/textures") with COLLAPSE_ESCAPING:
+
+Result (rooted at /projects/scene/assets/textures):
+  wood.png
+  current                    (collapsed: now a file with latest.png's content)
+  alt -> variants/dark.png   (preserved: target rebased, still within new root)
+```
+
+The preserved symlink `alt` originally had target `./variants/dark.png`. After rebasing, it becomes `variants/dark.png` (or equivalently `./variants/dark.png`), which is still valid relative to the new subtree root.
+
+**Example - Basic Subtree Extraction:**
+
+```python
+from deadline.job_attachments.asset_manifests._subtree_manifest import _subtree_manifest
+from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+# Load a manifest rooted at /projects/scene
+with open("scene.manifest") as f:
+    full_manifest = decode_manifest(f.read())
+
+# Extract just the textures directory
+textures = _subtree_manifest(
+    manifest=full_manifest,
+    subtree="assets/textures",
+)
+
+# Result is a manifest with paths relative to assets/textures/
+for entry in textures.paths:
+    print(entry.path)  # "wood.png", "metal.png", etc.
+```
+
+**Example - Handling Symlinks:**
+
+```python
+# Original manifest structure:
+# /projects/scene/
+# ├── assets/
+# │   ├── textures/
+# │   │   ├── wood.png
+# │   │   └── current -> ../shared/latest.png  (escapes subtree!)
+# │   └── shared/
+# │       └── latest.png
+# └── ...
+
+# With COLLAPSE_ESCAPING (default): symlink is replaced with file content
+textures = _subtree_manifest(
+    manifest=full_manifest,
+    subtree="assets/textures",
+    symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+)
+# Result: "current" becomes a regular file with latest.png's hash/size/mtime
+
+# With EXCLUDE: symlink is removed
+textures = _subtree_manifest(
+    manifest=full_manifest,
+    subtree="assets/textures",
+    symlink_policy=SymlinkPolicy.EXCLUDE,
+)
+# Result: only "wood.png" is included
+```
+
+**Use Cases:**
+
+1. **Absolute to relative conversion:** Collect manifest directory trees with `absolute_paths=True` for intermediate processing, then use SUBTREE to convert to relative paths for saving as manifest files
+2. **Partial deployment:** Extract only the assets needed for a specific render task
+3. **Manifest splitting:** Break a large manifest into smaller, focused manifests
+4. **Re-rooting for transport:** Create a manifest for a subdirectory to upload independently
+5. **Testing:** Extract a subset of a manifest for focused testing
+
+**Relationship to FILTER:**
+
+SUBTREE and FILTER are complementary but distinct:
+
+| Operation | Purpose | Path Transformation |
+|-----------|---------|---------------------|
+| FILTER | Keep entries matching a predicate | Paths unchanged |
+| SUBTREE | Extract entries under a path prefix | Paths rebased to new root |
+
+You might use both together:
+
+```python
+# Extract textures subtree, then filter to only PNG files
+textures = _subtree_manifest(full_manifest, "assets/textures")
+png_only = _filter_manifest(textures, lambda e: e.path.endswith(".png"))
 ```
 
 ## Workflow Examples
