@@ -67,6 +67,7 @@ def _collect_manifest_directory_tree(
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     *,
     absolute_paths: bool = False,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
 ) -> BaseAssetManifest:
 ```
 
@@ -78,22 +79,38 @@ def _collect_manifest_directory_tree(
 | `version` | Manifest version to create (determines features) |
 | `print_function_callback` | Progress callback for status messages |
 | `absolute_paths` | If `True`, store absolute paths instead of relative. Useful for intermediate in-memory processing. Default `False` produces standard relative paths for on-disk storage. When `True`, symlink targets are also stored as absolute paths. |
+| `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
+
+**Symlink Policy Options:**
+
+| Policy | Description | Requires `absolute_paths=True` | v2023 Support |
+|--------|-------------|-------------------------------|---------------|
+| `COLLAPSE` | Follow all symlinks, treating them as files/directories. The directory walk follows symlinks. | No | ✓ |
+| `COLLAPSE_ESCAPING` | Follow only symlinks that escape the root path; preserve symlinks within root as symlink entries. | No | ✗ |
+| `PRESERVE` | Keep all symlinks as symlink entries, including escaping ones. | Yes | ✗ |
+| `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. Targets outside root are collected transitively. | Yes | ✗ |
+| `EXCLUDE` | Skip all symlinks entirely. Unlike `COLLAPSE`, this leaves them out of the manifest. | No | ✓ |
+
+**Note:** For v2023-03-03, `symlink_policy` is a required parameter with no default. Only `COLLAPSE` and `EXCLUDE` are supported because v2023 cannot represent symlink entries. For v2025-12-04-beta, `symlink_policy` defaults to `COLLAPSE_ESCAPING`.
+
+**Why COLLAPSE_ESCAPING is the default:** After capturing a manifest and transporting it to a different system (e.g., a render farm worker), the manifest is instantiated there. Escaping symlinks—those pointing outside the manifest root—cannot be preserved because their targets won't exist on the destination system. We have two choices: exclude them or collapse them. Since workload scripts may depend on those symlinks to access data, collapsing is preferred over exclusion. By collapsing escaping symlinks, we transport the actual data they reference, ensuring the workload functions correctly. Meanwhile, symlinks within the root are preserved, maintaining the original directory structure where possible.
 
 **Behavior by version:**
 
 | Feature | v2023-03-03 | v2025-12-04-beta |
 |---------|-------------|------------------|
 | Regular files | ✓ (hash="") | ✓ (hash="") |
-| Symlinks | Skipped | ✓ (with validated target) |
+| Symlinks | Skipped (format limitation) | ✓ (policy-dependent) |
 | Directories | Not included | ✓ (including empty) |
 | Execute bit | Not captured | ✓ (runnable field) |
+| `symlink_policy` | Required (COLLAPSE or EXCLUDE only) | Optional (default COLLAPSE_ESCAPING) |
 
 **Key implementation details:**
 
 - Files have `hash=""` (empty string) to indicate hashing is needed
 - Symlinks have `symlink_target` set (no hash needed)
-- Symlink targets are validated to be relative and within the manifest root
-- Uses `os.walk()` with `followlinks=False` to avoid following symlinks
+- Symlink handling depends on `symlink_policy`
+- Uses `os.walk()` with `followlinks` based on policy
 
 **Helper functions:**
 
@@ -104,12 +121,20 @@ def _collect_manifest_directory_tree(
 
 ```python
 from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest_directory_tree
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
+from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
 
-# Collect a v2025 manifest from a project directory
+# Collect a v2025 manifest from a project directory (default: COLLAPSE_ESCAPING)
 manifest = _collect_manifest_directory_tree(
     root="/projects/my_scene",
     version=ManifestVersion.v2025_12_04_beta,
+)
+
+# Collect with all symlinks preserved (requires absolute_paths)
+manifest_with_symlinks = _collect_manifest_directory_tree(
+    root="/projects/my_scene",
+    version=ManifestVersion.v2025_12_04_beta,
+    absolute_paths=True,
+    symlink_policy=SymlinkPolicy.PRESERVE,
 )
 
 # Inspect the collected structure

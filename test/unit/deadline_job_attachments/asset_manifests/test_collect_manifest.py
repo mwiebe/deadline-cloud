@@ -29,6 +29,7 @@ from deadline.job_attachments.asset_manifests._operations._collect_manifest impo
 from deadline.job_attachments.asset_manifests.versions import (
     ManifestType,
     ManifestVersion,
+    SymlinkPolicy,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 
@@ -41,7 +42,9 @@ class TestCollectManifestDirectoryTreeV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert len(manifest.paths) == 1
         entry = manifest.paths[0]
@@ -55,7 +58,9 @@ class TestCollectManifestDirectoryTreeV2023:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbbbb")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert len(manifest.paths) == 2
         paths = {p.path for p in manifest.paths}
@@ -67,13 +72,15 @@ class TestCollectManifestDirectoryTreeV2023:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("nested content")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert len(manifest.paths) == 1
         assert manifest.paths[0].path == "subdir/nested.txt"
 
     def test_skip_symlinks(self, tmp_path: Path) -> None:
-        """Symlinks are skipped in v2023 format."""
+        """Symlinks to files are collected as files in COLLAPSE mode (v2023 format)."""
         target = tmp_path / "target.txt"
         target.write_text("target content")
         link = tmp_path / "link.txt"
@@ -85,26 +92,30 @@ class TestCollectManifestDirectoryTreeV2023:
 
         messages: List[str] = []
         manifest = _collect_manifest_directory_tree_v2023(
-            tmp_path, print_function_callback=messages.append
+            tmp_path, print_function_callback=messages.append, symlink_policy=SymlinkPolicy.COLLAPSE
         )
 
-        # Only the target file should be collected, not the symlink
-        assert len(manifest.paths) == 1
-        assert manifest.paths[0].path == "target.txt"
-        assert any("Skipping symlink" in msg for msg in messages)
+        # Both the target file and the symlink (as a file) should be collected
+        assert len(manifest.paths) == 2
+        paths = {p.path for p in manifest.paths}
+        assert paths == {"target.txt", "link.txt"}
 
     def test_total_size_calculated(self, tmp_path: Path) -> None:
         """Total size is sum of all file sizes."""
         (tmp_path / "a.txt").write_text("aaa")  # 3 bytes
         (tmp_path / "b.txt").write_text("bbbbb")  # 5 bytes
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert manifest.totalSize == 8
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         """Empty directory results in empty manifest."""
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert len(manifest.paths) == 0
         assert manifest.totalSize == 0
@@ -113,7 +124,9 @@ class TestCollectManifestDirectoryTreeV2023:
         """Manifest uses XXH128 hash algorithm."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert manifest.hashAlg == HashAlgorithm.XXH128
 
@@ -123,7 +136,9 @@ class TestCollectManifestDirectoryTreeV2023:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         # v2023 doesn't track directories
         assert manifest.dirs == []
@@ -282,7 +297,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         assert paths_by_name["link.txt"].symlink_target == "subdir/target.txt"
 
     def test_skip_absolute_symlink(self, tmp_path: Path) -> None:
-        """Symlinks with absolute targets are skipped with warning."""
+        """Symlinks with absolute targets are excluded with EXCLUDE policy."""
         link = tmp_path / "absolute_link.txt"
 
         try:
@@ -292,14 +307,16 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
 
         messages: List[str] = []
         manifest = _collect_manifest_directory_tree_v2025(
-            tmp_path, print_function_callback=messages.append
+            tmp_path,
+            print_function_callback=messages.append,
+            symlink_policy=SymlinkPolicy.EXCLUDE,
         )
 
         assert len(manifest.paths) == 0
-        assert any("Skipping invalid symlink" in msg for msg in messages)
+        assert any("Excluding symlink" in msg for msg in messages)
 
     def test_skip_escaping_symlink(self, tmp_path: Path) -> None:
-        """Symlinks that escape the root are skipped with warning."""
+        """Symlinks that escape the root are excluded with EXCLUDE policy."""
         link = tmp_path / "escaping_link.txt"
 
         try:
@@ -309,11 +326,13 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
 
         messages: List[str] = []
         manifest = _collect_manifest_directory_tree_v2025(
-            tmp_path, print_function_callback=messages.append
+            tmp_path,
+            print_function_callback=messages.append,
+            symlink_policy=SymlinkPolicy.EXCLUDE,
         )
 
         assert len(manifest.paths) == 0
-        assert any("Skipping invalid symlink" in msg for msg in messages)
+        assert any("Excluding symlink" in msg for msg in messages)
 
     def test_symlink_with_dot_dot_within_root(self, tmp_path: Path) -> None:
         """Symlink with .. that stays within root is valid."""
@@ -444,7 +463,9 @@ class TestCollectManifestDirectoryTreeDispatch:
         """Version v2023-03-03 dispatches to v2023 implementation."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2023_03_03)
+        manifest = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2023_03_03, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert manifest.manifestVersion == ManifestVersion.v2023_03_03
 
@@ -577,7 +598,9 @@ class TestAbsolutePaths:
         """By default, paths are relative to root."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert manifest.paths[0].path == "file.txt"
 
@@ -585,7 +608,9 @@ class TestAbsolutePaths:
         """When absolute_paths=True, paths are absolute."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path, absolute_paths=True)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, absolute_paths=True, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         # Path should be absolute (POSIX format)
         assert manifest.paths[0].path == tmp_path.as_posix() + "/file.txt"
@@ -596,7 +621,9 @@ class TestAbsolutePaths:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("content")
 
-        manifest = _collect_manifest_directory_tree_v2023(tmp_path, absolute_paths=True)
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, absolute_paths=True, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
 
         assert manifest.paths[0].path == (subdir / "nested.txt").as_posix()
 
@@ -662,7 +689,7 @@ class TestVersionDifferences:
     """Tests comparing behavior differences between v2023 and v2025."""
 
     def test_v2023_skips_symlinks_v2025_collects(self, tmp_path: Path) -> None:
-        """v2023 skips symlinks while v2025 collects them."""
+        """v2023 COLLAPSE collects symlinks as files, v2025 collects them as symlink entries."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
@@ -672,15 +699,25 @@ class TestVersionDifferences:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest_v2023 = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2023_03_03)
-        manifest_v2025 = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2025_12_04_beta)
+        manifest_v2023 = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2023_03_03, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
+        manifest_v2025 = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2025_12_04_beta
+        )
 
-        # v2023: only target file
-        assert len(manifest_v2023.paths) == 1
-        assert manifest_v2023.paths[0].path == "target.txt"
+        # v2023 COLLAPSE: both target and symlink collected as files
+        assert len(manifest_v2023.paths) == 2
+        v2023_paths = {p.path for p in manifest_v2023.paths}
+        assert v2023_paths == {"target.txt", "link.txt"}
+        # v2023 doesn't have symlink_target field populated (all are regular files)
+        for p in manifest_v2023.paths:
+            assert p.symlink_target is None
 
-        # v2025: both target and symlink
+        # v2025: both target and symlink, but symlink has symlink_target set
         assert len(manifest_v2025.paths) == 2
+        v2025_link = next(p for p in manifest_v2025.paths if p.path == "link.txt")
+        assert v2025_link.symlink_target == "target.txt"
 
     def test_v2023_no_dirs_v2025_has_dirs(self, tmp_path: Path) -> None:
         """v2023 doesn't track directories, v2025 does."""
@@ -688,8 +725,12 @@ class TestVersionDifferences:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest_v2023 = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2023_03_03)
-        manifest_v2025 = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2025_12_04_beta)
+        manifest_v2023 = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2023_03_03, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
+        manifest_v2025 = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2025_12_04_beta
+        )
 
         assert len(manifest_v2023.dirs) == 0
         assert len(manifest_v2025.dirs) == 1
@@ -702,10 +743,937 @@ class TestVersionDifferences:
         test_file.write_text("content")
         test_file.chmod(0o700)
 
-        manifest_v2023 = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2023_03_03)
-        manifest_v2025 = _collect_manifest_directory_tree(tmp_path, ManifestVersion.v2025_12_04_beta)
+        manifest_v2023 = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2023_03_03, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
+        manifest_v2025 = _collect_manifest_directory_tree(
+            tmp_path, ManifestVersion.v2025_12_04_beta
+        )
 
         # v2023 ManifestPath doesn't track runnable
         assert manifest_v2023.paths[0].runnable is False
         # v2025 ManifestFilePath has runnable
         assert manifest_v2025.paths[0].runnable is True
+
+
+class TestSymlinkPolicyV2023:
+    """Tests for symlink_policy parameter with v2023 format."""
+
+    def test_v2023_collapse_follows_symlinks(self, tmp_path: Path) -> None:
+        """COLLAPSE policy follows directory symlinks during directory walk.
+
+        When a symlink points to a directory, os.walk with followlinks=True
+        will traverse into that directory, collecting files within it.
+        """
+        target_dir = tmp_path / "target_dir"
+        target_dir.mkdir()
+        (target_dir / "file.txt").write_text("content")
+        link_dir = tmp_path / "link_dir"
+
+        try:
+            link_dir.symlink_to("target_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
+
+        # Both the original file and the file via the directory symlink should be collected
+        paths = {p.path for p in manifest.paths}
+        assert "target_dir/file.txt" in paths
+        assert "link_dir/file.txt" in paths
+        # Total of 2 file entries (same content, different paths)
+        assert len(manifest.paths) == 2
+
+    def test_v2023_exclude_skips_symlinks(self, tmp_path: Path) -> None:
+        """EXCLUDE policy skips symlinks entirely."""
+        target = tmp_path / "target.txt"
+        target.write_text("target content")
+        link = tmp_path / "link.txt"
+
+        try:
+            link.symlink_to("target.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        messages: List[str] = []
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, print_function_callback=messages.append, symlink_policy=SymlinkPolicy.EXCLUDE
+        )
+
+        # Only the target file should be collected
+        assert len(manifest.paths) == 1
+        assert manifest.paths[0].path == "target.txt"
+        assert any("Excluding symlink" in msg for msg in messages)
+
+    def test_v2023_exclude_skips_directory_symlinks(self, tmp_path: Path) -> None:
+        """EXCLUDE policy skips directory symlinks."""
+        target_dir = tmp_path / "target_dir"
+        target_dir.mkdir()
+        (target_dir / "file.txt").write_text("content")
+        link_dir = tmp_path / "link_dir"
+
+        try:
+            link_dir.symlink_to("target_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2023(
+            tmp_path, symlink_policy=SymlinkPolicy.EXCLUDE
+        )
+
+        # Only the original file should be collected, not via symlink
+        paths = {p.path for p in manifest.paths}
+        assert paths == {"target_dir/file.txt"}
+
+    def test_v2023_rejects_collapse_escaping(self, tmp_path: Path) -> None:
+        """v2023 rejects COLLAPSE_ESCAPING policy."""
+        with pytest.raises(ValueError, match="only supports symlink_policy COLLAPSE or EXCLUDE"):
+            _collect_manifest_directory_tree_v2023(
+                tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+            )
+
+    def test_v2023_rejects_preserve(self, tmp_path: Path) -> None:
+        """v2023 rejects PRESERVE policy."""
+        with pytest.raises(ValueError, match="only supports symlink_policy COLLAPSE or EXCLUDE"):
+            _collect_manifest_directory_tree_v2023(tmp_path, symlink_policy=SymlinkPolicy.PRESERVE)
+
+    def test_v2023_rejects_transitive_include_targets(self, tmp_path: Path) -> None:
+        """v2023 rejects TRANSITIVE_INCLUDE_TARGETS policy."""
+        with pytest.raises(ValueError, match="only supports symlink_policy COLLAPSE or EXCLUDE"):
+            _collect_manifest_directory_tree_v2023(
+                tmp_path, symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS
+            )
+
+
+class TestSymlinkPolicyV2025:
+    """Tests for symlink_policy parameter with v2025 format."""
+
+    def test_v2025_collapse_follows_all_symlinks(self, tmp_path: Path) -> None:
+        """COLLAPSE policy follows all symlinks during directory walk."""
+        target_dir = tmp_path / "target_dir"
+        target_dir.mkdir()
+        (target_dir / "file.txt").write_text("content")
+        link_dir = tmp_path / "link_dir"
+
+        try:
+            link_dir.symlink_to("target_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2025(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE
+        )
+
+        # Both paths should be collected as files (symlink followed)
+        file_paths = {p.path for p in manifest.paths}
+        assert "target_dir/file.txt" in file_paths
+        assert "link_dir/file.txt" in file_paths
+
+        # No symlink entries (all collapsed)
+        symlinks = [p for p in manifest.paths if p.symlink_target is not None]
+        assert len(symlinks) == 0
+
+    def test_v2025_collapse_escaping_preserves_internal_symlinks(self, tmp_path: Path) -> None:
+        """COLLAPSE_ESCAPING preserves symlinks within root."""
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+
+        try:
+            link.symlink_to("target.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2025(
+            tmp_path, symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+        # Target is a regular file
+        assert paths_by_name["target.txt"].symlink_target is None
+        # Link is preserved as symlink
+        assert paths_by_name["link.txt"].symlink_target == "target.txt"
+
+    def test_v2025_exclude_skips_all_symlinks(self, tmp_path: Path) -> None:
+        """EXCLUDE policy skips all symlinks."""
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+
+        try:
+            link.symlink_to("target.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        messages: List[str] = []
+        manifest = _collect_manifest_directory_tree_v2025(
+            tmp_path, print_function_callback=messages.append, symlink_policy=SymlinkPolicy.EXCLUDE
+        )
+
+        # Only target file collected
+        assert len(manifest.paths) == 1
+        assert manifest.paths[0].path == "target.txt"
+        assert any("Excluding symlink" in msg for msg in messages)
+
+    def test_v2025_preserve_requires_absolute_paths(self, tmp_path: Path) -> None:
+        """PRESERVE policy requires absolute_paths=True."""
+        with pytest.raises(ValueError, match="requires absolute_paths=True"):
+            _collect_manifest_directory_tree(
+                tmp_path,
+                ManifestVersion.v2025_12_04_beta,
+                symlink_policy=SymlinkPolicy.PRESERVE,
+                absolute_paths=False,
+            )
+
+    def test_v2025_preserve_keeps_all_symlinks(self, tmp_path: Path) -> None:
+        """PRESERVE policy keeps all symlinks including escaping ones."""
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+
+        try:
+            link.symlink_to("target.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2025(
+            tmp_path, symlink_policy=SymlinkPolicy.PRESERVE, absolute_paths=True
+        )
+
+        # Both entries should exist
+        assert len(manifest.paths) == 2
+        link_entry = [p for p in manifest.paths if "link.txt" in p.path][0]
+        assert link_entry.symlink_target == target.as_posix()
+
+    def test_v2025_transitive_requires_absolute_paths(self, tmp_path: Path) -> None:
+        """TRANSITIVE_INCLUDE_TARGETS policy requires absolute_paths=True."""
+        with pytest.raises(ValueError, match="requires absolute_paths=True"):
+            _collect_manifest_directory_tree(
+                tmp_path,
+                ManifestVersion.v2025_12_04_beta,
+                symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
+                absolute_paths=False,
+            )
+
+    def test_v2025_default_is_collapse_escaping(self, tmp_path: Path) -> None:
+        """Default symlink_policy is COLLAPSE_ESCAPING."""
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+
+        try:
+            link.symlink_to("target.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        # Call without specifying symlink_policy
+        manifest = _collect_manifest_directory_tree_v2025(tmp_path)
+
+        # Internal symlink should be preserved (COLLAPSE_ESCAPING behavior)
+        paths_by_name = {p.path: p for p in manifest.paths}
+        assert paths_by_name["link.txt"].symlink_target == "target.txt"
+
+    @pytest.mark.parametrize(
+        "version,symlink_policy",
+        [
+            (ManifestVersion.v2023_03_03, SymlinkPolicy.COLLAPSE),
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.COLLAPSE),
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.COLLAPSE_ESCAPING),
+        ],
+        ids=["v2023-COLLAPSE", "v2025-COLLAPSE", "v2025-COLLAPSE_ESCAPING"],
+    )
+    def test_collapse_follows_escaping_dir_symlink_with_nested_content(
+        self, tmp_path: Path, version: ManifestVersion, symlink_policy: SymlinkPolicy
+    ) -> None:
+        """COLLAPSE and COLLAPSE_ESCAPING follow escaping directory symlinks and collect nested content.
+
+        Structure:
+            tmp_path/
+                root/           <- manifest root
+                    link_dir/   <- symlink to ../outside_dir (escaping)
+                outside_dir/    <- outside the root
+                    subdir/
+                        file.txt
+
+        Expected: link_dir/subdir/file.txt should be collected as a regular file.
+        """
+        # Create structure outside the root
+        outside_dir = tmp_path / "outside_dir"
+        subdir = outside_dir / "subdir"
+        subdir.mkdir(parents=True)
+        (subdir / "file.txt").write_text("nested content")
+
+        # Create the manifest root with a symlink escaping to outside_dir
+        root = tmp_path / "root"
+        root.mkdir()
+        link_dir = root / "link_dir"
+
+        try:
+            link_dir.symlink_to("../outside_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(root, version, symlink_policy=symlink_policy)
+
+        # The escaping symlink should be followed, and nested content collected
+        file_paths = {p.path for p in manifest.paths}
+        assert "link_dir/subdir/file.txt" in file_paths
+
+        # The file should be collected as a regular file (not a symlink entry)
+        file_entry = next(p for p in manifest.paths if p.path == "link_dir/subdir/file.txt")
+        assert file_entry.symlink_target is None
+        assert file_entry.hash == ""  # Unhashed, ready for _hash_manifest
+        assert file_entry.size == len("nested content")
+
+        # v2025 collects directories, v2023 does not
+        if version == ManifestVersion.v2025_12_04_beta:
+            dir_paths = {d.path for d in manifest.dirs}
+            assert "link_dir" in dir_paths or "link_dir/subdir" in dir_paths
+
+
+class TestSymlinkChains:
+    """Tests for symlink chain handling across all symlink policies.
+
+    Tests cover:
+    - symlink -> symlink -> file (all within root)
+    - symlink -> symlink -> dir (all within root)
+    - symlink chain where intermediate link escapes root
+    - symlink chain where final target escapes root
+    """
+
+    # ==================== File symlink chains (all within root) ====================
+
+    @pytest.mark.parametrize(
+        "version,symlink_policy,expect_chain_preserved",
+        [
+            # COLLAPSE follows all symlinks, so chain is collapsed to files
+            (ManifestVersion.v2023_03_03, SymlinkPolicy.COLLAPSE, False),
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.COLLAPSE, False),
+            # COLLAPSE_ESCAPING preserves internal symlinks
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.COLLAPSE_ESCAPING, True),
+            # EXCLUDE skips all symlinks
+            (ManifestVersion.v2023_03_03, SymlinkPolicy.EXCLUDE, None),  # None = symlinks excluded
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.EXCLUDE, None),
+        ],
+        ids=[
+            "v2023-COLLAPSE",
+            "v2025-COLLAPSE",
+            "v2025-COLLAPSE_ESCAPING",
+            "v2023-EXCLUDE",
+            "v2025-EXCLUDE",
+        ],
+    )
+    def test_file_symlink_chain_within_root(
+        self,
+        tmp_path: Path,
+        version: ManifestVersion,
+        symlink_policy: SymlinkPolicy,
+        expect_chain_preserved: bool | None,
+    ) -> None:
+        """Test symlink -> symlink -> file chain where all are within root.
+
+        Structure:
+            root/
+                target.txt      <- actual file
+                link1.txt       <- symlink to target.txt
+                link2.txt       <- symlink to link1.txt
+        """
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link1 = tmp_path / "link1.txt"
+        link2 = tmp_path / "link2.txt"
+
+        try:
+            link1.symlink_to("target.txt")
+            link2.symlink_to("link1.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(
+            tmp_path, version, symlink_policy=symlink_policy
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        if expect_chain_preserved is None:
+            # EXCLUDE: only target file collected
+            assert "target.txt" in paths_by_name
+            assert "link1.txt" not in paths_by_name
+            assert "link2.txt" not in paths_by_name
+        elif expect_chain_preserved:
+            # COLLAPSE_ESCAPING: symlinks preserved with their immediate targets
+            assert "target.txt" in paths_by_name
+            assert paths_by_name["target.txt"].symlink_target is None
+            assert "link1.txt" in paths_by_name
+            assert paths_by_name["link1.txt"].symlink_target == "target.txt"
+            assert "link2.txt" in paths_by_name
+            assert paths_by_name["link2.txt"].symlink_target == "link1.txt"
+        else:
+            # COLLAPSE: all collected as files (symlinks followed)
+            assert "target.txt" in paths_by_name
+            assert paths_by_name["target.txt"].symlink_target is None
+            assert "link1.txt" in paths_by_name
+            assert paths_by_name["link1.txt"].symlink_target is None
+            assert "link2.txt" in paths_by_name
+            assert paths_by_name["link2.txt"].symlink_target is None
+
+    # ==================== Directory symlink chains (all within root) ====================
+
+    @pytest.mark.parametrize(
+        "version,symlink_policy,expect_chain_preserved",
+        [
+            # COLLAPSE follows all symlinks
+            (ManifestVersion.v2023_03_03, SymlinkPolicy.COLLAPSE, False),
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.COLLAPSE, False),
+            # COLLAPSE_ESCAPING preserves internal symlinks
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.COLLAPSE_ESCAPING, True),
+            # EXCLUDE skips all symlinks
+            (ManifestVersion.v2023_03_03, SymlinkPolicy.EXCLUDE, None),
+            (ManifestVersion.v2025_12_04_beta, SymlinkPolicy.EXCLUDE, None),
+        ],
+        ids=[
+            "v2023-COLLAPSE",
+            "v2025-COLLAPSE",
+            "v2025-COLLAPSE_ESCAPING",
+            "v2023-EXCLUDE",
+            "v2025-EXCLUDE",
+        ],
+    )
+    def test_dir_symlink_chain_within_root(
+        self,
+        tmp_path: Path,
+        version: ManifestVersion,
+        symlink_policy: SymlinkPolicy,
+        expect_chain_preserved: bool | None,
+    ) -> None:
+        """Test symlink -> symlink -> dir chain where all are within root.
+
+        Structure:
+            root/
+                target_dir/     <- actual directory
+                    file.txt
+                link1_dir/      <- symlink to target_dir
+                link2_dir/      <- symlink to link1_dir
+        """
+        target_dir = tmp_path / "target_dir"
+        target_dir.mkdir()
+        (target_dir / "file.txt").write_text("content")
+        link1_dir = tmp_path / "link1_dir"
+        link2_dir = tmp_path / "link2_dir"
+
+        try:
+            link1_dir.symlink_to("target_dir", target_is_directory=True)
+            link2_dir.symlink_to("link1_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(
+            tmp_path, version, symlink_policy=symlink_policy
+        )
+
+        file_paths = {p.path for p in manifest.paths}
+
+        if expect_chain_preserved is None:
+            # EXCLUDE: only files in target_dir collected
+            assert "target_dir/file.txt" in file_paths
+            assert "link1_dir/file.txt" not in file_paths
+            assert "link2_dir/file.txt" not in file_paths
+        elif expect_chain_preserved:
+            # COLLAPSE_ESCAPING: dir symlinks preserved as symlink entries
+            assert "target_dir/file.txt" in file_paths
+            # Dir symlinks should be in paths as symlink entries (v2025)
+            symlink_entries = {p.path: p for p in manifest.paths if p.symlink_target is not None}
+            assert "link1_dir" in symlink_entries
+            assert symlink_entries["link1_dir"].symlink_target == "target_dir"
+            assert "link2_dir" in symlink_entries
+            assert symlink_entries["link2_dir"].symlink_target == "link1_dir"
+        else:
+            # COLLAPSE: symlinks followed, files collected via all paths
+            assert "target_dir/file.txt" in file_paths
+            assert "link1_dir/file.txt" in file_paths
+            assert "link2_dir/file.txt" in file_paths
+
+    # ==================== Symlink chain with escaping final target ====================
+
+    @pytest.mark.parametrize(
+        "version,symlink_policy,use_absolute_symlink",
+        [
+            pytest.param(
+                ManifestVersion.v2023_03_03,
+                SymlinkPolicy.COLLAPSE,
+                False,
+                id="v2023-COLLAPSE-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2023_03_03,
+                SymlinkPolicy.COLLAPSE,
+                True,
+                id="v2023-COLLAPSE-absolute",
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE,
+                False,
+                id="v2025-COLLAPSE-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE,
+                True,
+                id="v2025-COLLAPSE-absolute",
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE_ESCAPING,
+                False,
+                id="v2025-COLLAPSE_ESCAPING-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE_ESCAPING,
+                True,
+                id="v2025-COLLAPSE_ESCAPING-absolute",
+            ),
+        ],
+    )
+    def test_file_symlink_chain_final_target_escapes(
+        self,
+        tmp_path: Path,
+        version: ManifestVersion,
+        symlink_policy: SymlinkPolicy,
+        use_absolute_symlink: bool,
+    ) -> None:
+        """Test symlink chain where final target is outside root.
+
+        Structure:
+            tmp_path/
+                outside.txt     <- actual file (outside root)
+                root/           <- manifest root
+                    link1.txt   <- symlink to outside.txt (escaping, relative or absolute)
+                    link2.txt   <- symlink to link1.txt (within root)
+
+        Behavior:
+            - COLLAPSE: Both symlinks are followed and collected as files
+            - COLLAPSE_ESCAPING with relative symlink: link1 escapes via "..", so both
+              are collapsed (link2 -> link1 -> ../outside.txt, the chain escapes)
+            - COLLAPSE_ESCAPING with absolute symlink: link1 has absolute target outside
+              root so it's collapsed, but link2 points to link1 which is within root,
+              so link2 is preserved as a symlink entry
+        """
+        outside_file = tmp_path / "outside.txt"
+        outside_file.write_text("outside content")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        link1 = root / "link1.txt"
+        link2 = root / "link2.txt"
+
+        try:
+            if use_absolute_symlink:
+                link1.symlink_to(outside_file)  # Absolute path
+            else:
+                link1.symlink_to("../outside.txt")  # Relative path with ..
+            link2.symlink_to("link1.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(root, version, symlink_policy=symlink_policy)
+
+        file_paths = {p.path for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # link1 should always be collected (either as file or symlink entry)
+        assert "link1.txt" in file_paths
+        # link1 should be collapsed to a file (escaping symlink)
+        assert paths_by_name["link1.txt"].symlink_target is None
+
+        # link2 -> link1 is within root, so behavior depends on policy
+        # but NOT on whether link1 uses relative or absolute target
+        assert "link2.txt" in file_paths
+        if symlink_policy == SymlinkPolicy.COLLAPSE:
+            # COLLAPSE: all symlinks followed
+            assert paths_by_name["link2.txt"].symlink_target is None
+        elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
+            # COLLAPSE_ESCAPING: link2 is within root, so preserved as symlink
+            assert paths_by_name["link2.txt"].symlink_target == "link1.txt"
+
+    @pytest.mark.parametrize(
+        "version,symlink_policy,use_absolute_symlink",
+        [
+            pytest.param(
+                ManifestVersion.v2023_03_03,
+                SymlinkPolicy.COLLAPSE,
+                False,
+                id="v2023-COLLAPSE-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2023_03_03,
+                SymlinkPolicy.COLLAPSE,
+                True,
+                id="v2023-COLLAPSE-absolute",
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE,
+                False,
+                id="v2025-COLLAPSE-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE,
+                True,
+                id="v2025-COLLAPSE-absolute",
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE_ESCAPING,
+                False,
+                id="v2025-COLLAPSE_ESCAPING-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE_ESCAPING,
+                True,
+                id="v2025-COLLAPSE_ESCAPING-absolute",
+            ),
+        ],
+    )
+    def test_dir_symlink_chain_final_target_escapes(
+        self,
+        tmp_path: Path,
+        version: ManifestVersion,
+        symlink_policy: SymlinkPolicy,
+        use_absolute_symlink: bool,
+    ) -> None:
+        """Test dir symlink chain where final target directory is outside root.
+
+        Structure:
+            tmp_path/
+                outside_dir/    <- actual directory (outside root)
+                    file.txt
+                root/           <- manifest root
+                    link1_dir/  <- symlink to outside_dir (escaping, relative or absolute)
+                    link2_dir/  <- symlink to link1_dir (within root)
+
+        Behavior:
+            - COLLAPSE: Both symlinks are followed, files collected via both paths
+            - COLLAPSE_ESCAPING with relative symlink: link1 escapes via "..", so both
+              are collapsed (link2 -> link1 -> ../outside_dir, the chain escapes)
+            - COLLAPSE_ESCAPING with absolute symlink: link1 has absolute target outside
+              root so it's collapsed, but link2 points to link1 which is within root,
+              so link2 is preserved as a symlink entry
+        """
+        outside_dir = tmp_path / "outside_dir"
+        outside_dir.mkdir()
+        (outside_dir / "file.txt").write_text("outside content")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        link1_dir = root / "link1_dir"
+        link2_dir = root / "link2_dir"
+
+        try:
+            if use_absolute_symlink:
+                link1_dir.symlink_to(outside_dir, target_is_directory=True)  # Absolute path
+            else:
+                link1_dir.symlink_to(
+                    "../outside_dir", target_is_directory=True
+                )  # Relative path with ..
+            link2_dir.symlink_to("link1_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(root, version, symlink_policy=symlink_policy)
+
+        file_paths = {p.path for p in manifest.paths}
+
+        # link1_dir should always be followed (escaping symlink)
+        assert "link1_dir/file.txt" in file_paths
+
+        # link2_dir -> link1_dir is within root, so it should be preserved as symlink
+        # regardless of whether link1_dir uses relative or absolute target
+        if symlink_policy == SymlinkPolicy.COLLAPSE:
+            # COLLAPSE: all symlinks followed
+            assert "link2_dir/file.txt" in file_paths
+        elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
+            # COLLAPSE_ESCAPING: link2_dir is within root, so preserved as symlink
+            assert "link2_dir" in file_paths
+            link2_entry = next(p for p in manifest.paths if p.path == "link2_dir")
+            assert link2_entry.symlink_target == "link1_dir"
+
+    # ==================== Symlink chain with escaping intermediate link ====================
+
+    @pytest.mark.parametrize(
+        "version,symlink_policy,use_absolute_symlinks",
+        [
+            pytest.param(
+                ManifestVersion.v2023_03_03,
+                SymlinkPolicy.COLLAPSE,
+                False,
+                id="v2023-COLLAPSE-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks reliably (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2023_03_03,
+                SymlinkPolicy.COLLAPSE,
+                True,
+                id="v2023-COLLAPSE-absolute",
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE,
+                False,
+                id="v2025-COLLAPSE-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks reliably (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE,
+                True,
+                id="v2025-COLLAPSE-absolute",
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE_ESCAPING,
+                False,
+                id="v2025-COLLAPSE_ESCAPING-relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks reliably (WinError 123)",
+                ),
+            ),
+            pytest.param(
+                ManifestVersion.v2025_12_04_beta,
+                SymlinkPolicy.COLLAPSE_ESCAPING,
+                True,
+                id="v2025-COLLAPSE_ESCAPING-absolute",
+            ),
+        ],
+    )
+    def test_file_symlink_chain_intermediate_escapes(
+        self,
+        tmp_path: Path,
+        version: ManifestVersion,
+        symlink_policy: SymlinkPolicy,
+        use_absolute_symlinks: bool,
+    ) -> None:
+        """Test symlink chain where intermediate link is outside root.
+
+        Structure:
+            tmp_path/
+                outside_link.txt  <- symlink to root/target.txt (outside root, points back in)
+                root/             <- manifest root
+                    target.txt    <- actual file
+                    link.txt      <- symlink to outside_link.txt (escaping)
+
+        With relative symlinks:
+            outside_link.txt -> root/target.txt (relative)
+            link.txt -> ../outside_link.txt (relative)
+
+        With absolute symlinks:
+            outside_link.txt -> /abs/path/root/target.txt (absolute)
+            link.txt -> /abs/path/outside_link.txt (absolute)
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        target = root / "target.txt"
+        target.write_text("content")
+
+        outside_link = tmp_path / "outside_link.txt"
+        link = root / "link.txt"
+
+        try:
+            if use_absolute_symlinks:
+                outside_link.symlink_to(target)  # Absolute path
+                link.symlink_to(outside_link)  # Absolute path
+            else:
+                outside_link.symlink_to("root/target.txt")  # Relative path
+                link.symlink_to("../outside_link.txt")  # Relative path
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(root, version, symlink_policy=symlink_policy)
+
+        file_paths = {p.path for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # target.txt should always be collected
+        assert "target.txt" in file_paths
+        assert paths_by_name["target.txt"].symlink_target is None
+
+        # link.txt escapes to outside_link.txt which points back to target.txt
+        # COLLAPSE modes should follow and collect as a file
+        assert "link.txt" in file_paths
+        assert paths_by_name["link.txt"].symlink_target is None
+
+    # ==================== EXCLUDE policy with chains ====================
+
+    @pytest.mark.parametrize(
+        "version",
+        [ManifestVersion.v2023_03_03, ManifestVersion.v2025_12_04_beta],
+        ids=["v2023", "v2025"],
+    )
+    def test_exclude_skips_all_symlinks_in_chain(
+        self,
+        tmp_path: Path,
+        version: ManifestVersion,
+    ) -> None:
+        """EXCLUDE policy skips all symlinks regardless of chain structure.
+
+        Structure:
+            root/
+                target.txt
+                link1.txt -> target.txt
+                link2.txt -> link1.txt
+                target_dir/
+                    file.txt
+                link_dir -> target_dir
+        """
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link1 = tmp_path / "link1.txt"
+        link2 = tmp_path / "link2.txt"
+        target_dir = tmp_path / "target_dir"
+        target_dir.mkdir()
+        (target_dir / "file.txt").write_text("dir content")
+        link_dir = tmp_path / "link_dir"
+
+        try:
+            link1.symlink_to("target.txt")
+            link2.symlink_to("link1.txt")
+            link_dir.symlink_to("target_dir", target_is_directory=True)
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree(
+            tmp_path, version, symlink_policy=SymlinkPolicy.EXCLUDE
+        )
+
+        file_paths = {p.path for p in manifest.paths}
+
+        # Only actual files should be collected
+        assert "target.txt" in file_paths
+        assert "target_dir/file.txt" in file_paths
+        # All symlinks should be excluded
+        assert "link1.txt" not in file_paths
+        assert "link2.txt" not in file_paths
+        assert "link_dir/file.txt" not in file_paths
+
+    # ==================== PRESERVE and TRANSITIVE_INCLUDE_TARGETS with chains ====================
+
+    def test_preserve_keeps_all_symlinks_in_chain(self, tmp_path: Path) -> None:
+        """PRESERVE policy keeps all symlinks with absolute targets.
+
+        Structure:
+            root/
+                target.txt
+                link1.txt -> target.txt
+                link2.txt -> link1.txt
+        """
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link1 = tmp_path / "link1.txt"
+        link2 = tmp_path / "link2.txt"
+
+        try:
+            link1.symlink_to("target.txt")
+            link2.symlink_to("link1.txt")
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2025(
+            tmp_path, symlink_policy=SymlinkPolicy.PRESERVE, absolute_paths=True
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # All entries should exist
+        assert target.as_posix() in paths_by_name
+        assert link1.as_posix() in paths_by_name
+        assert link2.as_posix() in paths_by_name
+
+        # Symlinks should have absolute targets
+        assert paths_by_name[link1.as_posix()].symlink_target == target.as_posix()
+        assert paths_by_name[link2.as_posix()].symlink_target == link1.as_posix()
+
+    @pytest.mark.parametrize(
+        "use_absolute_symlink",
+        [
+            pytest.param(
+                False,
+                id="relative",
+                marks=pytest.mark.skipif(
+                    os.name == "nt",
+                    reason="Windows cannot follow relative symlinks with '..' components (WinError 123)",
+                ),
+            ),
+            pytest.param(True, id="absolute"),
+        ],
+    )
+    def test_preserve_keeps_escaping_symlink_chain(
+        self, tmp_path: Path, use_absolute_symlink: bool
+    ) -> None:
+        """PRESERVE policy keeps escaping symlinks with absolute targets.
+
+        Structure:
+            tmp_path/
+                outside.txt     <- outside root
+                root/
+                    link.txt    <- symlink to outside.txt (relative or absolute)
+        """
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside content")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        link = root / "link.txt"
+
+        try:
+            if use_absolute_symlink:
+                link.symlink_to(outside)  # Absolute path
+            else:
+                link.symlink_to("../outside.txt")  # Relative path
+        except OSError:
+            pytest.skip("Symlinks not supported on this platform")
+
+        manifest = _collect_manifest_directory_tree_v2025(
+            root, symlink_policy=SymlinkPolicy.PRESERVE, absolute_paths=True
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # Escaping symlink should be preserved with absolute target
+        assert link.as_posix() in paths_by_name
+        assert paths_by_name[link.as_posix()].symlink_target == outside.as_posix()

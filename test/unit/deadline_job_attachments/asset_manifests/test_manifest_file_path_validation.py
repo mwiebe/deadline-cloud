@@ -284,28 +284,35 @@ class TestManifestFilePathValidation:
         assert path.symlink_target == "subdir/target.txt"
 
     def test_symlink_target_rejects_absolute_path(self):
-        """Symlink target cannot be an absolute path."""
+        """Symlink target cannot be an absolute path (validated at encode time)."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="/absolute/path/target.txt",
+        )
+        # Validation happens at encode() time, not construction
         with pytest.raises(ManifestDecodeValidationError, match="must be a relative path"):
-            ManifestFilePath(
-                path="link.txt",
-                symlink_target="/absolute/path/target.txt",
-            )
+            path._validate_symlink_target()
 
     def test_symlink_target_rejects_escape_with_leading_dotdot(self):
-        """Symlink target cannot start with '..' that escapes manifest root."""
+        """Symlink target cannot start with '..' that escapes manifest root (validated at encode time)."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="../outside/target.txt",
+        )
+        # Validation happens at encode() time, not construction
         with pytest.raises(ManifestDecodeValidationError, match="escapes manifest root"):
-            ManifestFilePath(
-                path="link.txt",
-                symlink_target="../outside/target.txt",
-            )
+            path._validate_symlink_target()
 
     def test_symlink_target_rejects_escape_with_multiple_dotdot(self):
-        """Symlink target cannot have '..' that escapes manifest root."""
+        """Symlink target cannot have '..' that escapes manifest root (validated at encode time)."""
+        path = ManifestFilePath(
+            path="link.txt",
+            symlink_target="subdir/../../outside/target.txt",
+        )
+        # After normalization: ../outside/target.txt - escapes root
+        # Validation happens at encode() time, not construction
         with pytest.raises(ManifestDecodeValidationError, match="escapes manifest root"):
-            ManifestFilePath(
-                path="link.txt",
-                symlink_target="subdir/../../outside/target.txt",
-            )
+            path._validate_symlink_target()
 
     def test_symlink_target_allows_dotdot_within_manifest(self):
         """Symlink target can use '..' as long as it stays within manifest."""
