@@ -31,6 +31,9 @@ The manifest system uses composable operations that can be combined to implement
 │  6. SUBTREE: (Manifest, subtree_path) → Manifest                        │
 │     _subtree_manifest(manifest, subtree, symlink_policy)                │
 │                                                                         │
+│  7. JOIN: (Manifest, prefix) → Manifest                                 │
+│     _join_manifest(manifest, prefix) → BaseAssetManifest                │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -55,6 +58,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
 | `_subtree_manifest.py` | SUBTREE | Extracts a subtree as a new manifest |
+| `_join_manifest.py` | JOIN | Joins a prefix to all paths in a manifest |
 
 ## Operation Details
 
@@ -708,6 +712,119 @@ You might use both together:
 # Extract textures subtree, then filter to only PNG files
 textures = _subtree_manifest(full_manifest, "assets/textures")
 png_only = _filter_manifest(textures, lambda e: e.path.endswith(".png"))
+```
+
+### 7. JOIN: `_join_manifest()`
+
+**Location:** `_join_manifest.py`
+
+Joins a prefix to all paths in a manifest, producing a new manifest with prefixed paths:
+
+```python
+def _join_manifest(
+    manifest: BaseAssetManifest,
+    prefix: str,
+    *,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+) -> BaseAssetManifest:
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `manifest` | The source manifest to transform |
+| `prefix` | Path prefix to join to all paths (relative or absolute) |
+| `print_function_callback` | Progress callback for status messages |
+
+**Conceptual Model:**
+
+JOIN is the inverse of SUBTREE. While SUBTREE strips a prefix from paths (re-rooting to a subdirectory), JOIN adds a prefix to paths (re-rooting to a parent directory).
+
+```
+Original manifest (relative paths):
+  wood.png
+  metal.png
+  current -> wood.png
+
+JOIN(manifest, "/projects/scene/assets/textures") produces:
+
+New manifest (absolute paths):
+  /projects/scene/assets/textures/wood.png
+  /projects/scene/assets/textures/metal.png
+  /projects/scene/assets/textures/current -> /projects/scene/assets/textures/wood.png
+```
+
+**Path Style Behavior:**
+
+| Prefix Type | Input Paths | Output Paths |
+|-------------|-------------|--------------|
+| Relative (`assets/textures`) | Relative | Relative (prefixed) |
+| Absolute (`/projects/scene`) | Relative | Absolute |
+
+**What Gets Prefixed:**
+
+- File paths (`entry.path`)
+- Directory paths (`dir.path`)
+- Symlink targets (`entry.symlink_target`)
+
+**Example - Converting Relative to Absolute:**
+
+```python
+from deadline.job_attachments.asset_manifests._join_manifest import _join_manifest
+from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+# Load a manifest with relative paths
+with open("textures.manifest") as f:
+    manifest = decode_manifest(f.read())
+
+# Join with absolute prefix to get absolute paths
+absolute_manifest = _join_manifest(manifest, "/projects/scene/assets/textures")
+
+for entry in absolute_manifest.paths:
+    print(entry.path)  # "/projects/scene/assets/textures/wood.png", etc.
+```
+
+**Example - Combining Multiple Manifests:**
+
+```python
+# Load manifests from different roots
+textures = decode_manifest(read_file("textures.manifest"))
+models = decode_manifest(read_file("models.manifest"))
+scripts = decode_manifest(read_file("scripts.manifest"))
+
+# Join each to its absolute root
+textures_abs = _join_manifest(textures, "/projects/scene/assets/textures")
+models_abs = _join_manifest(models, "/projects/scene/assets/models")
+scripts_abs = _join_manifest(scripts, "/projects/scene/scripts")
+
+# Compose into a single manifest representing all data
+combined = _compose_manifests([textures_abs, models_abs, scripts_abs])
+
+# Now 'combined' has all files with absolute paths for unified processing
+```
+
+**Use Cases:**
+
+1. **Unified download:** Join manifests to absolute paths, compose them, then download all files from S3 in one operation
+2. **Path normalization:** Convert relative manifests to absolute for consistent processing
+3. **Manifest merging:** Prepare manifests from different roots for composition
+4. **Inverse of SUBTREE:** Restore original paths after subtree extraction
+
+**Relationship to SUBTREE:**
+
+JOIN and SUBTREE are inverse operations:
+
+| Operation | Input | Output | Path Transformation |
+|-----------|-------|--------|---------------------|
+| SUBTREE | Manifest + subtree path | Manifest | Strips prefix from paths |
+| JOIN | Manifest + prefix | Manifest | Adds prefix to paths |
+
+```python
+# These operations are inverses (for paths within the subtree)
+original = _join_manifest(subtree_manifest, "assets/textures")
+back_to_subtree = _subtree_manifest(original, "assets/textures")
+# back_to_subtree has the same paths as subtree_manifest
 ```
 
 ## Workflow Examples

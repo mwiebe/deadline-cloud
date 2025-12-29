@@ -700,7 +700,10 @@ class TestSubtreeManifestDirectorySymlinks:
                 # Symlink in subtree pointing to a directory outside subtree
                 {"path": "assets/textures/link", "symlink_target": "assets/shared/v2"},
                 # Directory contains a nested symlink pointing to another file
-                {"path": "assets/shared/v2/nested_link", "symlink_target": "assets/data/actual.png"},
+                {
+                    "path": "assets/shared/v2/nested_link",
+                    "symlink_target": "assets/data/actual.png",
+                },
                 {"path": "assets/shared/v2/regular.png", "hash": "h1", "size": 100, "mtime": 1000},
                 # The actual target of the nested symlink
                 {"path": "assets/data/actual.png", "hash": "h2", "size": 200, "mtime": 2000},
