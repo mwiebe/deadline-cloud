@@ -1500,3 +1500,243 @@ class TestDirectoryDeletionSemantics:
         # Files in deleted directories should be deleted
         deleted_files = {p.path for p in diff.paths if p.deleted}
         assert deleted_files == {"dir1/file.txt", "dir2/file.txt"}
+
+
+class TestPreserveRunnable:
+    """Tests for preserve_runnable parameter.
+
+    The preserve_runnable parameter addresses cross-platform workflows where:
+    - A manifest is created on POSIX with runnable=True for executable files
+    - Files are modified on Windows where runnable is always False
+    - Without preserve_runnable, the diff would incorrectly change runnable to False
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+        manifest_type: ManifestType = ManifestType.SNAPSHOT,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+            manifest_type=manifest_type,
+        )
+
+    def test_preserve_runnable_false_uses_current_value(self) -> None:
+        """With preserve_runnable=False (default), modified files use current's runnable."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": False}]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=False)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "script.sh"
+        assert diff.paths[0].runnable is False  # Uses current's value
+
+    def test_preserve_runnable_true_uses_parent_value_for_modified(self) -> None:
+        """With preserve_runnable=True, modified files use parent's runnable."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": False}]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "script.sh"
+        assert diff.paths[0].runnable is True  # Preserved from parent
+
+    def test_preserve_runnable_new_files_use_current_value(self) -> None:
+        """New files always use current's runnable, even with preserve_runnable=True."""
+        parent = self._create_v2025_manifest(files=[])
+        current = self._create_v2025_manifest(
+            [{"path": "new_script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "new_script.sh"
+        assert diff.paths[0].runnable is False  # New file uses current's value
+
+    def test_preserve_runnable_multiple_files(self) -> None:
+        """preserve_runnable works correctly with multiple modified files."""
+        parent = self._create_v2025_manifest(
+            [
+                {"path": "script1.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True},
+                {"path": "script2.sh", "hash": "h2", "size": 100, "mtime": 1000, "runnable": True},
+                {"path": "data.txt", "hash": "h3", "size": 100, "mtime": 1000, "runnable": False},
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                # Modified - runnable should be preserved from parent
+                {
+                    "path": "script1.sh",
+                    "hash": "h1a",
+                    "size": 100,
+                    "mtime": 2000,
+                    "runnable": False,
+                },
+                # Unchanged - not in diff
+                {"path": "script2.sh", "hash": "h2", "size": 100, "mtime": 1000, "runnable": True},
+                # Modified - runnable should be preserved from parent (False)
+                {"path": "data.txt", "hash": "h3a", "size": 100, "mtime": 2000, "runnable": False},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        paths_by_name = {p.path: p for p in diff.paths}
+        assert len(paths_by_name) == 2  # Only modified files
+
+        assert paths_by_name["script1.sh"].runnable is True  # Preserved from parent
+        assert paths_by_name["data.txt"].runnable is False  # Preserved from parent (was False)
+
+    def test_preserve_runnable_with_new_and_modified(self) -> None:
+        """preserve_runnable correctly handles mix of new and modified files."""
+        parent = self._create_v2025_manifest(
+            [{"path": "existing.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [
+                # Modified - runnable preserved from parent
+                {
+                    "path": "existing.sh",
+                    "hash": "h2",
+                    "size": 100,
+                    "mtime": 2000,
+                    "runnable": False,
+                },
+                # New - uses current's runnable
+                {"path": "new.sh", "hash": "h3", "size": 50, "mtime": 2000, "runnable": False},
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        paths_by_name = {p.path: p for p in diff.paths}
+        assert paths_by_name["existing.sh"].runnable is True  # Preserved from parent
+        assert paths_by_name["new.sh"].runnable is False  # New file, uses current
+
+    def test_preserve_runnable_parent_false_current_true(self) -> None:
+        """preserve_runnable preserves False from parent even if current is True."""
+        parent = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "file.txt", "hash": "h2", "size": 100, "mtime": 2000, "runnable": True}]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        assert diff.paths[0].runnable is False  # Preserved from parent
+
+    def test_preserve_runnable_chunked_files(self) -> None:
+        """preserve_runnable works with chunked (large) files."""
+        parent = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large_script.sh",
+                    "chunkhashes": ["c1", "c2"],
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 1000,
+                    "runnable": True,
+                }
+            ]
+        )
+        current = self._create_v2025_manifest(
+            [
+                {
+                    "path": "large_script.sh",
+                    "chunkhashes": ["c1", "c3"],  # Second chunk changed
+                    "size": 512 * 1024 * 1024,
+                    "mtime": 2000,
+                    "runnable": False,
+                }
+            ]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        assert diff.paths[0].runnable is True  # Preserved from parent
+        assert diff.paths[0].chunkhashes == ["c1", "c3"]  # Content from current
+
+    def test_preserve_runnable_default_is_false(self) -> None:
+        """Default behavior (no preserve_runnable arg) uses current's runnable."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": False}]
+        )
+
+        # Call without preserve_runnable argument
+        diff = _compute_diff_manifest(parent, current)
+
+        assert diff.paths[0].runnable is False  # Default behavior uses current
+
+    def test_preserve_runnable_v2023_ignored(self) -> None:
+        """preserve_runnable has no effect on v2023 (which doesn't have runnable)."""
+        parent = AssetManifest2023(
+            hash_alg=HashAlgorithm.XXH128,
+            paths=[ManifestPath2023(path="file.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+        )
+        current = AssetManifest2023(
+            hash_alg=HashAlgorithm.XXH128,
+            paths=[ManifestPath2023(path="file.txt", hash="h2", size=100, mtime=2000)],
+            total_size=100,
+        )
+
+        # Should not raise, just ignored for v2023
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        assert len(diff.paths) == 1
+        assert diff.paths[0].path == "file.txt"
+
+    def test_preserve_runnable_only_runnable_changed_not_in_diff(self) -> None:
+        """When only runnable changed and preserve_runnable=True, file is not in diff."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+
+        # File should NOT be in diff since only runnable changed and we're preserving it
+        assert len(diff.paths) == 0
+
+    def test_preserve_runnable_only_runnable_changed_in_diff_when_false(self) -> None:
+        """When only runnable changed and preserve_runnable=False, file IS in diff."""
+        parent = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+        )
+        current = self._create_v2025_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
+        )
+
+        diff = _compute_diff_manifest(parent, current, preserve_runnable=False)
+
+        # File SHOULD be in diff since runnable changed and we're not preserving
+        assert len(diff.paths) == 1
+        assert diff.paths[0].runnable is False

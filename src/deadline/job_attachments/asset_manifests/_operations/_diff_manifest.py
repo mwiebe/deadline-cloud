@@ -48,6 +48,8 @@ def _compute_diff_manifest(
     parent_manifest_hash: Optional[str] = None,
     ignore_hashes: bool = False,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    *,
+    preserve_runnable: bool = False,
 ) -> BaseAssetManifest:
     """
     Compute the difference between two snapshot manifests.
@@ -70,6 +72,12 @@ def _compute_diff_manifest(
                       Useful for fast diff mode where only metadata (mtime, size, runnable)
                       is compared without hashing files.
         print_function_callback: Progress callback
+        preserve_runnable: If True, copy the 'runnable' field from the parent entry
+                          when a file is modified. This is useful on Windows where the
+                          execute bit is not supported by the filesystem—if the parent
+                          manifest came from POSIX with runnable=True, we want to preserve
+                          that value rather than losing it when collecting on Windows.
+                          Default is False.
 
     Returns:
         A diff manifest with:
@@ -127,6 +135,7 @@ def _compute_diff_manifest(
             parent_manifest_hash=parent_manifest_hash,
             ignore_hashes=ignore_hashes,
             print_function_callback=print_function_callback,
+            preserve_runnable=preserve_runnable,
         )
     else:
         raise ValueError(f"Unsupported manifest version: {version}")
@@ -215,6 +224,8 @@ def _compute_diff_manifest_v2025(
     parent_manifest_hash: Optional[str],
     ignore_hashes: bool,
     print_function_callback: Callable[[Any], None],
+    *,
+    preserve_runnable: bool = False,
 ) -> AssetManifest2025:
     """
     Compute diff for v2025-12-04-beta manifests.
@@ -237,6 +248,15 @@ def _compute_diff_manifest_v2025(
 
     This ensures diff manifests are fully composable—each deletion is
     self-contained and doesn't depend on knowing the parent snapshot's contents.
+
+    Args:
+        parent: The parent snapshot manifest
+        current: The current snapshot manifest
+        parent_manifest_hash: Optional hash of the parent manifest
+        ignore_hashes: If True, ignore hash/chunkhashes comparison
+        print_function_callback: Progress callback
+        preserve_runnable: If True, copy 'runnable' from parent for modified files.
+                          This preserves POSIX execute bits when diffing on Windows.
     """
 
     # Build path lookups for files
@@ -265,7 +285,12 @@ def _compute_diff_manifest_v2025(
         parent_entry = parent_file_paths[path]
         current_entry = current_file_paths[path]
 
-        if _entries_differ(parent_entry, current_entry, ignore_hashes=ignore_hashes):
+        if _entries_differ(
+            parent_entry,
+            current_entry,
+            ignore_hashes=ignore_hashes,
+            ignore_runnable=preserve_runnable,
+        ):
             modified_files.add(path)
 
     # Ensure deleted directories have all their contents deleted too.
@@ -293,6 +318,13 @@ def _compute_diff_manifest_v2025(
     for path in sorted(changed_files):
         entry = current_file_paths[path]
 
+        # Determine the runnable value to use
+        runnable_value = entry.runnable
+        if preserve_runnable and path in modified_files:
+            # For modified files, preserve runnable from parent when requested
+            parent_entry = parent_file_paths[path]
+            runnable_value = parent_entry.runnable
+
         # Copy the entry to the diff manifest
         file_entries.append(
             ManifestFilePath2025(
@@ -300,7 +332,7 @@ def _compute_diff_manifest_v2025(
                 hash=entry.hash,
                 size=entry.size,
                 mtime=entry.mtime,
-                runnable=entry.runnable,
+                runnable=runnable_value,
                 chunkhashes=entry.chunkhashes,
                 symlink_target=entry.symlink_target,
             )
@@ -345,7 +377,10 @@ def _compute_diff_manifest_v2025(
 
 
 def _entries_differ(
-    parent: BaseManifestPath, current: BaseManifestPath, ignore_hashes: bool = False
+    parent: BaseManifestPath,
+    current: BaseManifestPath,
+    ignore_hashes: bool = False,
+    ignore_runnable: bool = False,
 ) -> bool:
     """
     Check if two file entries differ in any meaningful way.
@@ -365,6 +400,7 @@ def _entries_differ(
         parent: Parent manifest entry
         current: Current manifest entry
         ignore_hashes: If True, ignore hash/chunkhashes comparison (fast mode)
+        ignore_runnable: If True, ignore runnable field comparison (for preserve_runnable mode)
     """
     # Determine entry types
     parent_is_symlink = parent.symlink_target is not None
@@ -387,7 +423,7 @@ def _entries_differ(
         return True
     if parent.mtime != current.mtime:
         return True
-    if parent.runnable != current.runnable:
+    if not ignore_runnable and parent.runnable != current.runnable:
         return True
 
     # Check content (hash or chunkhashes) unless ignore_hashes is True

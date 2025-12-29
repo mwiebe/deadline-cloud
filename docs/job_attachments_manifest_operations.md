@@ -330,8 +330,21 @@ def _compute_diff_manifest(
     parent_manifest_hash: Optional[str] = None,
     ignore_hashes: bool = False,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
+    *,
+    preserve_runnable: bool = False,
 ) -> BaseAssetManifest:
 ```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `parent` | The parent snapshot manifest (filtered, with hashes) |
+| `current` | The current snapshot manifest (filtered, with hashes) |
+| `parent_manifest_hash` | Optional hash of the parent manifest (for v2025 diff manifests) |
+| `ignore_hashes` | If `True`, compare by metadata only (size, mtime, runnable) without hashes |
+| `print_function_callback` | Progress callback for status messages |
+| `preserve_runnable` | If `True`, copy `runnable` from parent for modified files (see below) |
 
 **Preconditions:**
 
@@ -362,6 +375,27 @@ def _compute_diff_manifest(
 - Symlinks compared by `symlink_target` only
 - Regular files compared by hash/chunkhashes (unless `ignore_hashes`), size, mtime, runnable
 
+**The `preserve_runnable` Parameter:**
+
+The `runnable` field captures the POSIX execute bit (`chmod +x`). On Windows, this filesystem concept doesn't exist—all files report `runnable=False` when collected. This creates a problem for cross-platform workflows:
+
+1. A manifest is created on POSIX with `script.sh` having `runnable=True`
+2. The manifest is used on Windows, files are extracted
+3. User modifies `script.sh` content on Windows
+4. A new manifest is collected on Windows—`script.sh` now has `runnable=False`
+5. The diff shows `script.sh` as modified, but with `runnable=False`
+6. When applied back to POSIX, the execute bit is incorrectly removed
+
+Setting `preserve_runnable=True` solves this by:
+- Ignoring `runnable` differences when determining if entries differ (so a file that only changed `runnable` won't appear in the diff)
+- Copying the `runnable` value from the parent manifest for modified files that have other changes
+
+New files always use the current manifest's `runnable` value (which will be `False` on Windows, but that's correct for newly created files).
+
+**When to use `preserve_runnable=True`:**
+- On Windows when computing diffs against a parent manifest that may have come from POSIX
+- In any cross-platform workflow where you want to preserve execute bits through modifications
+
 **Example:**
 
 ```python
@@ -381,6 +415,7 @@ diff = _compute_diff_manifest(
     current=current_hashed,
     parent_manifest_hash=parent_hash,
     ignore_hashes=False,  # Compare by hash for accuracy
+    preserve_runnable=True,  # Preserve execute bits from parent for modified files
 )
 
 # Inspect the diff
