@@ -599,23 +599,29 @@ When re-rooting a manifest, symlinks that were previously "within root" may now 
 
 **Note:** Unlike COLLECT, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
 
+**Important: Symlink Target Storage Format:**
+
+In our manifest format, symlink targets are stored **relative to the manifest root**, not relative to the symlink location (unlike POSIX filesystem symlinks). For example, a symlink at `assets/textures/current` pointing to `assets/shared/latest.png` stores the target as `assets/shared/latest.png`, not as `../shared/latest.png`.
+
+This design choice simplifies manifest operations since targets can be looked up directly in the manifest's path index without needing to resolve relative paths from the symlink's location.
+
 **Symlink Collapse Behavior:**
 
 When collapsing a symlink, the operation looks up the target path in the original manifest:
 
 - **File target:** The symlink entry is replaced with a copy of the target file entry (using the symlink's path, but the target's hash, size, mtime, runnable)
-- **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current -> ../v2` with target containing `../v2/a.txt` and `../v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
+- **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current` with target `assets/shared/v2` containing `assets/shared/v2/a.txt` and `assets/shared/v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
 - **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT), the symlink is excluded with a warning
 
 **Preserved Symlink Target Rebasing:**
 
-Symlinks that are preserved (not collapsed) must have their `symlink_target` rebased relative to the new subtree root. For example:
+Symlinks that are preserved (not collapsed) must have their `symlink_target` rebased relative to the new subtree root. Since targets are stored relative to the manifest root, rebasing simply strips the subtree prefix from the target path. For example:
 
 ```
 Original manifest (rooted at /projects/scene):
   assets/textures/wood.png
-  assets/textures/current -> ../shared/v2/latest.png  (escapes subtree)
-  assets/textures/alt -> ./variants/dark.png          (within subtree)
+  assets/textures/current -> assets/shared/v2/latest.png  (target outside subtree - escapes)
+  assets/textures/alt -> assets/textures/variants/dark.png  (target within subtree)
   assets/shared/v2/latest.png
 
 SUBTREE(manifest, "assets/textures") with COLLAPSE_ESCAPING:
@@ -623,10 +629,10 @@ SUBTREE(manifest, "assets/textures") with COLLAPSE_ESCAPING:
 Result (rooted at /projects/scene/assets/textures):
   wood.png
   current                    (collapsed: now a file with latest.png's content)
-  alt -> variants/dark.png   (preserved: target rebased, still within new root)
+  alt -> variants/dark.png   (preserved: target rebased from assets/textures/variants/dark.png)
 ```
 
-The preserved symlink `alt` originally had target `./variants/dark.png`. After rebasing, it becomes `variants/dark.png` (or equivalently `./variants/dark.png`), which is still valid relative to the new subtree root.
+The preserved symlink `alt` originally had target `assets/textures/variants/dark.png`. After rebasing (stripping the `assets/textures/` prefix), it becomes `variants/dark.png`.
 
 **Example - Basic Subtree Extraction:**
 
@@ -652,12 +658,12 @@ for entry in textures.paths:
 **Example - Handling Symlinks:**
 
 ```python
-# Original manifest structure:
+# Original manifest structure (symlink targets are relative to manifest root):
 # /projects/scene/
 # ├── assets/
 # │   ├── textures/
 # │   │   ├── wood.png
-# │   │   └── current -> ../shared/latest.png  (escapes subtree!)
+# │   │   └── current -> assets/shared/latest.png  (target outside subtree - escapes!)
 # │   └── shared/
 # │       └── latest.png
 # └── ...
