@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Module for filling in hashes for manifest objects that were created by _collect_manifest.
+Module for filling in hashes for manifest objects that were created by collect_manifest.
 
 This module implements the HASH operation from the composable manifest operations design:
     HASH: Manifest (with hash="") → Manifest (with hashes filled in)
@@ -34,7 +34,7 @@ from ..v2025_12_04.asset_manifest import (
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
 
-def _hash_manifest(
+def hash_manifest(
     manifest: BaseAssetManifest,
     root: Path | str,
     hash_cache: Optional[HashCache] = None,
@@ -44,11 +44,11 @@ def _hash_manifest(
     """
     Fill in hashes for a manifest structure.
 
-    Given a manifest with hash="" for file entries (from _collect_manifest_structure),
+    Given a manifest with hash="" for file entries (from collect_manifest),
     computes and fills in the actual hashes.
 
     Args:
-        manifest: Manifest with empty hashes (from _collect_manifest_structure)
+        manifest: Manifest with empty hashes (from collect_manifest)
         root: Root directory path (needed to read files for hashing)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes

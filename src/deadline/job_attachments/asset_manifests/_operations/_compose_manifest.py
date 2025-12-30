@@ -284,7 +284,7 @@ def _split_path(path: str) -> List[str]:
     return [c for c in components if c]
 
 
-def _compose_manifests(
+def compose_manifests(
     manifests: List[BaseAssetManifest],
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> BaseAssetManifest:

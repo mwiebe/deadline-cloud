@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for _collect_manifest and related functions.
+Tests for collect_manifest and related functions.
 
 These tests cover:
 - Basic file collection for both v2023 and v2025 formats
@@ -19,9 +19,11 @@ import pytest
 from pathlib import Path
 from typing import List
 
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_manifest,
+    collect_abs_manifest,
+)
 from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
-    _collect_manifest,
-    _collect_abs_manifest,
     _create_unhashed_file_entry,
     _create_symlink_entry,
 )
@@ -41,7 +43,7 @@ class TestCollectManifestDirectoryTreeV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -59,7 +61,7 @@ class TestCollectManifestDirectoryTreeV2023:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbbbb")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -75,7 +77,7 @@ class TestCollectManifestDirectoryTreeV2023:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("nested content")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -96,7 +98,7 @@ class TestCollectManifestDirectoryTreeV2023:
             pytest.skip("Symlinks not supported on this platform")
 
         messages: List[str] = []
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             print_function_callback=messages.append,
@@ -113,7 +115,7 @@ class TestCollectManifestDirectoryTreeV2023:
         (tmp_path / "a.txt").write_text("aaa")  # 3 bytes
         (tmp_path / "b.txt").write_text("bbbbb")  # 5 bytes
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -123,7 +125,7 @@ class TestCollectManifestDirectoryTreeV2023:
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         """Empty directory results in empty manifest."""
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -136,7 +138,7 @@ class TestCollectManifestDirectoryTreeV2023:
         """Manifest uses XXH128 hash algorithm."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -150,7 +152,7 @@ class TestCollectManifestDirectoryTreeV2023:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -168,7 +170,7 @@ class TestCollectManifestDirectoryTreeV2025:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert len(manifest.paths) == 1
         entry = manifest.paths[0]
@@ -184,7 +186,7 @@ class TestCollectManifestDirectoryTreeV2025:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert len(manifest.dirs) == 1
         assert manifest.dirs[0].path == "subdir"
@@ -198,7 +200,7 @@ class TestCollectManifestDirectoryTreeV2025:
         level3.mkdir(parents=True)
         (level3 / "deep.txt").write_text("deep content")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         dir_paths = {d.path for d in manifest.dirs}
         assert dir_paths == {"level1", "level1/level2", "level1/level2/level3"}
@@ -208,7 +210,7 @@ class TestCollectManifestDirectoryTreeV2025:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert len(manifest.dirs) == 1
         assert manifest.dirs[0].path == "empty"
@@ -220,7 +222,7 @@ class TestCollectManifestDirectoryTreeV2025:
         (tmp_path / "empty2").mkdir()
         (tmp_path / "empty3").mkdir()
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         dir_paths = {d.path for d in manifest.dirs}
         assert dir_paths == {"empty1", "empty2", "empty3"}
@@ -229,7 +231,7 @@ class TestCollectManifestDirectoryTreeV2025:
         """Collected manifest is a SNAPSHOT type."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert manifest.manifestType == ManifestType.SNAPSHOT
 
@@ -237,7 +239,7 @@ class TestCollectManifestDirectoryTreeV2025:
         """Manifest uses XXH128 hash algorithm."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert manifest.hashAlg == HashAlgorithm.XXH128
 
@@ -256,7 +258,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         # Both target and symlink should be collected
         assert len(manifest.paths) == 2
@@ -282,7 +284,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         # The symlink should be in paths, not dirs
         paths_by_name = {p.path: p for p in manifest.paths}
@@ -306,7 +308,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         paths_by_name = {p.path: p for p in manifest.paths}
         assert "link.txt" in paths_by_name
@@ -322,7 +324,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
             pytest.skip("Symlinks not supported on this platform")
 
         messages: List[str] = []
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
             print_function_callback=messages.append,
@@ -342,7 +344,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
             pytest.skip("Symlinks not supported on this platform")
 
         messages: List[str] = []
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
             print_function_callback=messages.append,
@@ -365,7 +367,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         paths_by_name = {p.path: p for p in manifest.paths}
         assert "subdir/link.txt" in paths_by_name
@@ -389,7 +391,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
             pytest.skip("Symlinks not supported on this platform")
 
         # Test with relative paths (default)
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         paths_by_name = {p.path: p for p in manifest.paths}
         # Each symlink should point to its immediate target, not the final target
@@ -398,7 +400,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         assert paths_by_name["link3.txt"].symlink_target == "link2.txt"
 
     def test_symlink_chain_preserved_absolute_paths(self, tmp_path: Path) -> None:
-        """Symlink chain of length 3 is preserved with _collect_abs_manifest and PRESERVE policy."""
+        """Symlink chain of length 3 is preserved with collect_abs_manifest and PRESERVE policy."""
         # Create: link3 -> link2 -> link1 -> target.txt
         target = tmp_path / "target.txt"
         target.write_text("content")
@@ -413,8 +415,8 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        # Test with absolute paths using _collect_abs_manifest with PRESERVE policy
-        manifest = _collect_abs_manifest(
+        # Test with absolute paths using collect_abs_manifest with PRESERVE policy
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -438,7 +440,7 @@ class TestCollectManifestDirectoryTreeV2025Runnable:
         script.write_text("#!/bin/bash\necho hello")
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert len(manifest.paths) == 1
         assert manifest.paths[0].runnable is True
@@ -451,7 +453,7 @@ class TestCollectManifestDirectoryTreeV2025Runnable:
         # Ensure no execute bits
         regular.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert len(manifest.paths) == 1
         assert manifest.paths[0].runnable is False
@@ -463,7 +465,7 @@ class TestCollectManifestDirectoryTreeV2025Runnable:
         script.write_text("#!/bin/bash")
         script.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXGRP)
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert manifest.paths[0].runnable is True
 
@@ -474,19 +476,19 @@ class TestCollectManifestDirectoryTreeV2025Runnable:
         script.write_text("#!/bin/bash")
         script.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXOTH)
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         assert manifest.paths[0].runnable is True
 
 
 class TestCollectManifestDirectoryTreeDispatch:
-    """Tests for the main _collect_manifest dispatch function."""
+    """Tests for the main collect_manifest dispatch function."""
 
     def test_dispatch_to_v2023(self, tmp_path: Path) -> None:
         """Version v2023-03-03 dispatches to v2023 implementation."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -498,7 +500,7 @@ class TestCollectManifestDirectoryTreeDispatch:
         """Version v2025-12-04-beta dispatches to v2025 implementation."""
         (tmp_path / "test.txt").write_text("test")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
         )
@@ -508,7 +510,7 @@ class TestCollectManifestDirectoryTreeDispatch:
     def test_unsupported_version_raises(self, tmp_path: Path) -> None:
         """Unsupported version raises ValueError."""
         with pytest.raises(ValueError, match="Unsupported manifest version"):
-            _collect_manifest(version=ManifestVersion.UNDEFINED, root=tmp_path)
+            collect_manifest(version=ManifestVersion.UNDEFINED, root=tmp_path)
 
 
 class TestCreateUnhashedFileEntry:
@@ -626,7 +628,7 @@ class TestAbsolutePaths:
         """By default, paths are relative to root."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -635,10 +637,10 @@ class TestAbsolutePaths:
         assert manifest.paths[0].path == "file.txt"
 
     def test_v2023_absolute_paths_when_requested(self, tmp_path: Path) -> None:
-        """When using _collect_abs_manifest, paths are absolute."""
+        """When using collect_abs_manifest, paths are absolute."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2023_03_03,
@@ -654,7 +656,7 @@ class TestAbsolutePaths:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("content")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2023_03_03,
@@ -669,7 +671,7 @@ class TestAbsolutePaths:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         # Check file path
         file_entry = [p for p in manifest.paths if p.path.endswith("file.txt")][0]
@@ -678,12 +680,12 @@ class TestAbsolutePaths:
         assert manifest.dirs[0].path == "subdir"
 
     def test_v2025_absolute_paths_when_requested(self, tmp_path: Path) -> None:
-        """When using _collect_abs_manifest, paths are absolute."""
+        """When using collect_abs_manifest, paths are absolute."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -698,7 +700,7 @@ class TestAbsolutePaths:
         assert subdir.as_posix() in dir_paths
 
     def test_v2025_symlink_absolute_paths(self, tmp_path: Path) -> None:
-        """Symlink entries use absolute paths for both path and target with _collect_abs_manifest and PRESERVE policy."""
+        """Symlink entries use absolute paths for both path and target with collect_abs_manifest and PRESERVE policy."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
@@ -708,7 +710,7 @@ class TestAbsolutePaths:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -718,14 +720,14 @@ class TestAbsolutePaths:
         # Find the symlink entry
         link_entry = [p for p in manifest.paths if "link.txt" in p.path][0]
         assert link_entry.path == link.as_posix()
-        # symlink_target should also be absolute with _collect_abs_manifest and PRESERVE
+        # symlink_target should also be absolute with collect_abs_manifest and PRESERVE
         assert link_entry.symlink_target == target.resolve().as_posix()
 
     def test_collect_abs_manifest_produces_absolute_paths(self, tmp_path: Path) -> None:
-        """_collect_abs_manifest produces absolute paths."""
+        """collect_abs_manifest produces absolute paths."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -748,12 +750,12 @@ class TestVersionDifferences:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest_v2023 = _collect_manifest(
+        manifest_v2023 = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        manifest_v2025 = _collect_manifest(
+        manifest_v2025 = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
         )
@@ -777,12 +779,12 @@ class TestVersionDifferences:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest_v2023 = _collect_manifest(
+        manifest_v2023 = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        manifest_v2025 = _collect_manifest(
+        manifest_v2025 = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
         )
@@ -798,12 +800,12 @@ class TestVersionDifferences:
         test_file.write_text("content")
         test_file.chmod(0o700)
 
-        manifest_v2023 = _collect_manifest(
+        manifest_v2023 = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        manifest_v2025 = _collect_manifest(
+        manifest_v2025 = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
         )
@@ -833,7 +835,7 @@ class TestSymlinkPolicyV2023:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -858,7 +860,7 @@ class TestSymlinkPolicyV2023:
             pytest.skip("Symlinks not supported on this platform")
 
         messages: List[str] = []
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             print_function_callback=messages.append,
@@ -882,7 +884,7 @@ class TestSymlinkPolicyV2023:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.EXCLUDE,
@@ -895,7 +897,7 @@ class TestSymlinkPolicyV2023:
     def test_v2023_rejects_collapse_escaping(self, tmp_path: Path) -> None:
         """v2023 rejects COLLAPSE_ESCAPING policy."""
         with pytest.raises(ValueError, match="only supports symlink_policy COLLAPSE or EXCLUDE"):
-            _collect_manifest(
+            collect_manifest(
                 version=ManifestVersion.v2023_03_03,
                 root=tmp_path,
                 symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -904,14 +906,18 @@ class TestSymlinkPolicyV2023:
     def test_v2023_rejects_preserve(self, tmp_path: Path) -> None:
         """v2023 rejects PRESERVE policy."""
         # PRESERVE requires absolute paths, so we get that error first
-        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
-            _collect_manifest(version=ManifestVersion.v2023_03_03, root=tmp_path, symlink_policy=SymlinkPolicy.PRESERVE)
+        with pytest.raises(ValueError, match="Use collect_abs_manifest\\(\\) instead"):
+            collect_manifest(
+                version=ManifestVersion.v2023_03_03,
+                root=tmp_path,
+                symlink_policy=SymlinkPolicy.PRESERVE,
+            )
 
     def test_v2023_rejects_transitive_include_targets(self, tmp_path: Path) -> None:
         """v2023 rejects TRANSITIVE_INCLUDE_TARGETS policy."""
         # TRANSITIVE_INCLUDE_TARGETS requires absolute paths, so we get that error first
-        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
-            _collect_manifest(
+        with pytest.raises(ValueError, match="Use collect_abs_manifest\\(\\) instead"):
+            collect_manifest(
                 version=ManifestVersion.v2023_03_03,
                 root=tmp_path,
                 symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -933,7 +939,7 @@ class TestSymlinkPolicyV2025:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
@@ -959,7 +965,7 @@ class TestSymlinkPolicyV2025:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -983,7 +989,7 @@ class TestSymlinkPolicyV2025:
             pytest.skip("Symlinks not supported on this platform")
 
         messages: List[str] = []
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
             root=tmp_path,
             print_function_callback=messages.append,
@@ -996,9 +1002,9 @@ class TestSymlinkPolicyV2025:
         assert any("Excluding symlink" in msg for msg in messages)
 
     def test_v2025_preserve_requires_absolute_paths(self, tmp_path: Path) -> None:
-        """PRESERVE policy requires _collect_abs_manifest."""
-        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
-            _collect_manifest(
+        """PRESERVE policy requires collect_abs_manifest."""
+        with pytest.raises(ValueError, match="Use collect_abs_manifest\\(\\) instead"):
+            collect_manifest(
                 version=ManifestVersion.v2025_12_04_beta,
                 root=tmp_path,
                 symlink_policy=SymlinkPolicy.PRESERVE,
@@ -1015,7 +1021,7 @@ class TestSymlinkPolicyV2025:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -1028,9 +1034,9 @@ class TestSymlinkPolicyV2025:
         assert link_entry.symlink_target == target.as_posix()
 
     def test_v2025_transitive_requires_absolute_paths(self, tmp_path: Path) -> None:
-        """TRANSITIVE_INCLUDE_TARGETS policy requires _collect_abs_manifest."""
-        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
-            _collect_manifest(
+        """TRANSITIVE_INCLUDE_TARGETS policy requires collect_abs_manifest."""
+        with pytest.raises(ValueError, match="Use collect_abs_manifest\\(\\) instead"):
+            collect_manifest(
                 version=ManifestVersion.v2025_12_04_beta,
                 root=tmp_path,
                 symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -1048,7 +1054,7 @@ class TestSymlinkPolicyV2025:
             pytest.skip("Symlinks not supported on this platform")
 
         # Call without specifying symlink_policy
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
         # Internal symlink should be preserved (COLLAPSE_ESCAPING behavior)
         paths_by_name = {p.path: p for p in manifest.paths}
@@ -1094,7 +1100,7 @@ class TestSymlinkPolicyV2025:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=root,
             symlink_policy=symlink_policy,
@@ -1174,7 +1180,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=tmp_path,
             symlink_policy=symlink_policy,
@@ -1254,7 +1260,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=tmp_path,
             symlink_policy=symlink_policy,
@@ -1378,7 +1384,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=root,
             symlink_policy=symlink_policy,
@@ -1500,7 +1506,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=root,
             symlink_policy=symlink_policy,
@@ -1619,7 +1625,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=root,
             symlink_policy=symlink_policy,
@@ -1676,7 +1682,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = collect_manifest(
             version=version,
             root=tmp_path,
             symlink_policy=SymlinkPolicy.EXCLUDE,
@@ -1714,7 +1720,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -1772,7 +1778,7 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_abs_manifest(
+        manifest = collect_abs_manifest(
             [root],
             [],
             version=ManifestVersion.v2025_12_04_beta,

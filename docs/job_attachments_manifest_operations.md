@@ -14,33 +14,33 @@ The manifest system uses composable operations that can be combined to implement
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  1. COLLECT: Directory → Manifest (relative paths, hash="" for files)   │
-│     _collect_manifest(root, version, ...) → BaseAssetManifest           │
+│     collect_manifest(root, version, ...) → BaseAssetManifest            │
 │                                                                         │
 │  2. COLLECT_ABS: Paths → Manifest (absolute paths, hash="" for files)   │
-│     _collect_abs_manifest(directories, required_filenames, ...) →       │
+│     collect_abs_manifest(directories, required_filenames, ...) →        │
 │                           BaseAssetManifest                             │
 │                                                                         │
 │  3. HASH: Manifest → Manifest (fills in hashes)                         │
-│     _hash_manifest(manifest, root, hash_cache, force_rehash)            │
+│     hash_manifest(manifest, root, hash_cache, force_rehash)             │
 │                                                                         │
 │  4. HASH_UPLOAD: Manifest → Manifest (fills in hashes AND uploads)      │
-│     _hash_upload_manifest(manifest, root, s3_bucket, s3_key_prefix,     │
+│     hash_upload_manifest(manifest, root, s3_bucket, s3_key_prefix,      │
 │                           credentials, ...) → BaseAssetManifest         │
 │                                                                         │
 │  5. FILTER: Manifest → Manifest (keeps matching entries)                │
-│     _filter_manifest(manifest, entry_filter) → BaseAssetManifest        │
+│     filter_manifest(manifest, entry_filter) → BaseAssetManifest         │
 │                                                                         │
 │  6. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
-│     _compute_diff_manifest(parent, current, parent_hash, ignore_hashes) │
+│     compute_diff_manifest(parent, current, parent_hash, ignore_hashes)  │
 │                                                                         │
 │  7. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
-│     _compose_manifests(manifests) → BaseAssetManifest                   │
+│     compose_manifests(manifests) → BaseAssetManifest                    │
 │                                                                         │
 │  8. SUBTREE: (Manifest, subtree_path) → Manifest                        │
-│     _subtree_manifest(manifest, subtree, symlink_policy)                │
+│     subtree_manifest(manifest, subtree, symlink_policy)                 │
 │                                                                         │
 │  9. JOIN: (Manifest, prefix) → Manifest                                 │
-│     _join_manifest(manifest, prefix) → BaseAssetManifest                │
+│     join_manifest(manifest, prefix) → BaseAssetManifest                 │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -109,14 +109,14 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 ## Operation Details
 
-### 1. COLLECT: `_collect_manifest()`
+### 1. COLLECT: `collect_manifest()`
 
 **Location:** `_collect_manifest.py`
 
 Collects a single directory tree into a manifest with relative paths, WITHOUT computing hashes:
 
 ```python
-def _collect_manifest(
+def collect_manifest(
     *,
     root: Path | str,
     version: ManifestVersion,
@@ -134,7 +134,7 @@ def _collect_manifest(
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
 | `print_function_callback` | Progress callback for status messages |
 
-**Symlink Policy Options (for `_collect_manifest`):**
+**Symlink Policy Options (for `collect_manifest`):**
 
 | Policy | Description | v2023 Support |
 |--------|-------------|---------------|
@@ -142,7 +142,7 @@ def _collect_manifest(
 | `COLLAPSE` | Follow all symlinks, treating them as files/directories. The directory walk follows symlinks. | ✓ |
 | `EXCLUDE` | Skip all symlinks entirely. | ✓ |
 
-**Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` policies require absolute paths and are not supported by `_collect_manifest`. Use `_collect_abs_manifest` instead.
+**Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` policies require absolute paths and are not supported by `collect_manifest`. Use `collect_abs_manifest` instead.
 
 **Why COLLAPSE_ESCAPING is the default:** After capturing a manifest and transporting it to a different system (e.g., a render farm worker), the manifest is instantiated there. Escaping symlinks—those pointing outside the manifest root—cannot be preserved because their targets won't exist on the destination system. We have two choices: exclude them or collapse them. Since workload scripts may depend on those symlinks to access data, collapsing is preferred over exclusion. By collapsing escaping symlinks, we transport the actual data they reference, ensuring the workload functions correctly. Meanwhile, symlinks within the root are preserved, maintaining the original directory structure where possible.
 
@@ -166,13 +166,13 @@ def _collect_manifest(
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
-    _collect_manifest
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
 
 # Collect a v2025 manifest from a project directory (default: COLLAPSE_ESCAPING)
-manifest = _collect_manifest(
+manifest = collect_manifest(
     root="/projects/my_scene",
     version=ManifestVersion.v2025_12_04_beta,
 )
@@ -186,7 +186,7 @@ for entry in manifest.paths[:3]:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
     else:
         print(f"  file: {entry.path} (size={entry.size}, hash='{entry.hash}')")
-        # Note: hash is "" until _hash_manifest() is called
+        # Note: hash is "" until hash_manifest() is called
 ```
 
 Output:
@@ -198,14 +198,14 @@ Found 8 directories
   symlink: assets/current -> v2/model.blend
 ```
 
-### 2. COLLECT_ABS: `_collect_abs_manifest()`
+### 2. COLLECT_ABS: `collect_abs_manifest()`
 
 **Location:** `_collect_manifest.py`
 
 Collects provided lists of paths into a manifest with absolute paths, WITHOUT computing hashes:
 
 ```python
-def _collect_abs_manifest(
+def collect_abs_manifest(
     directories: List[Path | str],
     filenames: List[Path | str],
     *,
@@ -227,7 +227,7 @@ def _collect_abs_manifest(
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
 | `print_function_callback` | Progress callback for status messages |
 
-**Symlink Policy Options (for `_collect_abs_manifest`):**
+**Symlink Policy Options (for `collect_abs_manifest`):**
 
 | Policy | Description | v2023 Support |
 |--------|-------------|---------------|
@@ -236,7 +236,7 @@ def _collect_abs_manifest(
 | `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. | ✗ (v2025 only) |
 | `EXCLUDE` | Skip all symlinks entirely. | ✓ |
 
-**Note:** `COLLAPSE_ESCAPING` is not supported by `_collect_abs_manifest` because there is no root path to determine what "escaping" means.
+**Note:** `COLLAPSE_ESCAPING` is not supported by `collect_abs_manifest` because there is no root path to determine what "escaping" means.
 
 **Validation Rules:**
 
@@ -259,13 +259,13 @@ def _collect_abs_manifest(
 **Example - Collecting from multiple directories:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
-    _collect_abs_manifest
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_abs_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
 
 # Collect files from different locations using absolute paths (default: PRESERVE symlinks)
-manifest = _collect_abs_manifest(
+manifest = collect_abs_manifest(
     ["/data/shared/models", "/data/shared/textures"],  # directories (positional)
     ["/home/user/project/scene.blend"],                 # filenames (positional)
     optional_filenames=["/home/user/project/cache.bin"],  # Included if exists
@@ -280,13 +280,13 @@ for entry in manifest.paths[:2]:
 **Example - Symlinks are preserved by default:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
-    _collect_abs_manifest
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_abs_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 
 # Collect with symlinks preserved (default behavior)
-manifest = _collect_abs_manifest(
+manifest = collect_abs_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames (empty list)
     version=ManifestVersion.v2025_12_04_beta,
@@ -304,14 +304,14 @@ for entry in manifest.paths:
 - `_create_unhashed_file_entry()` - Creates file entry with `hash=""` and metadata
 - `_create_symlink_entry()` - Creates symlink entry with validated target
 
-### 3. HASH: `_hash_manifest()`
+### 3. HASH: `hash_manifest()`
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `_collect_manifest_directory_tree()`:
+Fills in hashes for a manifest that was created by `collect_manifest()`:
 
 ```python
-def _hash_manifest(
+def hash_manifest(
     manifest: BaseAssetManifest,
     root: Path | str,
     hash_cache: Optional[HashCache] = None,
@@ -354,20 +354,20 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest_directory_tree
-from deadline.job_attachments.asset_manifests._hash_manifest import _hash_manifest
+from deadline.job_attachments.asset_manifests._operations import collect_manifest
+from deadline.job_attachments.asset_manifests._operations import hash_manifest
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 
 # First collect the directory tree
-unhashed = _collect_manifest_directory_tree(
+unhashed = collect_manifest(
     root="/projects/my_scene",
     version=ManifestVersion.v2025_12_04_beta,
 )
 
 # Then hash with a cache for efficiency
 with HashCache("/tmp/hash_cache") as cache:
-    hashed = _hash_manifest(
+    hashed = hash_manifest(
         manifest=unhashed,
         root="/projects/my_scene",
         hash_cache=cache,
@@ -390,14 +390,14 @@ Output:
   large file: renders/output.exr (3 chunks)
 ```
 
-### 4. HASH_UPLOAD: `_hash_upload_manifest()`
+### 4. HASH_UPLOAD: `hash_upload_manifest()`
 
 **Location:** `_hash_upload_manifest.py`
 
 Fills in hashes for a manifest AND uploads file content to S3 in a pipelined manner. This operation combines hashing and uploading into a single pass over the data, avoiding the need to read files twice (once for hashing, once for uploading).
 
 ```python
-def _hash_upload_manifest(
+def hash_upload_manifest(
     manifest: BaseAssetManifest,
     root: Path | str,
     s3_bucket: str,
@@ -416,7 +416,7 @@ def _hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with empty hashes (from `_collect_manifest_directory_tree`) |
+| `manifest` | Manifest with empty hashes (from `collect_manifest`) |
 | `root` | Root directory path (needed to read files) |
 | `s3_bucket` | S3 bucket name for uploads |
 | `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
@@ -539,18 +539,18 @@ When both caches hit, the file is completely skipped (no read, no hash, no uploa
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
-    _collect_manifest_directory_tree
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_manifest
 )
-from deadline.job_attachments.asset_manifests._operations._hash_upload_manifest import (
-    _hash_upload_manifest
+from deadline.job_attachments.asset_manifests._operations import (
+    hash_upload_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
 # First collect the directory tree
-unhashed = _collect_manifest_directory_tree(
+unhashed = collect_manifest(
     root="/projects/my_scene",
     version=ManifestVersion.v2025_12_04_beta,
 )
@@ -558,7 +558,7 @@ unhashed = _collect_manifest_directory_tree(
 # Hash and upload in a single pipelined pass
 with HashCache("/tmp/hash_cache") as hash_cache:
     with S3CheckCache("/tmp/s3_cache") as s3_cache:
-        hashed = _hash_upload_manifest(
+        hashed = hash_upload_manifest(
             manifest=unhashed,
             root="/projects/my_scene",
             s3_bucket="my-job-attachments-bucket",
@@ -603,14 +603,14 @@ For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
 | Output sync from worker | HASH_UPLOAD |
 | Testing/debugging | HASH (simpler) |
 
-### 5. FILTER: `_filter_manifest()`
+### 5. FILTER: `filter_manifest()`
 
 **Location:** `_filter_manifest.py`
 
 Applies a filter to manifest entries, returning a new manifest with only matching entries:
 
 ```python
-def _filter_manifest(
+def filter_manifest(
     manifest: BaseAssetManifest,
     entry_filter: Callable[[Union[BaseManifestPath, BaseManifestDirectoryPath]], bool],
 ) -> BaseAssetManifest:
@@ -627,7 +627,7 @@ def large_files_only(entry):
         return entry.size > 1_000_000  # > 1MB
     return False
 
-filtered = _filter_manifest(manifest, large_files_only)
+filtered = filter_manifest(manifest, large_files_only)
 ```
 
 **Built-in filter: `IncludeExcludePathsFilter`**
@@ -639,7 +639,7 @@ filter = IncludeExcludePathsFilter(
     include=["*.blend", "textures/*"],
     exclude=["backup/*", "*.tmp"]
 )
-filtered = _filter_manifest(manifest, filter)
+filtered = filter_manifest(manifest, filter)
 ```
 
 Pattern matching rules:
@@ -655,8 +655,10 @@ This ensures deletions are computed correctly within the filtered view.
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._filter_manifest import (
-    _filter_manifest,
+from deadline.job_attachments.asset_manifests._operations import (
+    filter_manifest,
+)
+from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
     IncludeExcludePathsFilter,
 )
 
@@ -666,24 +668,24 @@ filter = IncludeExcludePathsFilter(
     exclude=["backup/*", "*_old.*"],
 )
 
-filtered = _filter_manifest(manifest, filter)
+filtered = filter_manifest(manifest, filter)
 print(f"Filtered from {len(manifest.paths)} to {len(filtered.paths)} entries")
 
 # Or use a custom filter function
 def python_files_only(entry):
     return entry.path.endswith(".py")
 
-py_manifest = _filter_manifest(manifest, python_files_only)
+py_manifest = filter_manifest(manifest, python_files_only)
 ```
 
-### 6. DIFF: `_compute_diff_manifest()`
+### 6. DIFF: `compute_diff_manifest()`
 
 **Location:** `_diff_manifest.py`
 
 Computes the difference between two snapshot manifests:
 
 ```python
-def _compute_diff_manifest(
+def compute_diff_manifest(
     parent: BaseAssetManifest,
     current: BaseAssetManifest,
     parent_manifest_hash: Optional[str] = None,
@@ -758,7 +760,7 @@ New files always use the current manifest's `runnable` value (which will be `Fal
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._diff_manifest import _compute_diff_manifest
+from deadline.job_attachments.asset_manifests._operations import compute_diff_manifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 from deadline.job_attachments.asset_manifests.hash_algorithms import hash_data, HashAlgorithm
 
@@ -769,7 +771,7 @@ with open("previous.manifest") as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Assume current_hashed is a collected and hashed manifest of the current directory
-diff = _compute_diff_manifest(
+diff = compute_diff_manifest(
     parent=parent,
     current=current_hashed,
     parent_manifest_hash=parent_hash,
@@ -792,14 +794,14 @@ Diff manifest type: ManifestType.DIFF
 Parent hash: f8e9d0c1b2a34567...
 ```
 
-### 7. COMPOSE: `_compose_manifests()`
+### 7. COMPOSE: `compose_manifests()`
 
 **Location:** `_compose_manifest.py`
 
 Layers multiple manifests together into a single manifest, as if applying each manifest as a set of changes in order:
 
 ```python
-def _compose_manifests(
+def compose_manifests(
     manifests: List[BaseAssetManifest],
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> BaseAssetManifest:
@@ -843,7 +845,7 @@ For v2025-12-04-beta (with deletion markers):
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._compose_manifest import _compose_manifests
+from deadline.job_attachments.asset_manifests._operations import compose_manifests
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a base snapshot and incremental diffs
@@ -855,7 +857,7 @@ with open("day2.manifest") as f:
     diff2 = decode_manifest(f.read())
 
 # Compose into a single snapshot representing the final state
-final = _compose_manifests([base, diff1, diff2])
+final = compose_manifests([base, diff1, diff2])
 
 print(f"Final manifest has {len(final.paths)} entries")
 print(f"Manifest type: {final.manifestType}")  # SNAPSHOT
@@ -870,17 +872,17 @@ task2_output = decode_manifest(read_file("task2_output.manifest"))
 task3_output = decode_manifest(read_file("task3_output.manifest"))
 
 # Merge into single manifest (later tasks override earlier for same paths)
-merged = _compose_manifests([task1_output, task2_output, task3_output])
+merged = compose_manifests([task1_output, task2_output, task3_output])
 ```
 
-### 8. SUBTREE: `_subtree_manifest()`
+### 8. SUBTREE: `subtree_manifest()`
 
 **Location:** `_subtree_manifest.py`
 
 Extracts a subtree from a manifest, producing a new manifest rooted at the specified subdirectory:
 
 ```python
-def _subtree_manifest(
+def subtree_manifest(
     manifest: BaseAssetManifest,
     subtree: str,
     *,
@@ -992,7 +994,7 @@ The preserved symlink `alt` originally had target `assets/textures/variants/dark
 **Example - Basic Subtree Extraction:**
 
 ```python
-from deadline.job_attachments.asset_manifests._subtree_manifest import _subtree_manifest
+from deadline.job_attachments.asset_manifests._operations import subtree_manifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a manifest rooted at /projects/scene
@@ -1000,7 +1002,7 @@ with open("scene.manifest") as f:
     full_manifest = decode_manifest(f.read())
 
 # Extract just the textures directory
-textures = _subtree_manifest(
+textures = subtree_manifest(
     manifest=full_manifest,
     subtree="assets/textures",
 )
@@ -1024,7 +1026,7 @@ for entry in textures.paths:
 # └── ...
 
 # With COLLAPSE_ESCAPING (default): symlink is replaced with file content
-textures = _subtree_manifest(
+textures = subtree_manifest(
     manifest=full_manifest,
     subtree="assets/textures",
     symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -1032,7 +1034,7 @@ textures = _subtree_manifest(
 # Result: "current" becomes a regular file with latest.png's hash/size/mtime
 
 # With EXCLUDE: symlink is removed
-textures = _subtree_manifest(
+textures = subtree_manifest(
     manifest=full_manifest,
     subtree="assets/textures",
     symlink_policy=SymlinkPolicy.EXCLUDE,
@@ -1061,18 +1063,18 @@ You might use both together:
 
 ```python
 # Extract textures subtree, then filter to only PNG files
-textures = _subtree_manifest(full_manifest, "assets/textures")
-png_only = _filter_manifest(textures, lambda e: e.path.endswith(".png"))
+textures = subtree_manifest(full_manifest, "assets/textures")
+png_only = filter_manifest(textures, lambda e: e.path.endswith(".png"))
 ```
 
-### 9. JOIN: `_join_manifest()`
+### 9. JOIN: `join_manifest()`
 
 **Location:** `_join_manifest.py`
 
 Joins a prefix to all paths in a manifest, producing a new manifest with prefixed paths:
 
 ```python
-def _join_manifest(
+def join_manifest(
     manifest: BaseAssetManifest,
     prefix: str,
     *,
@@ -1122,7 +1124,7 @@ New manifest (absolute paths):
 **Example - Converting Relative to Absolute:**
 
 ```python
-from deadline.job_attachments.asset_manifests._join_manifest import _join_manifest
+from deadline.job_attachments.asset_manifests._operations import join_manifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a manifest with relative paths
@@ -1130,7 +1132,7 @@ with open("textures.manifest") as f:
     manifest = decode_manifest(f.read())
 
 # Join with absolute prefix to get absolute paths
-absolute_manifest = _join_manifest(manifest, "/projects/scene/assets/textures")
+absolute_manifest = join_manifest(manifest, "/projects/scene/assets/textures")
 
 for entry in absolute_manifest.paths:
     print(entry.path)  # "/projects/scene/assets/textures/wood.png", etc.
@@ -1145,12 +1147,12 @@ models = decode_manifest(read_file("models.manifest"))
 scripts = decode_manifest(read_file("scripts.manifest"))
 
 # Join each to its absolute root
-textures_abs = _join_manifest(textures, "/projects/scene/assets/textures")
-models_abs = _join_manifest(models, "/projects/scene/assets/models")
-scripts_abs = _join_manifest(scripts, "/projects/scene/scripts")
+textures_abs = join_manifest(textures, "/projects/scene/assets/textures")
+models_abs = join_manifest(models, "/projects/scene/assets/models")
+scripts_abs = join_manifest(scripts, "/projects/scene/scripts")
 
 # Compose into a single manifest representing all data
-combined = _compose_manifests([textures_abs, models_abs, scripts_abs])
+combined = compose_manifests([textures_abs, models_abs, scripts_abs])
 
 # Now 'combined' has all files with absolute paths for unified processing
 ```
@@ -1173,8 +1175,8 @@ JOIN and SUBTREE are inverse operations:
 
 ```python
 # These operations are inverses (for paths within the subtree)
-original = _join_manifest(subtree_manifest, "assets/textures")
-back_to_subtree = _subtree_manifest(original, "assets/textures")
+original = join_manifest(subtree_manifest, "assets/textures")
+back_to_subtree = subtree_manifest(original, "assets/textures")
 # back_to_subtree has the same paths as subtree_manifest
 ```
 
@@ -1190,14 +1192,14 @@ Directory ──[collect]──► Unhashed ──[hash]──► Hashed ──[
 
 ```python
 # Step 1: Collect directory tree (no hashes yet)
-unhashed = _collect_manifest_directory_tree(root, version)
+unhashed = collect_manifest(root, version)
 
 # Step 2: Hash all files
-hashed = _hash_manifest(unhashed, root, hash_cache)
+hashed = hash_manifest(unhashed, root, hash_cache)
 
 # Step 3: Filter the snapshot
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
-filtered = _filter_manifest(hashed, filter)
+filtered = filter_manifest(hashed, filter)
 
 # Step 4: Write to file
 manifest_path = _write_manifest(root, filtered, destination, name)
@@ -1222,15 +1224,15 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect current directory (no hashes)
-current_unhashed = _collect_manifest_directory_tree(root, version)
+current_unhashed = collect_manifest(root, version)
 
 # Filter BOTH with same patterns
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
-filtered_parent = _filter_manifest(parent, filter)
-filtered_current = _filter_manifest(current_unhashed, filter)
+filtered_parent = filter_manifest(parent, filter)
+filtered_current = filter_manifest(current_unhashed, filter)
 
 # Compute diff (fast mode - compare by mtime/size)
-diff = _compute_diff_manifest(
+diff = compute_diff_manifest(
     parent=filtered_parent,
     current=filtered_current,
     parent_manifest_hash=parent_hash,
@@ -1258,16 +1260,16 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect and hash current directory
-current_unhashed = _collect_manifest_directory_tree(root, version)
-current_hashed = _hash_manifest(current_unhashed, root, hash_cache, force_rehash=True)
+current_unhashed = collect_manifest(root, version)
+current_hashed = hash_manifest(current_unhashed, root, hash_cache, force_rehash=True)
 
 # Filter BOTH with same patterns
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
-filtered_parent = _filter_manifest(parent, filter)
-filtered_current = _filter_manifest(current_hashed, filter)
+filtered_parent = filter_manifest(parent, filter)
+filtered_current = filter_manifest(current_hashed, filter)
 
 # Compute diff (full mode - compare by hash)
-diff = _compute_diff_manifest(
+diff = compute_diff_manifest(
     parent=filtered_parent,
     current=filtered_current,
     parent_manifest_hash=parent_hash,

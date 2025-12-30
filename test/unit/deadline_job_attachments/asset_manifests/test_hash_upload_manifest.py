@@ -6,21 +6,18 @@ Unit tests for the HASH_UPLOAD manifest operation.
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
 
+from deadline.job_attachments.asset_manifests._operations import (
+    hash_upload_manifest,
+)
 from deadline.job_attachments.asset_manifests._operations._hash_upload_manifest import (
-    _hash_upload_manifest,
     _ChunkWorkItem,
     _MemoryPool,
-    _run_pipeline,
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
     AssetManifest as AssetManifest2023,
@@ -67,6 +64,7 @@ class TestMemoryPool:
 
         # Give the thread time to start and block
         import time
+
         time.sleep(0.1)
         assert not allocation_complete.is_set()
 
@@ -101,9 +99,15 @@ class TestChunkWorkItem:
 class TestHashUploadManifestV2023:
     """Tests for _hash_upload_manifest with v2023 manifests."""
 
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_boto3_session")
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_s3_client")
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_account_id")
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_boto3_session"
+    )
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_s3_client"
+    )
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_account_id"
+    )
     def test_hash_upload_empty_manifest(
         self,
         mock_get_account_id: MagicMock,
@@ -122,7 +126,7 @@ class TestHashUploadManifestV2023:
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = _hash_upload_manifest(
+            result = hash_upload_manifest(
                 manifest=manifest,
                 root=tmpdir,
                 s3_bucket="test-bucket",
@@ -133,9 +137,15 @@ class TestHashUploadManifestV2023:
         assert len(result.paths) == 0
         assert result.totalSize == 0
 
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_boto3_session")
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_s3_client")
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_account_id")
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_boto3_session"
+    )
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_s3_client"
+    )
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_account_id"
+    )
     def test_hash_upload_single_file(
         self,
         mock_get_account_id: MagicMock,
@@ -147,6 +157,7 @@ class TestHashUploadManifestV2023:
         mock_s3_client = MagicMock()
         # Simulate file not existing in S3
         from botocore.exceptions import ClientError
+
         mock_s3_client.head_object.side_effect = ClientError(
             {"Error": {"Code": "404"}}, "HeadObject"
         )
@@ -171,7 +182,7 @@ class TestHashUploadManifestV2023:
                 total_size=int(file_stat.st_size),
             )
 
-            result = _hash_upload_manifest(
+            result = hash_upload_manifest(
                 manifest=manifest,
                 root=tmpdir,
                 s3_bucket="test-bucket",
@@ -190,9 +201,15 @@ class TestHashUploadManifestV2023:
 class TestHashUploadManifestV2025:
     """Tests for _hash_upload_manifest with v2025 manifests."""
 
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_boto3_session")
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_s3_client")
-    @patch("deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_account_id")
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_boto3_session"
+    )
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_s3_client"
+    )
+    @patch(
+        "deadline.job_attachments.asset_manifests._operations._hash_upload_manifest.get_account_id"
+    )
     def test_hash_upload_with_symlink(
         self,
         mock_get_account_id: MagicMock,
@@ -217,7 +234,7 @@ class TestHashUploadManifestV2025:
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = _hash_upload_manifest(
+            result = hash_upload_manifest(
                 manifest=manifest,
                 root=tmpdir,
                 s3_bucket="test-bucket",

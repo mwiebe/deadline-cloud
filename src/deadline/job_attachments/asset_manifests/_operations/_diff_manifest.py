@@ -13,10 +13,10 @@ The diff manifest contains:
 
 CRITICAL PRECONDITIONS:
 1. Both parent and current manifests MUST be filtered with the SAME filter
-   before calling _compute_diff_manifest(). This ensures deletions are computed
+   before calling compute_diff_manifest(). This ensures deletions are computed
    correctly within the filtered view.
 
-2. Both manifests should already have hashes computed (via _hash_manifest()).
+2. Both manifests should already have hashes computed (via hash_manifest()).
    This function does NOT compute hashes - it only compares existing hashes.
 
 The composable operations flow for diff:
@@ -42,7 +42,7 @@ from ..v2025_12_04.asset_manifest import (
 )
 
 
-def _compute_diff_manifest(
+def compute_diff_manifest(
     parent: BaseAssetManifest,
     current: BaseAssetManifest,
     parent_manifest_hash: Optional[str] = None,
@@ -58,7 +58,7 @@ def _compute_diff_manifest(
     1. Both manifests should be filtered with the same patterns before calling
        this function. This ensures deletions are computed correctly within the
        filtered view.
-    2. Both manifests should already have hashes computed (via _hash_manifest())
+    2. Both manifests should already have hashes computed (via hash_manifest())
        unless ignore_hashes=True. When ignore_hashes=True, comparison is done by
        metadata only (size, mtime, runnable).
 
@@ -94,13 +94,13 @@ def _compute_diff_manifest(
         parent_str = load_manifest_string(path)
         parent = decode_manifest(parent_str)
         parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
-        filtered_parent = _filter_manifest(parent, filter_obj)
+        filtered_parent = filter_manifest(parent, filter_obj)
 
         current_unhashed = _collect_manifest_structure(root, version)
         current_hashed = _hash_manifest(current_unhashed, root)
-        filtered_current = _filter_manifest(current_hashed, filter_obj)
+        filtered_current = filter_manifest(current_hashed, filter_obj)
 
-        diff = _compute_diff_manifest(filtered_parent, filtered_current, parent_hash)
+        diff = compute_diff_manifest(filtered_parent, filtered_current, parent_hash)
     """
     # Validate version match
     if parent.manifestVersion != current.manifestVersion:

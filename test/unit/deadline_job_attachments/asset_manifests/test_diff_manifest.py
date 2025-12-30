@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for _compute_diff_manifest and related functions.
+Tests for compute_diff_manifest and related functions.
 
 These tests cover:
 - Basic diff computation for both v2023 and v2025 formats
@@ -14,18 +14,20 @@ These tests cover:
 - Version mismatch error handling
 
 Note: The diff operation is a pure comparison - it does NOT compute hashes.
-Both input manifests must already have hashes computed via _hash_manifest().
+Both input manifests must already have hashes computed via hash_manifest().
 """
 
 import pytest
 from typing import List
 
+from deadline.job_attachments.asset_manifests._operations import (
+    compute_diff_manifest,
+    filter_manifest,
+)
 from deadline.job_attachments.asset_manifests._operations._diff_manifest import (
-    _compute_diff_manifest,
     _entries_differ,
 )
 from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
-    _filter_manifest,
     IncludeExcludePathsFilter,
 )
 from deadline.job_attachments.asset_manifests.versions import (
@@ -68,7 +70,7 @@ class TestComputeDiffManifestV2023:
         parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
         current = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 0
 
@@ -82,7 +84,7 @@ class TestComputeDiffManifestV2023:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "new.txt"
@@ -93,7 +95,7 @@ class TestComputeDiffManifestV2023:
         parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
         current = self._create_v2023_manifest([("file.txt", "hash2", 100, 2000)])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.txt"
@@ -104,7 +106,7 @@ class TestComputeDiffManifestV2023:
         parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
         current = self._create_v2023_manifest([("file.txt", "hash1", 100, 2000)])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Different mtime = modified (even with same hash)
         assert len(diff.paths) == 1
@@ -116,7 +118,7 @@ class TestComputeDiffManifestV2023:
         parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
         current = self._create_v2023_manifest([("file.txt", "hash1", 200, 1000)])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Different size = modified (even with same hash)
         assert len(diff.paths) == 1
@@ -128,7 +130,7 @@ class TestComputeDiffManifestV2023:
         parent = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
         current = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Everything same = not modified
         assert len(diff.paths) == 0
@@ -148,7 +150,7 @@ class TestComputeDiffManifestV2023:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         paths = {p.path for p in diff.paths}
         assert "unchanged.txt" not in paths
@@ -164,7 +166,7 @@ class TestComputeDiffManifestV2023:
         )
         current = self._create_v2023_manifest([("keep.txt", "hash1", 100, 1000)])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # v2023 doesn't track deletions, so diff should be empty
         assert len(diff.paths) == 0
@@ -180,7 +182,7 @@ class TestComputeDiffManifestV2023:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.totalSize == 125  # 50 + 75
 
@@ -219,7 +221,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.manifestType == ManifestType.DIFF
         assert len(diff.paths) == 0
@@ -235,7 +237,7 @@ class TestComputeDiffManifestV2025:
         )
         parent_hash = "abc123def456"
 
-        diff = _compute_diff_manifest(parent, current, parent_manifest_hash=parent_hash)
+        diff = compute_diff_manifest(parent, current, parent_manifest_hash=parent_hash)
 
         assert diff.parentManifestHash == parent_hash
 
@@ -248,7 +250,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.parentManifestHash is None
 
@@ -264,7 +266,7 @@ class TestComputeDiffManifestV2025:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         new_entry = next((p for p in diff.paths if p.path == "new.txt"), None)
         assert new_entry is not None
@@ -283,7 +285,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "keep.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         deleted_entry = next((p for p in diff.paths if p.path == "delete.txt"), None)
         assert deleted_entry is not None
@@ -298,7 +300,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "file.txt", "hash": "hash2", "size": 100, "mtime": 2000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.txt"
@@ -311,7 +313,7 @@ class TestComputeDiffManifestV2025:
             files=[], dirs=[{"path": "old_dir"}, {"path": "new_dir"}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         dir_paths = {d.path for d in diff.dirs}
         assert "new_dir" in dir_paths
@@ -323,7 +325,7 @@ class TestComputeDiffManifestV2025:
         )
         current = self._create_v2025_manifest(files=[], dirs=[{"path": "keep_dir"}])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         deleted_dir = next((d for d in diff.dirs if d.path == "delete_dir"), None)
         assert deleted_dir is not None
@@ -338,7 +340,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "link.txt", "symlink_target": "new_target.txt"}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "link.txt"
@@ -351,7 +353,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "link.txt", "symlink_target": "target.txt"}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].symlink_target == "target.txt"
@@ -361,7 +363,7 @@ class TestComputeDiffManifestV2025:
         parent = self._create_v2025_manifest([{"path": "link.txt", "symlink_target": "target.txt"}])
         current = self._create_v2025_manifest(files=[])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "link.txt"
@@ -374,7 +376,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.paths[0].runnable is True
 
@@ -393,7 +395,7 @@ class TestComputeDiffManifestV2025:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.paths[0].chunkhashes == ["chunk1", "chunk2"]
 
@@ -420,7 +422,7 @@ class TestComputeDiffManifestV2025:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].chunkhashes == ["chunk1", "chunk3"]
@@ -434,7 +436,7 @@ class TestComputeDiffManifestV2025:
             [{"path": "new.txt", "hash": "h2", "size": 50, "mtime": 2000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Should include new.txt (50) but not deleted.txt
         assert diff.totalSize == 50
@@ -449,7 +451,7 @@ class TestComputeDiffManifestV2025:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.totalSize == 100  # Only file.txt, not symlink
 
@@ -472,7 +474,7 @@ class TestComputeDiffManifestValidation:
         )
 
         with pytest.raises(ValueError, match="does not match"):
-            _compute_diff_manifest(parent, current)
+            compute_diff_manifest(parent, current)
 
     def test_type_error_for_wrong_manifest_type_v2023(self) -> None:
         """TypeError raised if manifest type doesn't match version for v2023."""
@@ -493,7 +495,7 @@ class TestComputeDiffManifestValidation:
         current.manifestVersion = ManifestVersion.v2023_03_03
 
         with pytest.raises(TypeError, match="Expected AssetManifest2023"):
-            _compute_diff_manifest(parent, current)
+            compute_diff_manifest(parent, current)
 
 
 class TestComputeDiffWithFilter:
@@ -535,10 +537,10 @@ class TestComputeDiffWithFilter:
 
         # Filter BOTH with same filter
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered_parent = _filter_manifest(parent, filter_obj)
-        filtered_current = _filter_manifest(current, filter_obj)
+        filtered_parent = filter_manifest(parent, filter_obj)
+        filtered_current = filter_manifest(current, filter_obj)
 
-        diff = _compute_diff_manifest(filtered_parent, filtered_current)
+        diff = compute_diff_manifest(filtered_parent, filtered_current)
 
         # Should only have new.blend as added, no deletions
         paths = {p.path for p in diff.paths}
@@ -759,7 +761,7 @@ class TestProgressCallback:
         )
 
         messages: List[str] = []
-        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+        compute_diff_manifest(parent, current, print_function_callback=messages.append)
 
         assert any("New" in msg and "new.txt" in msg for msg in messages)
 
@@ -779,7 +781,7 @@ class TestProgressCallback:
         )
 
         messages: List[str] = []
-        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+        compute_diff_manifest(parent, current, print_function_callback=messages.append)
 
         assert any("Modified" in msg and "file.txt" in msg for msg in messages)
 
@@ -799,7 +801,7 @@ class TestProgressCallback:
         )
 
         messages: List[str] = []
-        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+        compute_diff_manifest(parent, current, print_function_callback=messages.append)
 
         assert any("Deleted" in msg and "old.txt" in msg for msg in messages)
 
@@ -819,7 +821,7 @@ class TestProgressCallback:
         )
 
         messages: List[str] = []
-        _compute_diff_manifest(parent, current, print_function_callback=messages.append)
+        compute_diff_manifest(parent, current, print_function_callback=messages.append)
 
         assert any("Deleted dir" in msg and "old_dir" in msg for msg in messages)
 
@@ -856,7 +858,7 @@ class TestComputeDiffManifestMetadataChanges:
             [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 2000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.txt"
@@ -871,7 +873,7 @@ class TestComputeDiffManifestMetadataChanges:
             [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "script.sh"
@@ -886,7 +888,7 @@ class TestComputeDiffManifestMetadataChanges:
             [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": False}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "script.sh"
@@ -901,7 +903,7 @@ class TestComputeDiffManifestMetadataChanges:
             [{"path": "script.sh", "hash": "hash1", "size": 100, "mtime": 2000, "runnable": True}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].mtime == 2000
@@ -930,7 +932,7 @@ class TestComputeDiffManifestMetadataChanges:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].mtime == 2000
@@ -960,7 +962,7 @@ class TestComputeDiffManifestMetadataChanges:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].runnable is True
@@ -996,7 +998,7 @@ class TestComputeDiffManifestTypeTransitions:
         )
         current = self._create_v2025_manifest([{"path": "file.txt", "symlink_target": "other.txt"}])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.txt"
@@ -1010,7 +1012,7 @@ class TestComputeDiffManifestTypeTransitions:
             [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.txt"
@@ -1033,7 +1035,7 @@ class TestComputeDiffManifestTypeTransitions:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.bin"
@@ -1056,7 +1058,7 @@ class TestComputeDiffManifestTypeTransitions:
             [{"path": "file.bin", "hash": "hash1", "size": 100, "mtime": 2000}]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.bin"
@@ -1077,7 +1079,7 @@ class TestComputeDiffManifestTypeTransitions:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.bin"
@@ -1098,7 +1100,7 @@ class TestComputeDiffManifestTypeTransitions:
         )
         current = self._create_v2025_manifest([{"path": "file.bin", "symlink_target": "other.bin"}])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.bin"
@@ -1130,7 +1132,7 @@ class TestComputeDiffManifestTypeTransitions:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 3
         paths = {p.path: p for p in diff.paths}
@@ -1180,7 +1182,7 @@ class TestComputeDiffManifestMixedChanges:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         paths = {p.path: p for p in diff.paths}
         assert "unchanged.txt" not in paths
@@ -1220,7 +1222,7 @@ class TestComputeDiffManifestMixedChanges:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert len(diff.paths) == 3
         paths = {p.path: p for p in diff.paths}
@@ -1251,7 +1253,7 @@ class TestComputeDiffManifestMixedChanges:
             dirs=[],
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         paths = {p.path: p for p in diff.paths}
         dirs = {d.path: d for d in diff.dirs}
@@ -1279,7 +1281,7 @@ class TestComputeDiffManifestMixedChanges:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         paths = {p.path for p in diff.paths}
         assert "link.txt" not in paths
@@ -1310,7 +1312,7 @@ class TestComputeDiffManifestMixedChanges:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         paths = {p.path for p in diff.paths}
         assert "large.bin" not in paths
@@ -1366,7 +1368,7 @@ class TestDirectoryDeletionSemantics:
             dirs=[],
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Check that the directory is marked as deleted
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
@@ -1393,7 +1395,7 @@ class TestDirectoryDeletionSemantics:
         )
         current = self._create_v2025_manifest(files=[], dirs=[])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Check that both directories are marked as deleted
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
@@ -1420,7 +1422,7 @@ class TestDirectoryDeletionSemantics:
         )
         current = self._create_v2025_manifest(files=[], dirs=[])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # All directories should be deleted
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
@@ -1444,7 +1446,7 @@ class TestDirectoryDeletionSemantics:
             dirs=[{"path": "dir"}],
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Directory should NOT be deleted (it still has files)
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
@@ -1465,7 +1467,7 @@ class TestDirectoryDeletionSemantics:
         )
         current = self._create_v2025_manifest(files=[], dirs=[])
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # Directory should be deleted
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
@@ -1491,7 +1493,7 @@ class TestDirectoryDeletionSemantics:
             dirs=[{"path": "keep_dir"}],
         )
 
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         # dir1 and dir2 should be deleted, keep_dir should not
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
@@ -1542,7 +1544,7 @@ class TestPreserveRunnable:
             [{"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": False}]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=False)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=False)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "script.sh"
@@ -1557,7 +1559,7 @@ class TestPreserveRunnable:
             [{"path": "script.sh", "hash": "h2", "size": 100, "mtime": 2000, "runnable": False}]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "script.sh"
@@ -1570,7 +1572,7 @@ class TestPreserveRunnable:
             [{"path": "new_script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "new_script.sh"
@@ -1602,7 +1604,7 @@ class TestPreserveRunnable:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         paths_by_name = {p.path: p for p in diff.paths}
         assert len(paths_by_name) == 2  # Only modified files
@@ -1630,7 +1632,7 @@ class TestPreserveRunnable:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         paths_by_name = {p.path: p for p in diff.paths}
         assert paths_by_name["existing.sh"].runnable is True  # Preserved from parent
@@ -1645,7 +1647,7 @@ class TestPreserveRunnable:
             [{"path": "file.txt", "hash": "h2", "size": 100, "mtime": 2000, "runnable": True}]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         assert diff.paths[0].runnable is False  # Preserved from parent
 
@@ -1674,7 +1676,7 @@ class TestPreserveRunnable:
             ]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         assert diff.paths[0].runnable is True  # Preserved from parent
         assert diff.paths[0].chunkhashes == ["c1", "c3"]  # Content from current
@@ -1689,7 +1691,7 @@ class TestPreserveRunnable:
         )
 
         # Call without preserve_runnable argument
-        diff = _compute_diff_manifest(parent, current)
+        diff = compute_diff_manifest(parent, current)
 
         assert diff.paths[0].runnable is False  # Default behavior uses current
 
@@ -1707,7 +1709,7 @@ class TestPreserveRunnable:
         )
 
         # Should not raise, just ignored for v2023
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         assert len(diff.paths) == 1
         assert diff.paths[0].path == "file.txt"
@@ -1721,7 +1723,7 @@ class TestPreserveRunnable:
             [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
         # File should NOT be in diff since only runnable changed and we're preserving it
         assert len(diff.paths) == 0
@@ -1735,7 +1737,7 @@ class TestPreserveRunnable:
             [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": False}]
         )
 
-        diff = _compute_diff_manifest(parent, current, preserve_runnable=False)
+        diff = compute_diff_manifest(parent, current, preserve_runnable=False)
 
         # File SHOULD be in diff since runnable changed and we're not preserving
         assert len(diff.paths) == 1

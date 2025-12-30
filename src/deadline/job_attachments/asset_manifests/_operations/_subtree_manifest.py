@@ -44,7 +44,7 @@ from ..v2025_12_04.asset_manifest import (
 )
 
 
-def _subtree_manifest(
+def subtree_manifest(
     manifest: BaseAssetManifest,
     subtree: str,
     *,

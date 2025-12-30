@@ -36,7 +36,7 @@ from ..v2025_12_04.asset_manifest import (
 )
 
 
-def _collect_manifest(
+def collect_manifest(
     *,
     root: Path | str,
     version: ManifestVersion,
@@ -62,8 +62,8 @@ def _collect_manifest(
               (v2025 only)
             - COLLAPSE: Follow all symlinks, treating them as files/directories.
             - EXCLUDE: Skip all symlinks entirely.
-            - PRESERVE: Not supported (see _collect_abs_manifest).
-            - TRANSITIVE_INCLUDE_TARGETS: Not supported (see _collect_abs_manifest).
+            - PRESERVE: Not supported (see collect_abs_manifest).
+            - TRANSITIVE_INCLUDE_TARGETS: Not supported (see collect_abs_manifest).
         print_function_callback: Progress callback
 
     Returns:
@@ -71,7 +71,7 @@ def _collect_manifest(
 
     Raises:
         ValueError: If symlink_policy is PRESERVE or TRANSITIVE_INCLUDE_TARGETS
-            (these require absolute paths, use _collect_abs_manifest instead).
+            (these require absolute paths, use collect_abs_manifest instead).
         ValueError: If v2023 version is used with symlink_policy other than
             COLLAPSE or EXCLUDE.
         FileNotFoundError: If root does not exist.
@@ -83,13 +83,13 @@ def _collect_manifest(
           in the manifest format, but directories are still traversed to find files).
         - For v2025-12-04-beta: Files, symlinks, and directories are collected.
         - Symlinks have symlink_target set (no hash needed)
-        - Use _hash_manifest() to fill in file hashes
+        - Use hash_manifest() to fill in file hashes
     """
     # Validate symlink_policy - PRESERVE and TRANSITIVE_INCLUDE_TARGETS require absolute paths
     if symlink_policy in (SymlinkPolicy.PRESERVE, SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS):
         raise ValueError(
             f"symlink_policy={symlink_policy.value} requires absolute paths. "
-            "Use _collect_abs_manifest() instead."
+            "Use collect_abs_manifest() instead."
         )
 
     # Normalize and validate root path
@@ -124,7 +124,7 @@ def _collect_manifest(
         raise ValueError(f"Unsupported manifest version: {version}")
 
 
-def _collect_abs_manifest(
+def collect_abs_manifest(
     directories: List[Path | str],
     filenames: List[Path | str],
     *,
@@ -175,13 +175,13 @@ def _collect_abs_manifest(
         - For v2023-03-03: Only COLLAPSE and EXCLUDE policies are supported.
         - For v2025-12-04-beta: COLLAPSE, PRESERVE, TRANSITIVE_INCLUDE_TARGETS,
           and EXCLUDE are supported.
-        - Use _hash_manifest() to fill in file hashes
+        - Use hash_manifest() to fill in file hashes
     """
 
     # COLLAPSE_ESCAPING requires a root path to determine what "escaping" means
     if symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
         raise ValueError(
-            "symlink_policy=COLLAPSE_ESCAPING is not supported by _collect_abs_manifest() "
+            "symlink_policy=COLLAPSE_ESCAPING is not supported by collect_abs_manifest() "
             "because there is no root path to escape from. Use COLLAPSE, PRESERVE, "
             "TRANSITIVE_INCLUDE_TARGETS, or EXCLUDE instead."
         )
@@ -341,7 +341,7 @@ def _collect_manifest_v2023(
         file_entries.append(
             ManifestPath2023(
                 path=entry_path,
-                hash="",  # Empty string - to be filled by _hash_manifest()
+                hash="",  # Empty string - to be filled by hash_manifest()
                 size=file_size,
                 mtime=mtime_us,
             )
@@ -502,7 +502,7 @@ def _collect_manifest_v2025(
     4. Sets hash="" for all file entries (to be filled by _hash_manifest)
     5. Handles symlinks according to symlink_policy
 
-    Note: Does NOT compute file hashes. Use _hash_manifest() to fill in hashes.
+    Note: Does NOT compute file hashes. Use hash_manifest() to fill in hashes.
 
     Args:
         root_path: Root directory path (for relative path calculation). Can be None
@@ -567,19 +567,13 @@ def _collect_manifest_v2025(
                     # For file symlinks with COLLAPSE, collect the target as a file
                     try:
                         target_stat = full_path.stat(follow_symlinks=True)
-                        file_entry = _create_unhashed_file_entry(
-                            full_path, entry_path, target_stat
-                        )
+                        file_entry = _create_unhashed_file_entry(full_path, entry_path, target_stat)
                         file_entries.append(file_entry)
                         collected_paths.add(entry_path)
                         total_size += file_entry.size or 0
-                        print_function_callback(
-                            f"Collected (collapsed symlink): {entry_path}"
-                        )
+                        print_function_callback(f"Collected (collapsed symlink): {entry_path}")
                     except OSError as e:
-                        print_function_callback(
-                            f"Skipping broken symlink {entry_path}: {e}"
-                        )
+                        print_function_callback(f"Skipping broken symlink {entry_path}: {e}")
         else:
             # Regular file
             try:
@@ -816,7 +810,7 @@ def _create_unhashed_file_entry(
 
     return ManifestFilePath2025(
         path=rel_path,
-        hash="",  # Empty string - to be filled by _hash_manifest()
+        hash="",  # Empty string - to be filled by hash_manifest()
         size=file_size,
         mtime=mtime_us,
         runnable=runnable if runnable else False,

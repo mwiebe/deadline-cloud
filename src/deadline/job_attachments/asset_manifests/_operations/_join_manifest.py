@@ -34,7 +34,7 @@ from ..v2025_12_04.asset_manifest import (
 )
 
 
-def _join_manifest(
+def join_manifest(
     manifest: BaseAssetManifest,
     prefix: str,
     *,

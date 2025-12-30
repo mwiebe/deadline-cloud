@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for _filter_manifest and related functions.
+Tests for filter_manifest and related functions.
 
 These tests cover:
 - Basic filtering with include patterns
@@ -18,8 +18,10 @@ These tests cover:
 import pytest
 from typing import List, Union
 
+from deadline.job_attachments.asset_manifests._operations import (
+    filter_manifest,
+)
 from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
-    _filter_manifest,
     _filter_manifest_v2023,
     _filter_manifest_v2025,
     _matches_patterns,
@@ -571,7 +573,7 @@ class TestFilterManifestDispatch:
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["*.txt"])
-        filtered = _filter_manifest(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.manifestVersion == ManifestVersion.v2023_03_03
         assert len(filtered.paths) == 1
@@ -586,7 +588,7 @@ class TestFilterManifestDispatch:
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["*.txt"])
-        filtered = _filter_manifest(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.manifestVersion == ManifestVersion.v2025_12_04_beta
         assert len(filtered.paths) == 1
@@ -605,7 +607,7 @@ class TestFilterManifestDispatch:
 
         filter_obj = IncludeExcludePathsFilter()
         with pytest.raises(TypeError, match="Expected AssetManifest2023"):
-            _filter_manifest(manifest, filter_obj)
+            filter_manifest(manifest, filter_obj)
 
     def test_type_error_for_wrong_manifest_type_v2025(self) -> None:
         """TypeError raised if manifest type doesn't match version for v2025."""
@@ -620,7 +622,7 @@ class TestFilterManifestDispatch:
 
         filter_obj = IncludeExcludePathsFilter()
         with pytest.raises(TypeError, match="Expected AssetManifest2025"):
-            _filter_manifest(manifest, filter_obj)
+            filter_manifest(manifest, filter_obj)
 
     def test_unsupported_version_raises(self) -> None:
         """Unsupported version raises ValueError."""
@@ -633,7 +635,7 @@ class TestFilterManifestDispatch:
 
         filter_obj = IncludeExcludePathsFilter()
         with pytest.raises(ValueError, match="Unsupported manifest version"):
-            _filter_manifest(manifest, filter_obj)
+            filter_manifest(manifest, filter_obj)
 
 
 class TestFilterManifestDiffScenarios:
@@ -681,8 +683,8 @@ class TestFilterManifestDiffScenarios:
 
         # Use the same filter for both
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered_parent = _filter_manifest(parent, filter_obj)
-        filtered_current = _filter_manifest(current, filter_obj)
+        filtered_parent = filter_manifest(parent, filter_obj)
+        filtered_current = filter_manifest(current, filter_obj)
 
         # Parent should only have model.blend
         parent_paths = {p.path for p in filtered_parent.paths}
@@ -719,8 +721,8 @@ class TestFilterManifestDiffScenarios:
         )
 
         filter_obj = IncludeExcludePathsFilter(exclude=["backup*"])
-        filtered_parent = _filter_manifest(parent, filter_obj)
-        filtered_current = _filter_manifest(current, filter_obj)
+        filtered_parent = filter_manifest(parent, filter_obj)
+        filtered_current = filter_manifest(current, filter_obj)
 
         parent_dirs = {d.path for d in filtered_parent.dirs}
         current_dirs = {d.path for d in filtered_current.dirs}
@@ -750,7 +752,7 @@ class TestCustomFilterCallables:
                 return entry.size >= 1000
             return True  # Keep directories
 
-        filtered = _filter_manifest(manifest, size_filter)
+        filtered = filter_manifest(manifest, size_filter)
 
         paths = {p.path for p in filtered.paths}
         assert paths == {"medium.txt", "large.txt"}
@@ -771,7 +773,7 @@ class TestCustomFilterCallables:
         def blend_filter(entry: ManifestEntry) -> bool:
             return entry.path.lower().endswith(".blend")
 
-        filtered = _filter_manifest(manifest, blend_filter)
+        filtered = filter_manifest(manifest, blend_filter)
 
         paths = {p.path for p in filtered.paths}
         assert paths == {"model.BLEND", "scene.blend"}
@@ -795,7 +797,7 @@ class TestCustomFilterCallables:
                 return not entry.runnable
             return True
 
-        filtered = _filter_manifest(manifest, non_executable_filter)
+        filtered = filter_manifest(manifest, non_executable_filter)
 
         assert len(filtered.paths) == 1
         assert filtered.paths[0].path == "data.txt"
@@ -812,7 +814,7 @@ class TestCustomFilterCallables:
         def accept_all(entry: ManifestEntry) -> bool:
             return True
 
-        filtered = _filter_manifest(manifest, accept_all)
+        filtered = filter_manifest(manifest, accept_all)
 
         assert len(filtered.paths) == 1
         assert len(filtered.dirs) == 1
@@ -829,7 +831,7 @@ class TestCustomFilterCallables:
         def reject_all(entry: ManifestEntry) -> bool:
             return False
 
-        filtered = _filter_manifest(manifest, reject_all)
+        filtered = filter_manifest(manifest, reject_all)
 
         assert len(filtered.paths) == 0
         assert len(filtered.dirs) == 0

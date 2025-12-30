@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for _compose_manifests and related functions.
+Tests for compose_manifests and related functions.
 
 These tests cover:
 - Empty manifest list (raises ValueError)
@@ -20,8 +20,10 @@ from __future__ import annotations
 import pytest
 from typing import List
 
+from deadline.job_attachments.asset_manifests._operations import (
+    compose_manifests,
+)
 from deadline.job_attachments.asset_manifests._operations._compose_manifest import (
-    _compose_manifests,
     _ManifestTrieNode,
     _split_path,
 )
@@ -273,7 +275,7 @@ class TestComposeManifestsValidation:
     def test_empty_list_raises_error(self) -> None:
         """Empty manifest list raises ValueError."""
         with pytest.raises(ValueError, match="Cannot compose empty list"):
-            _compose_manifests([])
+            compose_manifests([])
 
     def test_single_manifest_returns_as_is(self) -> None:
         """Single manifest is returned unchanged."""
@@ -283,7 +285,7 @@ class TestComposeManifestsValidation:
             total_size=100,
         )
 
-        result = _compose_manifests([manifest])
+        result = compose_manifests([manifest])
 
         assert result is manifest
 
@@ -302,7 +304,7 @@ class TestComposeManifestsValidation:
         )
 
         with pytest.raises(ValueError, match="same version"):
-            _compose_manifests([m1, m2])
+            compose_manifests([m1, m2])
 
     def test_v2025_snapshot_followed_by_snapshot_raises_error(self) -> None:
         """v2025 snapshot followed by snapshot raises ValueError."""
@@ -322,7 +324,7 @@ class TestComposeManifestsValidation:
         )
 
         with pytest.raises(ValueError, match="must be a DIFF"):
-            _compose_manifests([snapshot1, snapshot2])
+            compose_manifests([snapshot1, snapshot2])
 
     def test_v2025_diff_composition_with_snapshot_raises_error(self) -> None:
         """v2025 diff composition with snapshot in the middle raises ValueError."""
@@ -342,7 +344,7 @@ class TestComposeManifestsValidation:
         )
 
         with pytest.raises(ValueError, match="must be a DIFF"):
-            _compose_manifests([diff1, snapshot])
+            compose_manifests([diff1, snapshot])
 
 
 class TestComposeManifestsV2023:
@@ -363,7 +365,7 @@ class TestComposeManifestsV2023:
         m1 = self._create_v2023_manifest([("file.txt", "hash1", 100, 1000)])
         m2 = self._create_v2023_manifest([("file.txt", "hash2", 200, 2000)])
 
-        result = _compose_manifests([m1, m2])
+        result = compose_manifests([m1, m2])
 
         assert len(result.paths) == 1
         assert result.paths[0].hash == "hash2"
@@ -374,7 +376,7 @@ class TestComposeManifestsV2023:
         m1 = self._create_v2023_manifest([("file1.txt", "hash1", 100, 1000)])
         m2 = self._create_v2023_manifest([("file2.txt", "hash2", 200, 2000)])
 
-        result = _compose_manifests([m1, m2])
+        result = compose_manifests([m1, m2])
 
         paths = {p.path for p in result.paths}
         assert paths == {"file1.txt", "file2.txt"}
@@ -395,7 +397,7 @@ class TestComposeManifestsV2023:
         )
         m3 = self._create_v2023_manifest([("file.txt", "v3", 100, 3000)])
 
-        result = _compose_manifests([m1, m2, m3])
+        result = compose_manifests([m1, m2, m3])
 
         paths_dict = {p.path: p for p in result.paths}
         assert paths_dict["file.txt"].hash == "v3"
@@ -407,7 +409,7 @@ class TestComposeManifestsV2023:
         m1 = self._create_v2023_manifest([("file1.txt", "h1", 100, 1000)])
         m2 = self._create_v2023_manifest([("file2.txt", "h2", 200, 2000)])
 
-        result = _compose_manifests([m1, m2])
+        result = compose_manifests([m1, m2])
 
         assert result.totalSize == 300
 
@@ -467,7 +469,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot])
+        result = compose_manifests([snapshot])
 
         assert result is snapshot
 
@@ -484,7 +486,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         paths = {p.path for p in result.paths}
         assert paths == {"existing.txt", "new.txt"}
@@ -503,7 +505,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         assert len(result.paths) == 1
         assert result.paths[0].hash == "h2"
@@ -520,7 +522,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
         )
         diff = self._create_v2025_diff([{"path": "delete.txt", "deleted": True}])
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         paths = {p.path for p in result.paths}
         assert paths == {"keep.txt"}
@@ -537,7 +539,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             dirs=[{"path": "delete_dir", "deleted": True}],
         )
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         dir_paths = {d.path for d in result.dirs}
         assert dir_paths == {"keep_dir"}
@@ -560,7 +562,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff1, diff2])
+        result = compose_manifests([snapshot, diff1, diff2])
 
         assert result.paths[0].hash == "v3"
 
@@ -574,7 +576,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
         )
         diff2 = self._create_v2025_diff([{"path": "temp.txt", "deleted": True}])
 
-        result = _compose_manifests([snapshot, diff1, diff2])
+        result = compose_manifests([snapshot, diff1, diff2])
 
         assert len(result.paths) == 0
 
@@ -592,7 +594,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff1, diff2])
+        result = compose_manifests([snapshot, diff1, diff2])
 
         assert len(result.paths) == 1
         assert result.paths[0].hash == "v2"
@@ -610,7 +612,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         assert result.paths[0].symlink_target == "new_target.txt"
 
@@ -627,7 +629,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         assert result.paths[0].runnable is True
 
@@ -645,7 +647,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot, diff])
+        result = compose_manifests([snapshot, diff])
 
         assert result.paths[0].chunkhashes == ["c1", "c2", "c3"]
 
@@ -658,7 +660,7 @@ class TestComposeManifestsSnapshotDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([snapshot])
+        result = compose_manifests([snapshot])
 
         assert result.totalSize == 100
 
@@ -696,7 +698,7 @@ class TestComposeManifestsDiffsV2025:
             parent_hash="parent123",
         )
 
-        result = _compose_manifests([diff])
+        result = compose_manifests([diff])
 
         assert result is diff
 
@@ -713,7 +715,7 @@ class TestComposeManifestsDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         assert result.manifestType == ManifestType.DIFF
 
@@ -728,7 +730,7 @@ class TestComposeManifestsDiffsV2025:
             parent_hash="second_parent",
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         assert result.parentManifestHash == "first_parent"
 
@@ -745,7 +747,7 @@ class TestComposeManifestsDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         paths = {p.path for p in result.paths if not p.deleted}
         assert paths == {"file1.txt", "file2.txt"}
@@ -763,7 +765,7 @@ class TestComposeManifestsDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         file_entry = next(p for p in result.paths if p.path == "file.txt")
         assert file_entry.hash == "v2"
@@ -772,7 +774,7 @@ class TestComposeManifestsDiffsV2025:
         """Deletion markers are preserved in composed diff."""
         diff1 = self._create_v2025_diff([{"path": "file.txt", "deleted": True}])
 
-        result = _compose_manifests([diff1])
+        result = compose_manifests([diff1])
 
         assert result.paths[0].deleted is True
 
@@ -785,7 +787,7 @@ class TestComposeManifestsDiffsV2025:
         )
         diff2 = self._create_v2025_diff([{"path": "file.txt", "deleted": True}])
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         file_entry = next(p for p in result.paths if p.path == "file.txt")
         assert file_entry.deleted is True
@@ -799,7 +801,7 @@ class TestComposeManifestsDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         file_entry = next(p for p in result.paths if p.path == "file.txt")
         assert file_entry.deleted is False
@@ -812,7 +814,7 @@ class TestComposeManifestsDiffsV2025:
             dirs=[{"path": "old_dir", "deleted": True}],
         )
 
-        result = _compose_manifests([diff1])
+        result = compose_manifests([diff1])
 
         dir_entry = next(d for d in result.dirs if d.path == "old_dir")
         assert dir_entry.deleted is True
@@ -828,7 +830,7 @@ class TestComposeManifestsDiffsV2025:
             dirs=[{"path": "dir"}],
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         dir_entry = next((d for d in result.dirs if d.path == "dir" and not d.deleted), None)
         assert dir_entry is not None
@@ -851,7 +853,7 @@ class TestComposeManifestsDiffsV2025:
             dirs=[{"path": "a"}, {"path": "a/b"}, {"path": "a/b/c"}],
         )
 
-        result = _compose_manifests([diff1, diff2])
+        result = compose_manifests([diff1, diff2])
 
         non_deleted_dirs = {d.path for d in result.dirs if not d.deleted}
         assert "a" in non_deleted_dirs
@@ -867,7 +869,7 @@ class TestComposeManifestsDiffsV2025:
             ]
         )
 
-        result = _compose_manifests([diff1])
+        result = compose_manifests([diff1])
 
         assert result.totalSize == 100
 
@@ -889,7 +891,7 @@ class TestComposeManifestsProgressCallback:
         )
 
         messages: List[str] = []
-        _compose_manifests([m1, m2], print_function_callback=messages.append)
+        compose_manifests([m1, m2], print_function_callback=messages.append)
 
         assert any("new.txt" in msg for msg in messages)
 
@@ -911,6 +913,6 @@ class TestComposeManifestsProgressCallback:
         )
 
         messages: List[str] = []
-        _compose_manifests([snapshot, diff], print_function_callback=messages.append)
+        compose_manifests([snapshot, diff], print_function_callback=messages.append)
 
         assert any("deleted" in msg.lower() and "file.txt" in msg for msg in messages)

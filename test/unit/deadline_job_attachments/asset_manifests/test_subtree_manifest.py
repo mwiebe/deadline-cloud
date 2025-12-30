@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for _subtree_manifest and related functions.
+Tests for subtree_manifest and related functions.
 
 These tests cover:
 - Basic subtree extraction for both v2023 and v2025 formats
@@ -16,8 +16,10 @@ import os
 import pytest
 from typing import List
 
+from deadline.job_attachments.asset_manifests._operations import (
+    subtree_manifest,
+)
 from deadline.job_attachments.asset_manifests._operations._subtree_manifest import (
-    _subtree_manifest,
     _is_absolute_path,
     _is_within_subtree,
     _rebase_path,
@@ -139,7 +141,7 @@ class TestSubtreeManifestV2023:
             ]
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         assert len(result.paths) == 2
         paths = {p.path for p in result.paths}
@@ -153,7 +155,7 @@ class TestSubtreeManifestV2023:
             ]
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         assert len(result.paths) == 1
         entry = result.paths[0]
@@ -172,7 +174,7 @@ class TestSubtreeManifestV2023:
             ]
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         assert result.totalSize == 300  # 100 + 200
 
@@ -186,7 +188,7 @@ class TestSubtreeManifestV2023:
             ]
         )
 
-        result = _subtree_manifest(manifest, "a/b/c")
+        result = subtree_manifest(manifest, "a/b/c")
 
         assert len(result.paths) == 2
         paths = {p.path for p in result.paths}
@@ -200,7 +202,7 @@ class TestSubtreeManifestV2023:
             ]
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         assert len(result.paths) == 0
         assert result.totalSize == 0
@@ -244,7 +246,7 @@ class TestSubtreeManifestV2025:
             ],
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         file_paths = {p.path for p in result.paths}
         assert file_paths == {"wood.png", "metal.png"}
@@ -262,7 +264,7 @@ class TestSubtreeManifestV2025:
             ],
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         dir_paths = {d.path for d in result.dirs}
         assert dir_paths == {"sub"}
@@ -282,7 +284,7 @@ class TestSubtreeManifestV2025:
             dirs=[{"path": "scripts"}, {"path": "scripts/bin"}],
         )
 
-        result = _subtree_manifest(manifest, "scripts/bin")
+        result = subtree_manifest(manifest, "scripts/bin")
 
         assert result.paths[0].runnable is True
 
@@ -300,7 +302,7 @@ class TestSubtreeManifestV2025:
             dirs=[{"path": "data"}, {"path": "data/large"}],
         )
 
-        result = _subtree_manifest(manifest, "data/large")
+        result = subtree_manifest(manifest, "data/large")
 
         assert result.paths[0].chunkhashes == ["c1", "c2"]
 
@@ -316,7 +318,7 @@ class TestSubtreeManifestV2025:
             ],
         )
 
-        result = _subtree_manifest(manifest, "assets/textures")
+        result = subtree_manifest(manifest, "assets/textures")
 
         assert len(result.paths) == 1
         assert result.paths[0].path == "old.png"
@@ -357,7 +359,7 @@ class TestSubtreeManifestSymlinks:
             dirs=[{"path": "assets"}, {"path": "assets/textures"}],
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
@@ -382,7 +384,7 @@ class TestSubtreeManifestSymlinks:
             ],
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
@@ -404,9 +406,7 @@ class TestSubtreeManifestSymlinks:
             dirs=[{"path": "assets"}, {"path": "assets/textures"}],
         )
 
-        result = _subtree_manifest(
-            manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE
-        )
+        result = subtree_manifest(manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE)
 
         paths = {p.path for p in result.paths}
         assert "current" not in paths
@@ -423,7 +423,7 @@ class TestSubtreeManifestSymlinks:
             dirs=[{"path": "assets"}, {"path": "assets/textures"}],
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE
         )
 
@@ -449,9 +449,7 @@ class TestSubtreeManifestSymlinks:
             ],
         )
 
-        result = _subtree_manifest(
-            manifest, "a/b/c", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
-        )
+        result = subtree_manifest(manifest, "a/b/c", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
 
         link_entry = next(p for p in result.paths if p.path == "sub/link.txt")
         # Target should be rebased relative to new root
@@ -469,7 +467,7 @@ class TestSubtreeManifestSymlinks:
         )
 
         messages: List[str] = []
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest,
             "assets/textures",
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -506,7 +504,7 @@ class TestSubtreeManifestValidation:
         )
 
         with pytest.raises(ValueError, match="preserve.*not supported"):
-            _subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.PRESERVE)
+            subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.PRESERVE)
 
     def test_transitive_include_targets_raises_error(self) -> None:
         """TRANSITIVE_INCLUDE_TARGETS policy raises ValueError."""
@@ -515,7 +513,7 @@ class TestSubtreeManifestValidation:
         )
 
         with pytest.raises(ValueError, match="transitive_include_targets.*not supported"):
-            _subtree_manifest(
+            subtree_manifest(
                 manifest, "subdir", symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS
             )
 
@@ -526,7 +524,7 @@ class TestSubtreeManifestValidation:
         )
 
         with pytest.raises(ValueError, match="cannot be empty"):
-            _subtree_manifest(manifest, ".")
+            subtree_manifest(manifest, ".")
 
     def test_relative_subtree_with_absolute_manifest_raises_error(self) -> None:
         """Relative subtree with absolute manifest paths raises ValueError."""
@@ -541,7 +539,7 @@ class TestSubtreeManifestValidation:
         )
 
         with pytest.raises(ValueError, match="relative.*absolute"):
-            _subtree_manifest(manifest, "subdir")
+            subtree_manifest(manifest, "subdir")
 
     def test_absolute_subtree_with_relative_manifest_raises_error(self) -> None:
         """Absolute subtree with relative manifest paths raises ValueError."""
@@ -556,7 +554,7 @@ class TestSubtreeManifestValidation:
             abs_subtree = "/home/user/assets"
 
         with pytest.raises(ValueError, match="absolute.*relative"):
-            _subtree_manifest(manifest, abs_subtree)
+            subtree_manifest(manifest, abs_subtree)
 
 
 class TestSubtreeManifestAbsolutePaths:
@@ -611,7 +609,7 @@ class TestSubtreeManifestAbsolutePaths:
             ],
         )
 
-        result = _subtree_manifest(manifest, f"{base}/assets/textures")
+        result = subtree_manifest(manifest, f"{base}/assets/textures")
 
         # Output should have relative paths
         file_paths = {p.path for p in result.paths}
@@ -662,7 +660,7 @@ class TestSubtreeManifestDirectorySymlinks:
             ],
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
@@ -684,7 +682,7 @@ class TestSubtreeManifestDirectorySymlinks:
             dirs=[],  # No explicit dirs - they should be inferred from file paths
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
@@ -717,7 +715,7 @@ class TestSubtreeManifestDirectorySymlinks:
             ],
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
@@ -755,7 +753,7 @@ class TestSubtreeManifestDirectorySymlinks:
             ],
         )
 
-        result = _subtree_manifest(
+        result = subtree_manifest(
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
@@ -807,7 +805,9 @@ class TestPathSeparatorHandling:
         """On Windows, backslashes in subtree path are converted to forward slashes."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"):
+        with patch(
+            "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"
+        ):
             result = _normalize_subtree_path("assets\\textures\\wood")
             # On Windows, backslashes should be converted to forward slashes
             assert result == "assets/textures/wood"
@@ -816,7 +816,10 @@ class TestPathSeparatorHandling:
         """On POSIX, backslashes in subtree path are preserved as valid filename characters."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "posix"):
+        with patch(
+            "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name",
+            "posix",
+        ):
             # On POSIX, a backslash is a valid filename character
             # "assets\\textures" is a single directory name containing a backslash
             result = _normalize_subtree_path("assets\\textures")
@@ -829,8 +832,12 @@ class TestPathSeparatorHandling:
 
         # Patch os.name in both modules - base_manifest (for manifest creation)
         # and _subtree_manifest (for subtree operation)
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"), \
-             patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "posix"):
+        with patch(
+            "deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"
+        ), patch(
+            "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name",
+            "posix",
+        ):
             # Create a manifest with a file that has a backslash in its name (valid on POSIX)
             manifest = self._create_v2025_manifest(
                 files=[
@@ -846,7 +853,7 @@ class TestPathSeparatorHandling:
                 dirs=[{"path": "assets"}],
             )
 
-            result = _subtree_manifest(manifest, "assets")
+            result = subtree_manifest(manifest, "assets")
 
             paths = {p.path for p in result.paths}
             # The backslash filename should be preserved as-is
@@ -857,8 +864,9 @@ class TestPathSeparatorHandling:
         """On Windows, backslashes in subtree parameter are normalized."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), \
-             patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"):
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), patch(
+            "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"
+        ):
             manifest = self._create_v2025_manifest(
                 files=[
                     {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
@@ -867,7 +875,7 @@ class TestPathSeparatorHandling:
             )
 
             # On Windows, user might pass "assets\\textures" which should work
-            result = _subtree_manifest(manifest, "assets\\textures")
+            result = subtree_manifest(manifest, "assets\\textures")
 
             paths = {p.path for p in result.paths}
             assert "wood.png" in paths

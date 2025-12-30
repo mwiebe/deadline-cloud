@@ -55,7 +55,7 @@ class IncludeExcludePathsFilter:
             include=["*.blend", "textures/*"],
             exclude=["backup/*", "*.tmp"]
         )
-        filtered = _filter_manifest(manifest, filter)
+        filtered = filter_manifest(manifest, filter)
     """
 
     def __init__(
@@ -116,7 +116,7 @@ def _matches_patterns(path: str, include: List[str], exclude: List[str]) -> bool
     return True
 
 
-def _filter_manifest(
+def filter_manifest(
     manifest: BaseAssetManifest,
     entry_filter: Callable[[Union[BaseManifestPath, BaseManifestDirectoryPath]], bool],
 ) -> BaseAssetManifest:
@@ -139,14 +139,14 @@ def _filter_manifest(
     Example:
         # Using IncludeExcludePathsFilter
         filter = IncludeExcludePathsFilter(include=["*.blend"], exclude=["backup/*"])
-        filtered = _filter_manifest(manifest, filter)
+        filtered = filter_manifest(manifest, filter)
 
         # Using a custom filter
         def large_files_only(entry: Union[BaseManifestPath, BaseManifestDirectoryPath]) -> bool:
             if isinstance(entry, BaseManifestPath) and entry.size is not None:
                 return entry.size > 1_000_000  # > 1MB
             return False
-        filtered = _filter_manifest(manifest, large_files_only)
+        filtered = filter_manifest(manifest, large_files_only)
 
     Critical for Diff:
         When computing a diff manifest, BOTH parent and current must be filtered

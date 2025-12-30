@@ -52,8 +52,6 @@ from ...caches.s3_check_cache import S3CheckCache, S3CheckCacheEntry
 from ..._aws.aws_clients import get_boto3_session, get_s3_client, get_account_id
 from ...progress_tracker import ProgressTracker
 from ...exceptions import (
-    AssetSyncCancelledError,
-    AssetSyncError,
     JobAttachmentsS3ClientError,
     JobAttachmentS3BotoCoreError,
     COMMON_ERROR_GUIDANCE_FOR_S3,
@@ -92,8 +90,8 @@ def _get_default_max_memory_bytes() -> int:
 
         result = max(MIN_MEMORY_BYTES, quarter_of_total, available_minus_1gb)
         logger.debug(
-            f"Memory limit calculation: min=256MB, quarter_total={quarter_of_total // (1024*1024)}MB, "
-            f"available-1GB={available_minus_1gb // (1024*1024)}MB, result={result // (1024*1024)}MB"
+            f"Memory limit calculation: min=256MB, quarter_total={quarter_of_total // (1024 * 1024)}MB, "
+            f"available-1GB={available_minus_1gb // (1024 * 1024)}MB, result={result // (1024 * 1024)}MB"
         )
         return result
     except Exception as e:
@@ -183,7 +181,6 @@ class _MemoryPool:
         """Current allocated bytes."""
         with self._lock:
             return self._allocated_bytes
-
 
 
 class _PipelineStage:
@@ -277,7 +274,7 @@ class _ReadStage(_PipelineStage):
             with open(item.file_path, "rb") as f:
                 f.seek(item.chunk_start)
                 item.data = f.read(chunk_size)
-        except Exception as e:
+        except Exception:
             # Release memory on error
             self._memory_pool.release(chunk_size)
             raise
@@ -426,7 +423,7 @@ class _UploadStage(_PipelineStage):
             ) from bce
 
 
-def _hash_upload_manifest(
+def hash_upload_manifest(
     manifest: BaseAssetManifest,
     root: Path | str,
     s3_bucket: str,
@@ -446,7 +443,7 @@ def _hash_upload_manifest(
     avoiding the need to read files twice (once for hashing, once for uploading).
 
     Args:
-        manifest: Manifest with empty hashes (from _collect_manifest_directory_tree)
+        manifest: Manifest with empty hashes (from collect_manifest or collect_abs_manifest)
         root: Root directory path (needed to read files for hashing/uploading)
         s3_bucket: S3 bucket name for uploads
         s3_key_prefix: S3 key prefix for content-addressable storage (e.g., "Data")
@@ -835,9 +832,7 @@ def _hash_upload_manifest_v2025(
         if file_size > FILE_CHUNK_SIZE_BYTES:
             # Large file: use chunkhashes
             expected_chunks = (file_size + FILE_CHUNK_SIZE_BYTES - 1) // FILE_CHUNK_SIZE_BYTES
-            chunkhashes_list = [
-                chunk_hashes.get(i, "") for i in range(expected_chunks)
-            ]
+            chunkhashes_list = [chunk_hashes.get(i, "") for i in range(expected_chunks)]
             hashed_paths.append(
                 ManifestFilePath2025(
                     path=entry.path,

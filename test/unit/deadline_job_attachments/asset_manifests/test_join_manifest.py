@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for _join_manifest and related functions.
+Tests for join_manifest and related functions.
 
 These tests cover:
 - Basic prefix joining for both v2023 and v2025 formats
@@ -15,8 +15,10 @@ import os
 import pytest
 from typing import List
 
+from deadline.job_attachments.asset_manifests._operations import (
+    join_manifest,
+)
 from deadline.job_attachments.asset_manifests._operations._join_manifest import (
-    _join_manifest,
     _normalize_prefix,
     _join_path,
 )
@@ -94,7 +96,7 @@ class TestJoinManifestV2023:
             ]
         )
 
-        result = _join_manifest(manifest, "assets/textures")
+        result = join_manifest(manifest, "assets/textures")
 
         paths = {p.path for p in result.paths}
         assert paths == {"assets/textures/wood.png", "assets/textures/metal.png"}
@@ -108,7 +110,7 @@ class TestJoinManifestV2023:
             ]
         )
 
-        result = _join_manifest(manifest, "/projects/scene/assets")
+        result = join_manifest(manifest, "/projects/scene/assets")
 
         paths = {p.path for p in result.paths}
         assert paths == {
@@ -124,7 +126,7 @@ class TestJoinManifestV2023:
             ]
         )
 
-        result = _join_manifest(manifest, "prefix")
+        result = join_manifest(manifest, "prefix")
 
         assert len(result.paths) == 1
         entry = result.paths[0]
@@ -142,7 +144,7 @@ class TestJoinManifestV2023:
             ]
         )
 
-        result = _join_manifest(manifest, "prefix")
+        result = join_manifest(manifest, "prefix")
 
         assert result.totalSize == 300
 
@@ -180,7 +182,7 @@ class TestJoinManifestV2025:
             dirs=[{"path": "sub"}],
         )
 
-        result = _join_manifest(manifest, "assets/textures")
+        result = join_manifest(manifest, "assets/textures")
 
         file_paths = {p.path for p in result.paths}
         assert file_paths == {"assets/textures/wood.png", "assets/textures/metal.png"}
@@ -197,7 +199,7 @@ class TestJoinManifestV2025:
             dirs=[{"path": "sub"}],
         )
 
-        result = _join_manifest(manifest, "/projects/scene")
+        result = join_manifest(manifest, "/projects/scene")
 
         file_paths = {p.path for p in result.paths}
         assert file_paths == {"/projects/scene/wood.png"}
@@ -214,7 +216,7 @@ class TestJoinManifestV2025:
             ],
         )
 
-        result = _join_manifest(manifest, "assets/textures")
+        result = join_manifest(manifest, "assets/textures")
 
         paths_by_name = {p.path: p for p in result.paths}
 
@@ -234,7 +236,7 @@ class TestJoinManifestV2025:
             ],
         )
 
-        result = _join_manifest(manifest, "/projects/scene")
+        result = join_manifest(manifest, "/projects/scene")
 
         paths_by_name = {p.path: p for p in result.paths}
         assert paths_by_name["/projects/scene/current"].symlink_target == "/projects/scene/wood.png"
@@ -247,7 +249,7 @@ class TestJoinManifestV2025:
             ],
         )
 
-        result = _join_manifest(manifest, "prefix")
+        result = join_manifest(manifest, "prefix")
 
         assert result.paths[0].runnable is True
 
@@ -264,7 +266,7 @@ class TestJoinManifestV2025:
             ],
         )
 
-        result = _join_manifest(manifest, "prefix")
+        result = join_manifest(manifest, "prefix")
 
         assert result.paths[0].chunkhashes == ["c1", "c2"]
 
@@ -279,7 +281,7 @@ class TestJoinManifestV2025:
             ],
         )
 
-        result = _join_manifest(manifest, "prefix")
+        result = join_manifest(manifest, "prefix")
 
         assert result.paths[0].path == "prefix/old.txt"
         assert result.paths[0].deleted is True
@@ -300,7 +302,7 @@ class TestJoinManifestV2025:
             parent_manifest_hash="parent_hash_123",
         )
 
-        result = _join_manifest(manifest, "prefix")
+        result = join_manifest(manifest, "prefix")
 
         assert result.manifestType == ManifestType.DIFF
         assert result.parentManifestHash == "parent_hash_123"
@@ -331,7 +333,7 @@ class TestJoinManifestValidation:
         )
 
         with pytest.raises(ValueError, match="cannot be empty"):
-            _join_manifest(manifest, "")
+            join_manifest(manifest, "")
 
 
 class TestJoinManifestWindowsPaths:
@@ -360,7 +362,7 @@ class TestJoinManifestWindowsPaths:
             ],
         )
 
-        result = _join_manifest(manifest, "C:/projects/scene")
+        result = join_manifest(manifest, "C:/projects/scene")
 
         assert result.paths[0].path == "C:/projects/scene/wood.png"
 
@@ -372,7 +374,7 @@ class TestJoinManifestWindowsPaths:
             ],
         )
 
-        result = _join_manifest(manifest, "C:\\projects\\scene")
+        result = join_manifest(manifest, "C:\\projects\\scene")
 
         # Backslashes should be converted to forward slashes
         assert result.paths[0].path == "C:/projects/scene/wood.png"
@@ -405,7 +407,9 @@ class TestPathSeparatorHandling:
         """On Windows, backslashes in prefix are converted to forward slashes."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"):
+        with patch(
+            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"
+        ):
             result = _normalize_prefix("C:\\projects\\scene")
             # On Windows, backslashes should be converted to forward slashes
             assert result == "C:/projects/scene"
@@ -414,7 +418,9 @@ class TestPathSeparatorHandling:
         """On POSIX, backslashes in prefix are preserved as valid filename characters."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"):
+        with patch(
+            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"
+        ):
             # On POSIX, a backslash is a valid filename character
             # "dir\\name" is a single directory name containing a backslash
             result = _normalize_prefix("dir\\name")
@@ -425,15 +431,16 @@ class TestPathSeparatorHandling:
         """On Windows, backslashes in prefix are normalized to forward slashes."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), \
-             patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"):
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), patch(
+            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"
+        ):
             manifest = self._create_v2025_manifest(
                 files=[
                     {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 ],
             )
 
-            result = _join_manifest(manifest, "C:\\projects\\scene")
+            result = join_manifest(manifest, "C:\\projects\\scene")
 
             assert result.paths[0].path == "C:/projects/scene/wood.png"
 
@@ -441,8 +448,11 @@ class TestPathSeparatorHandling:
         """On POSIX, backslashes in prefix are preserved as valid directory name characters."""
         from unittest.mock import patch
 
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"), \
-             patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"):
+        with patch(
+            "deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"
+        ), patch(
+            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"
+        ):
             manifest = self._create_v2025_manifest(
                 files=[
                     {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
@@ -450,7 +460,7 @@ class TestPathSeparatorHandling:
             )
 
             # On POSIX, "dir\\name" is a single directory name containing a backslash
-            result = _join_manifest(manifest, "dir\\name")
+            result = join_manifest(manifest, "dir\\name")
 
             # The backslash should be preserved - it's part of the directory name
             assert result.paths[0].path == "dir\\name/wood.png"
@@ -460,17 +470,25 @@ class TestPathSeparatorHandling:
         from unittest.mock import patch
 
         # Patch os.name in base_manifest for manifest creation
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"), \
-             patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"):
+        with patch(
+            "deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"
+        ), patch(
+            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"
+        ):
             # Create a manifest with a file that has a backslash in its name (valid on POSIX)
             manifest = self._create_v2025_manifest(
                 files=[
                     # A file named "file\with\backslashes.txt" (single filename with backslashes)
-                    {"path": "file\\with\\backslashes.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                    {
+                        "path": "file\\with\\backslashes.txt",
+                        "hash": "h1",
+                        "size": 100,
+                        "mtime": 1000,
+                    },
                 ],
             )
 
-            result = _join_manifest(manifest, "prefix")
+            result = join_manifest(manifest, "prefix")
 
             # The backslash filename should be preserved as-is
             assert result.paths[0].path == "prefix/file\\with\\backslashes.txt"
