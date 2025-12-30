@@ -4,6 +4,60 @@ A manifest is a data structure that captures a directory tree snapshot—similar
 
 This document describes the composable operations design for job attachment manifests in AWS Deadline Cloud. These operations provide a modular approach to creating, transforming, and comparing manifest objects.
 
+## Overview
+
+The manifest system uses composable operations that can be combined to implement various workflows:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        COMPOSABLE OPERATIONS                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. COLLECT: Directory → Manifest (with hash="" for files)              │
+│     _collect_manifest_directory_tree(root, version) → BaseAssetManifest │
+│                                                                         │
+│  2. HASH: Manifest → Manifest (fills in hashes)                         │
+│     _hash_manifest(manifest, root, hash_cache, force_rehash)            │
+│                                                                         │
+│  3. HASH_UPLOAD: Manifest → Manifest (fills in hashes AND uploads)      │
+│     _hash_upload_manifest(manifest, root, s3_bucket, s3_key_prefix,     │
+│                           credentials, ...) → BaseAssetManifest         │
+│                                                                         │
+│  4. FILTER: Manifest → Manifest (keeps matching entries)                │
+│     _filter_manifest(manifest, entry_filter) → BaseAssetManifest        │
+│                                                                         │
+│  5. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
+│     _compute_diff_manifest(parent, current, parent_hash, ignore_hashes) │
+│                                                                         │
+│  6. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
+│     _compose_manifests(manifests) → BaseAssetManifest                   │
+│                                                                         │
+│  7. SUBTREE: (Manifest, subtree_path) → Manifest                        │
+│     _subtree_manifest(manifest, subtree, symlink_policy)                │
+│                                                                         │
+│  8. JOIN: (Manifest, prefix) → Manifest                                 │
+│     _join_manifest(manifest, prefix) → BaseAssetManifest                │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Benefits of Composable Design
+
+1. **Testability:** Each operation can be unit tested independently
+2. **Reusability:** Operations can be composed in different ways for different workflows
+3. **Performance:** Deferred hashing allows skipping unchanged files
+4. **Flexibility:** Custom filters enable advanced filtering beyond glob patterns
+5. **Consistency:** Same filter applied to both sides ensures correct diff computation
+
+### Why Separate COLLECT, HASH, and HASH_UPLOAD?
+
+Separating structure collection, hashing, and hashing+uploading enables:
+
+- **Fast diff comparison:** Compare manifests by mtime/size without hashing unchanged files
+- **Hash cache integration:** Only hash files with cache misses
+- **Deferred hashing:** Collect structure first, hash only what's needed
+- **Reduced redundant reads:** The HASH_UPLOAD operation reads chunks of files to memory, then performs a hash + upload instead of one read for hash and a second read for upload.
+
 ## Path Separator Convention
 
 **All paths in manifests use forward slashes (`/`) as the directory separator, regardless of the host operating system.**
@@ -29,48 +83,6 @@ This convention ensures manifests are portable across platforms:
 
 **Note:** Operations that accept path parameters (SUBTREE, JOIN) normalize backslashes to forward slashes only when running on Windows. On POSIX systems, backslashes are preserved as valid filename characters.
 
-## Overview
-
-The manifest system uses composable operations that can be combined to implement various workflows:
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        COMPOSABLE OPERATIONS                            │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  1. COLLECT: Directory → Manifest (with hash="" for files)              │
-│     _collect_manifest_directory_tree(root, version) → BaseAssetManifest │
-│                                                                         │
-│  2. HASH: Manifest → Manifest (fills in hashes)                         │
-│     _hash_manifest(manifest, root, hash_cache, force_rehash)            │
-│                                                                         │
-│  3. FILTER: Manifest → Manifest (keeps matching entries)                │
-│     _filter_manifest(manifest, entry_filter) → BaseAssetManifest        │
-│                                                                         │
-│  4. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
-│     _compute_diff_manifest(parent, current, parent_hash, ignore_hashes) │
-│                                                                         │
-│  5. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
-│     _compose_manifests(manifests) → BaseAssetManifest                   │
-│                                                                         │
-│  6. SUBTREE: (Manifest, subtree_path) → Manifest                        │
-│     _subtree_manifest(manifest, subtree, symlink_policy)                │
-│                                                                         │
-│  7. JOIN: (Manifest, prefix) → Manifest                                 │
-│     _join_manifest(manifest, prefix) → BaseAssetManifest                │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Why Separate COLLECT and HASH?
-
-Separating structure collection from hashing enables:
-
-- **Fast diff comparison:** Compare manifests by mtime/size without hashing unchanged files
-- **Hash cache integration:** Only hash files with cache misses
-- **Deferred hashing:** Collect structure first, hash only what's needed
-- **Reduced redundant reads:** Can read file to memory, then hash + upload instead of separate reads
-
 ## Module Organization
 
 The composable operations are implemented in separate modules under `src/deadline/job_attachments/asset_manifests/`:
@@ -79,6 +91,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 |--------|-----------|-------------|
 | `_collect_manifest.py` | COLLECT | Scans directory, creates manifest with `hash=""` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
+| `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to S3 in a pipelined manner |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
@@ -277,7 +290,220 @@ Output:
   large file: renders/output.exr (3 chunks)
 ```
 
-### 3. FILTER: `_filter_manifest()`
+### 3. HASH_UPLOAD: `_hash_upload_manifest()`
+
+**Location:** `_hash_upload_manifest.py`
+
+Fills in hashes for a manifest AND uploads file content to S3 in a pipelined manner. This operation combines hashing and uploading into a single pass over the data, avoiding the need to read files twice (once for hashing, once for uploading).
+
+```python
+def _hash_upload_manifest(
+    manifest: BaseAssetManifest,
+    root: Path | str,
+    s3_bucket: str,
+    s3_key_prefix: str,
+    boto3_session: Optional[boto3.Session] = None,
+    hash_cache: Optional[HashCache] = None,
+    s3_check_cache: Optional[S3CheckCache] = None,
+    force_rehash: bool = False,
+    max_memory_bytes: Optional[int] = None,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+    progress_tracker: Optional[ProgressTracker] = None,
+) -> BaseAssetManifest:
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `manifest` | Manifest with empty hashes (from `_collect_manifest_directory_tree`) |
+| `root` | Root directory path (needed to read files) |
+| `s3_bucket` | S3 bucket name for uploads |
+| `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
+| `boto3_session` | Optional boto3 session for AWS credentials |
+| `hash_cache` | Optional hash cache for efficiency |
+| `s3_check_cache` | Optional S3 check cache to skip already-uploaded files |
+| `force_rehash` | If `True`, ignore cache and recalculate all hashes |
+| `max_memory_bytes` | Maximum memory to use for buffering (default: auto-detect from system) |
+| `print_function_callback` | Progress callback for status messages |
+| `progress_tracker` | Optional progress tracker for upload progress |
+
+**Returns:** A NEW manifest with all hashes filled in (same as HASH operation output)
+
+**Pipelined Architecture:**
+
+The operation uses a multi-threaded pipeline with three stages:
+
+```
+┌─────────┐     ┌─────────┐     ┌─────────┐
+│  READ   │────►│  HASH   │────►│ UPLOAD  │
+│ Thread  │     │ Thread  │     │ Thread  │
+└─────────┘     └─────────┘     └─────────┘
+     │               │               │
+     └───────────────┴───────────────┘
+              Memory Pool
+         (bounded by max_memory_bytes)
+```
+
+1. **READ stage:** Reads file chunks (256MB for large files, whole file for small files) from disk into memory buffers
+2. **HASH stage:** Computes XXH128 hash of each chunk in memory
+3. **UPLOAD stage:** Uploads the chunk to S3 using the hash as the object key
+
+**Memory Management:**
+
+The pipeline constrains total memory usage across all stages:
+
+- When `max_memory_bytes` is reached, the READ stage blocks until UPLOAD completes and frees memory
+- Each chunk occupies memory from READ through UPLOAD completion
+
+**Default Memory Limit Calculation:**
+
+When `max_memory_bytes` is not specified, the default is calculated as the maximum of:
+
+| Option | Value | Rationale |
+|--------|-------|-----------|
+| Minimum | 256MB | One chunk must fit; worst case processes one chunk at a time |
+| Quarter of total | `total_memory / 4` | Use a reasonable portion of system resources |
+| Available minus 1GB | `available_memory - 1GB` | When lots of free memory exists (e.g., 60GB), use most of it |
+
+```python
+default_limit = max(256MB, total_memory // 4, available_memory - 1GB)
+```
+
+**Example calculations:**
+
+| System | Total | Available | Quarter | Avail-1GB | Result |
+|--------|-------|-----------|---------|-----------|--------|
+| Low memory | 4GB | 2GB | 1GB | 1GB | 1GB |
+| Typical workstation | 32GB | 20GB | 8GB | 19GB | 19GB |
+| High memory server | 128GB | 100GB | 32GB | 99GB | 99GB |
+| Constrained (busy) | 32GB | 1.5GB | 8GB | 0.5GB | 8GB |
+
+This ensures the pipeline uses as much memory as safely available while maintaining a reasonable lower bound
+
+**Chunk Processing:**
+
+| File Size | Chunk Size | Processing |
+|-----------|------------|------------|
+| ≤256MB | Whole file | Single chunk: read → hash → upload |
+| >256MB | 256MB | Multiple chunks processed sequentially per file |
+
+For large files (>256MB), chunks are processed in order:
+1. Read chunk 0 → Hash chunk 0 → Upload chunk 0
+2. Read chunk 1 → Hash chunk 1 → Upload chunk 1
+3. ... and so on
+
+This ensures that for any single large file, memory usage is bounded to ~256MB per file in the pipeline.
+
+**S3 Key Format:**
+
+Files are uploaded to content-addressable storage with keys:
+```
+{s3_key_prefix}/{hash}.{algorithm}
+```
+
+Example: `Data/a1b2c3d4e5f67890abcdef1234567890.xxh128`
+
+For chunked files, each chunk is uploaded separately:
+```
+Data/{chunk0_hash}.xxh128
+Data/{chunk1_hash}.xxh128
+...
+```
+
+**Cache Integration:**
+
+| Cache | Purpose |
+|-------|---------|
+| `hash_cache` | Skip hashing for files with unchanged mtime |
+| `s3_check_cache` | Skip upload for files already in S3 |
+
+When both caches hit, the file is completely skipped (no read, no hash, no upload).
+
+**Entry Type Handling:**
+
+| Entry Type | Action |
+|------------|--------|
+| Regular file (≤256MB) | Read → Hash → Upload (single chunk) |
+| Large file (>256MB) | Read → Hash → Upload (per 256MB chunk) |
+| Symlink | Pass through unchanged (no upload) |
+| Deleted marker | Pass through unchanged (no upload) |
+| Directory | Pass through unchanged (no upload) |
+
+**Error Handling:**
+
+- If upload fails, the operation raises an exception with details
+- Partial uploads are not cleaned up (S3 content-addressable storage is idempotent)
+- The hash cache is updated even if upload fails (hash is still valid)
+
+**Example:**
+
+```python
+from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
+    _collect_manifest_directory_tree
+)
+from deadline.job_attachments.asset_manifests._operations._hash_upload_manifest import (
+    _hash_upload_manifest
+)
+from deadline.job_attachments.asset_manifests.versions import ManifestVersion
+from deadline.job_attachments.caches.hash_cache import HashCache
+from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
+
+# First collect the directory tree
+unhashed = _collect_manifest_directory_tree(
+    root="/projects/my_scene",
+    version=ManifestVersion.v2025_12_04_beta,
+)
+
+# Hash and upload in a single pipelined pass
+with HashCache("/tmp/hash_cache") as hash_cache:
+    with S3CheckCache("/tmp/s3_cache") as s3_cache:
+        hashed = _hash_upload_manifest(
+            manifest=unhashed,
+            root="/projects/my_scene",
+            s3_bucket="my-job-attachments-bucket",
+            s3_key_prefix="Data",
+            hash_cache=hash_cache,
+            s3_check_cache=s3_cache,
+            max_memory_bytes=1024 * 1024 * 1024,  # 1GB memory limit
+        )
+
+# Now entries have their hashes filled in AND files are uploaded
+for entry in hashed.paths[:2]:
+    if entry.symlink_target:
+        print(f"  symlink: {entry.path} -> {entry.symlink_target}")
+    elif entry.chunkhashes:
+        print(f"  large file: {entry.path} ({len(entry.chunkhashes)} chunks) - uploaded")
+    else:
+        print(f"  file: {entry.path} hash={entry.hash[:16]}... - uploaded")
+```
+
+Output:
+```
+  file: assets/model.blend hash=a1b2c3d4e5f67890... - uploaded
+  large file: renders/output.exr (3 chunks) - uploaded
+```
+
+**Performance Comparison:**
+
+| Approach | Disk Reads | Network Uploads | Memory Peak |
+|----------|------------|-----------------|-------------|
+| HASH then upload | 2× (hash + upload) | 1× | Low |
+| HASH_UPLOAD | 1× | 1× | Bounded by `max_memory_bytes` |
+
+For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
+
+**When to Use HASH vs HASH_UPLOAD:**
+
+| Use Case | Recommended Operation |
+|----------|----------------------|
+| Local manifest creation (no upload) | HASH |
+| Diff computation only | HASH |
+| Job submission with upload | HASH_UPLOAD |
+| Output sync from worker | HASH_UPLOAD |
+| Testing/debugging | HASH (simpler) |
+
+### 4. FILTER: `_filter_manifest()`
 
 **Location:** `_filter_manifest.py`
 
@@ -350,7 +576,7 @@ def python_files_only(entry):
 py_manifest = _filter_manifest(manifest, python_files_only)
 ```
 
-### 4. DIFF: `_compute_diff_manifest()`
+### 5. DIFF: `_compute_diff_manifest()`
 
 **Location:** `_diff_manifest.py`
 
@@ -466,7 +692,7 @@ Diff manifest type: ManifestType.DIFF
 Parent hash: f8e9d0c1b2a34567...
 ```
 
-### 5. COMPOSE: `_compose_manifests()`
+### 6. COMPOSE: `_compose_manifests()`
 
 **Location:** `_compose_manifest.py`
 
@@ -547,7 +773,7 @@ task3_output = decode_manifest(read_file("task3_output.manifest"))
 merged = _compose_manifests([task1_output, task2_output, task3_output])
 ```
 
-### 6. SUBTREE: `_subtree_manifest()`
+### 7. SUBTREE: `_subtree_manifest()`
 
 **Location:** `_subtree_manifest.py`
 
@@ -739,7 +965,7 @@ textures = _subtree_manifest(full_manifest, "assets/textures")
 png_only = _filter_manifest(textures, lambda e: e.path.endswith(".png"))
 ```
 
-### 7. JOIN: `_join_manifest()`
+### 8. JOIN: `_join_manifest()`
 
 **Location:** `_join_manifest.py`
 
@@ -984,11 +1210,3 @@ A directory deletion marker means "delete this empty directory". To delete a non
 - Finally, the directory itself
 
 This explicit deletion requirement ensures that diff manifests are fully composable—each deletion is self-contained and doesn't depend on knowing the parent snapshot's contents.
-
-## Benefits of Composable Design
-
-1. **Testability:** Each operation can be unit tested independently
-2. **Reusability:** Operations can be composed in different ways for different workflows
-3. **Performance:** Deferred hashing allows skipping unchanged files
-4. **Flexibility:** Custom filters enable advanced filtering beyond glob patterns
-5. **Consistency:** Same filter applied to both sides ensures correct diff computation
