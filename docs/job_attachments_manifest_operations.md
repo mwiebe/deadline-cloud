@@ -6,49 +6,73 @@ This document describes the composable operations design for job attachment mani
 
 ## Overview
 
-The manifest system uses composable operations that can be combined to implement various workflows:
+The manifest system uses composable operations that can be combined to implement various workflows.
+
+Here are the manifest types used by these operations:
+
+| Type | Description |
+|------|-------------|
+| Manifest | Any of the following manifest types |
+| Snapshot | A snapshot manifest with either absolute or relative paths |
+| Diff | A diff manifest with either absolute or relative paths |
+| AbsSnapshot | A snapshot manifest with absolute paths |
+| AbsDiff | A diff manifest with absolute paths |
+| RelSnapshot | A snapshot manifest with relative paths |
+| RelDiff | A diff manifest with relative paths |
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                        COMPOSABLE OPERATIONS                            │
+│                   COMPOSABLE MANIFEST OPERATIONS                        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  1. COLLECT: Directory → Manifest (relative paths, hash="" for files)   │
-│     collect_manifest(root, version, ...) → BaseAssetManifest            │
+│  1. COLLECT: Directory → RelSnapshot                                    │
+│         Scans a directory tree, collecting files, directories, and      │
+│         symlinks into a snapshot with relative paths. No hashing.       │
 │                                                                         │
-│  2. COLLECT_ABS: Paths → Manifest (absolute paths, hash="" for files)   │
-│     collect_abs_manifest(directories, required_filenames, ...) →        │
-│                           BaseAssetManifest                             │
+│  2. COLLECT_ABS: Paths → AbsSnapshot                                    │
+│         Collects from lists of directories and filenames into a         │
+│         snapshot with absolute paths. No hashing.                       │
 │                                                                         │
-│  3. HASH: Manifest → Manifest (fills in hashes)                         │
-│     hash_manifest(manifest, root, hash_cache, force_rehash)             │
+│  3. HASH: Manifest → Manifest                                           │
+│         Computes hashes for all files in the manifest.                  │
 │                                                                         │
-│  4. HASH_UPLOAD: Manifest → Manifest (fills in hashes AND uploads)      │
-│     hash_upload_manifest(manifest, root, s3_bucket, s3_key_prefix,      │
-│                           credentials, ...) → BaseAssetManifest         │
+│  4. HASH_UPLOAD: Manifest → Manifest                                    │
+│         Pipelines read/hash/upload for all files, returning a           │
+│         manifest with hashes populated.                                 │
 │                                                                         │
-│  5. FILTER: Manifest → Manifest (keeps matching entries)                │
-│     filter_manifest(manifest, entry_filter) → BaseAssetManifest         │
+│  5. FILTER: Manifest → Manifest                                         │
+│         Applies a filter to entries, returning only accepted ones.      │
 │                                                                         │
-│  6. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
-│     compute_diff_manifest(parent, current, parent_hash, ignore_hashes)  │
+│  6. DIFF: (Snapshot, Snapshot) → Diff                                   │
+│         Compares two snapshots, returning a diff of the changes.        │
 │                                                                         │
-│  7. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
-│     compose_manifests(manifests) → BaseAssetManifest                    │
+│  7. COMPOSE: (Snapshot, Diff, ...) → Snapshot                           │
+│     COMPOSE: (Diff, Diff, ...) → Diff                                   │
+│         Layers diffs together, optionally onto a snapshot base,         │
+│         as if applied sequentially to a filesystem.                     │
 │                                                                         │
-│  8. SUBTREE: (Manifest, subtree_path) → Manifest                        │
-│     subtree_manifest(manifest, subtree, symlink_policy)                 │
+│  8. SUBTREE: (Snapshot, subtree_path) → RelSnapshot                     │
+│         Extracts a subtree, returning a snapshot with relative paths.   │
 │                                                                         │
-│  9. JOIN: (Manifest, prefix) → Manifest                                 │
-│     join_manifest(manifest, prefix) → BaseAssetManifest                 │
+│  9. JOIN: (RelSnapshot, abs_prefix) → AbsSnapshot                       │
+│     JOIN: (RelSnapshot, rel_prefix) → RelSnapshot                       │
+│         Prepends a prefix to all paths.                                 │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Use Cases
 
-1. When preparing a job to submit to a render farm, collect all the input asset files the
-   job depends on into one or more manifests that you can attach to a job.
+1. When submitting a job to a cloud render farm, collect all the input asset files the
+   job depends on into one or more manifests attached to the job.
+    1. Use COLLECT_ABS, providing directories and individual filenames to collect.
+       Either set the manifest_policy to TRANSITIVE_INCLUDE_TARGETS to ensure all
+       symlink targets are included, or later use COLLAPSE_ESCAPING when splitting
+       into subtrees.
+    2. Use PARTITION to divide up the absolute_manifest into a collection of
+       (root_path, relative_manifest) pairs. Set the manifest_policy to PRESERVE
+       if you transitively included targets, otherwise use COLLAPSE_ESCAPING to convert
+       escaping symlinks into files or directory trees.
 
 ### Benefits of Composable Design
 
