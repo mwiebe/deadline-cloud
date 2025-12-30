@@ -117,9 +117,14 @@ def _subtree_manifest(
 
 
 def _normalize_subtree_path(subtree: str) -> str:
-    """Normalize the subtree path, removing trailing slashes and normalizing separators."""
-    # Convert backslashes to forward slashes
-    subtree = subtree.replace("\\", "/")
+    """Normalize the subtree path, removing trailing slashes and normalizing separators.
+
+    On Windows, backslashes are converted to forward slashes (they are directory separators).
+    On POSIX, backslashes are preserved (they are valid filename characters).
+    """
+    # Only convert backslashes to forward slashes on Windows
+    if os.name == "nt":
+        subtree = subtree.replace("\\", "/")
     # Normalize path components (collapse .., ., etc.)
     subtree = posixpath.normpath(subtree)
     # Remove trailing slash

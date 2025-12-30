@@ -4,6 +4,31 @@ A manifest is a data structure that captures a directory tree snapshot—similar
 
 This document describes the composable operations design for job attachment manifests in AWS Deadline Cloud. These operations provide a modular approach to creating, transforming, and comparing manifest objects.
 
+## Path Separator Convention
+
+**All paths in manifests use forward slashes (`/`) as the directory separator, regardless of the host operating system.**
+
+This convention ensures manifests are portable across platforms:
+
+| Platform | Filesystem Separator | Manifest Separator |
+|----------|---------------------|-------------------|
+| Windows | `\` (backslash) | `/` (forward slash) |
+| POSIX (Linux, macOS) | `/` (forward slash) | `/` (forward slash) |
+
+**Important platform differences:**
+
+- **On Windows:** The backslash (`\`) is a directory separator. When collecting paths from the filesystem, backslashes are converted to forward slashes for storage in the manifest.
+- **On POSIX:** The backslash (`\`) is a valid character in file and directory names (though rarely used). It is NOT treated as a directory separator. A file named `foo\bar.txt` on POSIX is a single filename containing a backslash, not a file `bar.txt` in directory `foo`.
+
+**Implementation requirements:**
+
+1. **COLLECT operation:** When scanning the filesystem on Windows, use `Path.as_posix()` to convert paths to forward slashes. On POSIX, paths already use forward slashes.
+2. **SUBTREE operation:** The `_normalize_subtree_path()` function converts backslashes to forward slashes in the subtree parameter only when running on Windows.
+3. **JOIN operation:** The `_normalize_prefix()` function converts backslashes to forward slashes in the prefix parameter only when running on Windows.
+4. **All operations:** Path comparisons and manipulations use forward slashes consistently.
+
+**Note:** Operations that accept path parameters (SUBTREE, JOIN) normalize backslashes to forward slashes only when running on Windows. On POSIX systems, backslashes are preserved as valid filename characters.
+
 ## Overview
 
 The manifest system uses composable operations that can be combined to implement various workflows:

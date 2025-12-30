@@ -17,6 +17,7 @@ Key behaviors:
 
 from __future__ import annotations
 
+import os
 import posixpath
 from typing import Any, Callable, List
 
@@ -88,9 +89,14 @@ def _join_manifest(
 
 
 def _normalize_prefix(prefix: str) -> str:
-    """Normalize the prefix path, removing trailing slashes and normalizing separators."""
-    # Convert backslashes to forward slashes
-    prefix = prefix.replace("\\", "/")
+    """Normalize the prefix path, removing trailing slashes and normalizing separators.
+
+    On Windows, backslashes are converted to forward slashes (they are directory separators).
+    On POSIX, backslashes are preserved (they are valid filename characters).
+    """
+    # Only convert backslashes to forward slashes on Windows
+    if os.name == "nt":
+        prefix = prefix.replace("\\", "/")
     # Remove trailing slash (but preserve leading slash for absolute paths)
     prefix = prefix.rstrip("/")
     return prefix

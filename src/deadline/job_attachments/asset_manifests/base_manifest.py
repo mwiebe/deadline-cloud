@@ -18,17 +18,19 @@ from ..exceptions import ManifestDecodeValidationError
 
 def _normalize_path_in_manifest(path: str) -> str:
     """
-    Normalize symlink target path to POSIX format.
+    Normalize path in manifest to POSIX format.
 
-    - Converts Windows backslashes to forward slashes
-    - Collapses '..' and '.' components using posixpath.normpath
+    On Windows, backslashes are converted to forward slashes (they are directory separators).
+    On POSIX, backslashes are preserved (they are valid filename characters).
+
+    Also collapses '..' and '.' components using posixpath.normpath.
     """
-    # Convert Windows path separators to POSIX
+    # Only convert Windows path separators to POSIX on Windows
     if os.name == "nt":
-        normalized = path.replace("\\", "/")
+        path = path.replace("\\", "/")
 
     # Normalize the path (collapse .., ., etc.)
-    normalized = posixpath.normpath(normalized)
+    normalized = posixpath.normpath(path)
 
     return normalized
 

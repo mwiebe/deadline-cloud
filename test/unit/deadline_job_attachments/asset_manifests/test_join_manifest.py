@@ -376,3 +376,101 @@ class TestJoinManifestWindowsPaths:
 
         # Backslashes should be converted to forward slashes
         assert result.paths[0].path == "C:/projects/scene/wood.png"
+
+
+class TestPathSeparatorHandling:
+    """Tests for path separator handling across platforms.
+
+    These tests verify that:
+    - On Windows: backslashes in prefix are converted to forward slashes
+    - On POSIX: backslashes are preserved as valid filename characters
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=0,
+        )
+
+    def test_normalize_prefix_converts_backslashes_on_windows(self) -> None:
+        """On Windows, backslashes in prefix are converted to forward slashes."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"):
+            result = _normalize_prefix("C:\\projects\\scene")
+            # On Windows, backslashes should be converted to forward slashes
+            assert result == "C:/projects/scene"
+
+    def test_normalize_prefix_preserves_backslashes_on_posix(self) -> None:
+        """On POSIX, backslashes in prefix are preserved as valid filename characters."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"):
+            # On POSIX, a backslash is a valid filename character
+            # "dir\\name" is a single directory name containing a backslash
+            result = _normalize_prefix("dir\\name")
+            # On POSIX, backslashes should NOT be converted - they're valid filename chars
+            assert result == "dir\\name"
+
+    def test_join_with_backslash_prefix_on_windows(self) -> None:
+        """On Windows, backslashes in prefix are normalized to forward slashes."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), \
+             patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"):
+            manifest = self._create_v2025_manifest(
+                files=[
+                    {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                ],
+            )
+
+            result = _join_manifest(manifest, "C:\\projects\\scene")
+
+            assert result.paths[0].path == "C:/projects/scene/wood.png"
+
+    def test_join_with_backslash_prefix_on_posix(self) -> None:
+        """On POSIX, backslashes in prefix are preserved as valid directory name characters."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"), \
+             patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"):
+            manifest = self._create_v2025_manifest(
+                files=[
+                    {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                ],
+            )
+
+            # On POSIX, "dir\\name" is a single directory name containing a backslash
+            result = _join_manifest(manifest, "dir\\name")
+
+            # The backslash should be preserved - it's part of the directory name
+            assert result.paths[0].path == "dir\\name/wood.png"
+
+    def test_join_preserves_backslash_filenames_on_posix(self) -> None:
+        """On POSIX, files with backslashes in names are handled correctly."""
+        from unittest.mock import patch
+
+        # Patch os.name in base_manifest for manifest creation
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"), \
+             patch("deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"):
+            # Create a manifest with a file that has a backslash in its name (valid on POSIX)
+            manifest = self._create_v2025_manifest(
+                files=[
+                    # A file named "file\with\backslashes.txt" (single filename with backslashes)
+                    {"path": "file\\with\\backslashes.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                ],
+            )
+
+            result = _join_manifest(manifest, "prefix")
+
+            # The backslash filename should be preserved as-is
+            assert result.paths[0].path == "prefix/file\\with\\backslashes.txt"

@@ -773,3 +773,101 @@ class TestSubtreeManifestDirectorySymlinks:
         paths_by_name = {p.path: p for p in result.paths}
         assert paths_by_name["link/nested_dir_link/a.png"].hash == "h2"
         assert paths_by_name["link/nested_dir_link/b.png"].hash == "h3"
+
+
+class TestPathSeparatorHandling:
+    """Tests for path separator handling across platforms.
+
+    These tests verify that:
+    - On Windows: backslashes in input paths are converted to forward slashes
+    - On POSIX: backslashes are preserved as valid filename characters
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_normalize_subtree_path_converts_backslashes_on_windows(self) -> None:
+        """On Windows, backslashes in subtree path are converted to forward slashes."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"):
+            result = _normalize_subtree_path("assets\\textures\\wood")
+            # On Windows, backslashes should be converted to forward slashes
+            assert result == "assets/textures/wood"
+
+    def test_normalize_subtree_path_preserves_backslashes_on_posix(self) -> None:
+        """On POSIX, backslashes in subtree path are preserved as valid filename characters."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "posix"):
+            # On POSIX, a backslash is a valid filename character
+            # "assets\\textures" is a single directory name containing a backslash
+            result = _normalize_subtree_path("assets\\textures")
+            # On POSIX, backslashes should NOT be converted - they're valid filename chars
+            assert result == "assets\\textures"
+
+    def test_subtree_with_backslash_filename_on_posix(self) -> None:
+        """On POSIX, files with backslashes in names are handled correctly."""
+        from unittest.mock import patch
+
+        # Patch os.name in both modules - base_manifest (for manifest creation)
+        # and _subtree_manifest (for subtree operation)
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"), \
+             patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "posix"):
+            # Create a manifest with a file that has a backslash in its name (valid on POSIX)
+            manifest = self._create_v2025_manifest(
+                files=[
+                    # A file named "file\with\backslashes.txt" (single filename with backslashes)
+                    {
+                        "path": "assets/file\\with\\backslashes.txt",
+                        "hash": "h1",
+                        "size": 100,
+                        "mtime": 1000,
+                    },
+                    {"path": "assets/normal.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                ],
+                dirs=[{"path": "assets"}],
+            )
+
+            result = _subtree_manifest(manifest, "assets")
+
+            paths = {p.path for p in result.paths}
+            # The backslash filename should be preserved as-is
+            assert "file\\with\\backslashes.txt" in paths
+            assert "normal.txt" in paths
+
+    def test_subtree_with_backslash_in_subtree_param_on_windows(self) -> None:
+        """On Windows, backslashes in subtree parameter are normalized."""
+        from unittest.mock import patch
+
+        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), \
+             patch("deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"):
+            manifest = self._create_v2025_manifest(
+                files=[
+                    {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                ],
+                dirs=[{"path": "assets"}, {"path": "assets/textures"}],
+            )
+
+            # On Windows, user might pass "assets\\textures" which should work
+            result = _subtree_manifest(manifest, "assets\\textures")
+
+            paths = {p.path for p in result.paths}
+            assert "wood.png" in paths
