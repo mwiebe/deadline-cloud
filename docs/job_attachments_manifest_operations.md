@@ -73,7 +73,8 @@ Here are the manifest types used by these operations:
        symlink targets are included, or later use COLLAPSE_ESCAPING when splitting
        into subtrees.
     2. Use PARTITION to divide up the absolute_manifest into a collection of
-       (root_path, relative_manifest) pairs.
+       (root_path, relative_manifest) pairs. This is the input format needed by
+       the Deadline Cloud CreateJob API.
 
 ### Benefits of Composable Design
 

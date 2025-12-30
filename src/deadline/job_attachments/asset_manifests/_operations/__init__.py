@@ -7,6 +7,7 @@ from ._filter_manifest import filter_manifest
 from ._diff_manifest import compute_diff_manifest
 from ._compose_manifest import compose_manifests
 from ._subtree_manifest import subtree_manifest
+from ._partition_manifest import partition_manifest
 from ._join_manifest import join_manifest
 
 __all__ = [
@@ -18,5 +19,6 @@ __all__ = [
     "compute_diff_manifest",
     "compose_manifests",
     "subtree_manifest",
+    "partition_manifest",
     "join_manifest",
 ]
