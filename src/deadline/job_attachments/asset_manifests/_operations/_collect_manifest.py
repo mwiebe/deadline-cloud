@@ -3,14 +3,16 @@
 """
 Module for collecting directory structure into manifest objects WITHOUT computing hashes.
 
-This module implements the COLLECT operation from the composable manifest operations design:
-    COLLECT: Directory → Manifest (with hash="" for files)
+This module implements the COLLECT operations from the composable manifest operations design:
+    COLLECT: Directory → Manifest (with hash="" for files, relative paths)
+    COLLECT_ABS: Paths → Manifest (with hash="" for files, absolute paths)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
 - Hash cache integration - only hash files with cache misses
 - Deferred hashing - collect structure first, hash only what's needed
-- Remove redundant reads - Can read file to memory, then hash + upload instead of separate reads for hash and upload.
+- Remove redundant reads - Can read file to memory, then hash + upload instead of
+  separate reads for hash and upload.
 """
 
 from __future__ import annotations
@@ -36,68 +38,44 @@ from ..v2025_12_04.asset_manifest import (
 
 def _collect_manifest(
     *,
+    root: Path | str,
     version: ManifestVersion,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
-    root: Optional[Path | str] = None,
-    absolute_paths: bool = False,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    required_filenames: Optional[List[Path | str]] = None,
-    optional_filenames: Optional[List[Path | str]] = None,
-    directories: Optional[List[Path | str]] = None,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> BaseAssetManifest:
     """
-    Collect files and directories into a manifest WITHOUT hashes.
+    Collect a single directory tree into a manifest with relative paths.
 
     This function:
-    1. Collects specified files, symlinks, and directories
-    2. Captures metadata (mtime, size, permissions)
-    3. Sets hash="" (empty string) for all file entries
-    4. Returns a manifest ready for hashing
-
-    There are two modes of operation:
-
-    1. **Explicit input mode**: When any of `required_filenames`, `optional_filenames`,
-       or `directories` are provided, those fully characterize the input dataset.
-
-    2. **Directory tree mode**: When none of the explicit input parameters are provided,
-       `root` is required and the entire directory tree under `root` is collected
-       (equivalent to `directories=[root]`).
+    1. Walks the directory tree at `root`
+    2. Collects files, symlinks, and directories (version-dependent)
+    3. Captures metadata (mtime, size, permissions)
+    4. Sets hash="" (empty string) for all file entries
+    5. Returns a manifest with paths relative to `root`
 
     Args:
+        root: Root directory path. The entire directory tree under this path
+            is collected, and all manifest paths are relative to this root.
         version: Manifest version to create (determines features)
-        print_function_callback: Progress callback
-        root: Root directory path. Required when `absolute_paths=False` (to form
-            relative paths). When provided, all paths in `required_filenames`,
-            `optional_filenames`, and `directories` must be sub-paths of `root`.
-        absolute_paths: If True, store absolute paths in manifest entries instead
-            of paths relative to root. Useful for intermediate in-memory processing.
-            Default False produces standard relative paths for on-disk storage.
-            When True, `root` is optional.
         symlink_policy: How to handle symlinks during collection:
-            - COLLAPSE: Follow all symlinks, treating them as files/directories.
             - COLLAPSE_ESCAPING: Follow only symlinks that escape root; preserve others.
               (v2025 only)
-            - PRESERVE: Keep all symlinks (requires absolute_paths=True). (v2025 only)
-            - TRANSITIVE_INCLUDE_TARGETS: Keep symlinks and add their targets
-              (requires absolute_paths=True). (v2025 only)
+            - COLLAPSE: Follow all symlinks, treating them as files/directories.
             - EXCLUDE: Skip all symlinks entirely.
-        required_filenames: List of file/symlink paths that must exist. Raises an
-            exception if any file from this list does not exist on the filesystem.
-        optional_filenames: List of file/symlink paths to include if they exist.
-            Missing files are silently ignored.
-        directories: List of directory paths whose full contents are collected.
-            Empty directories are included in the manifest (v2025 only).
+            - PRESERVE: Not supported (see _collect_abs_manifest).
+            - TRANSITIVE_INCLUDE_TARGETS: Not supported (see _collect_abs_manifest).
+        print_function_callback: Progress callback
 
     Returns:
-        A manifest with all entries but hash="" for files
+        A manifest with relative paths and hash="" for files
 
     Raises:
-        ValueError: If `absolute_paths=False` and `root` is not provided.
-        ValueError: If symlink_policy requires absolute_paths=True but it's False.
-        ValueError: If v2023 version is used with symlink_policy other than COLLAPSE or EXCLUDE.
-        ValueError: If any path in `required_filenames`, `optional_filenames`, or
-            `directories` is not a sub-path of `root` (when `root` is provided).
-        FileNotFoundError: If any file in `required_filenames` does not exist.
+        ValueError: If symlink_policy is PRESERVE or TRANSITIVE_INCLUDE_TARGETS
+            (these require absolute paths, use _collect_abs_manifest instead).
+        ValueError: If v2023 version is used with symlink_policy other than
+            COLLAPSE or EXCLUDE.
+        FileNotFoundError: If root does not exist.
+        ValueError: If root is not a directory.
 
     Note:
         - For v2023-03-03: Only COLLAPSE and EXCLUDE policies are supported.
@@ -107,107 +85,153 @@ def _collect_manifest(
         - Symlinks have symlink_target set (no hash needed)
         - Use _hash_manifest() to fill in file hashes
     """
-    # Determine if we're in explicit input mode or directory tree mode
-    has_explicit_inputs = (
-        required_filenames is not None
-        or optional_filenames is not None
-        or directories is not None
-    )
-
-    # Validate root requirement
-    if not absolute_paths and root is None:
-        raise ValueError(
-            "root is required when absolute_paths=False because relative paths "
-            "need a root directory as the basis for forming paths within the manifest."
-        )
-
-    # In directory tree mode (no explicit inputs), root is required
-    if not has_explicit_inputs and root is None:
-        raise ValueError(
-            "root is required when none of required_filenames, optional_filenames, "
-            "or directories are provided."
-        )
-
-    # Validate symlink_policy constraints
+    # Validate symlink_policy - PRESERVE and TRANSITIVE_INCLUDE_TARGETS require absolute paths
     if symlink_policy in (SymlinkPolicy.PRESERVE, SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS):
-        if not absolute_paths:
-            raise ValueError(
-                f"symlink_policy={symlink_policy.value} requires absolute_paths=True "
-                "because escaping symlinks cannot be represented with relative paths."
-            )
+        raise ValueError(
+            f"symlink_policy={symlink_policy.value} requires absolute paths. "
+            "Use _collect_abs_manifest() instead."
+        )
 
-    # Normalize root path if provided
-    root_path: Optional[Path] = None
-    if root is not None:
-        root_path = Path(os.path.normpath(os.path.abspath(root)))
-
-    # Validate and normalize explicit input paths
-    validated_required: List[Path] = []
-    validated_optional: List[Path] = []
-    validated_directories: List[Path] = []
-
-    if required_filenames:
-        for p in required_filenames:
-            abs_path = Path(os.path.normpath(os.path.abspath(p)))
-            if root_path is not None:
-                _validate_subpath(abs_path, root_path, "required_filenames")
-            if not abs_path.exists():
-                raise FileNotFoundError(
-                    f"Required file does not exist: {abs_path}"
-                )
-            if not abs_path.is_file() and not abs_path.is_symlink():
-                raise ValueError(
-                    f"Required path is not a file or symlink: {abs_path}"
-                )
-            validated_required.append(abs_path)
-
-    if optional_filenames:
-        for p in optional_filenames:
-            abs_path = Path(os.path.normpath(os.path.abspath(p)))
-            if root_path is not None:
-                _validate_subpath(abs_path, root_path, "optional_filenames")
-            # Only add if it exists and is a file/symlink
-            if abs_path.exists() and (abs_path.is_file() or abs_path.is_symlink()):
-                validated_optional.append(abs_path)
-
-    if directories:
-        for p in directories:
-            abs_path = Path(os.path.normpath(os.path.abspath(p)))
-            if root_path is not None:
-                _validate_subpath(abs_path, root_path, "directories")
-            if not abs_path.exists():
-                raise FileNotFoundError(
-                    f"Directory does not exist: {abs_path}"
-                )
-            if not abs_path.is_dir():
-                raise ValueError(
-                    f"Path is not a directory: {abs_path}"
-                )
-            validated_directories.append(abs_path)
-
-    # In directory tree mode, use root as the single directory
-    if not has_explicit_inputs:
-        assert root_path is not None  # Already validated above
-        validated_directories = [root_path]
+    # Normalize and validate root path
+    root_path = Path(os.path.normpath(os.path.abspath(root)))
+    if not root_path.exists():
+        raise FileNotFoundError(f"Root directory does not exist: {root_path}")
+    if not root_path.is_dir():
+        raise ValueError(f"Root path is not a directory: {root_path}")
 
     # Dispatch to version-specific implementation
     if version == ManifestVersion.v2023_03_03:
         return _collect_manifest_v2023(
             root_path=root_path,
             print_function_callback=print_function_callback,
-            absolute_paths=absolute_paths,
+            absolute_paths=False,
             symlink_policy=symlink_policy,
-            required_filenames=validated_required,
-            optional_filenames=validated_optional,
-            directories=validated_directories,
+            filenames=[],
+            optional_filenames=[],
+            directories=[root_path],
         )
     elif version == ManifestVersion.v2025_12_04_beta:
         return _collect_manifest_v2025(
             root_path=root_path,
             print_function_callback=print_function_callback,
-            absolute_paths=absolute_paths,
+            absolute_paths=False,
             symlink_policy=symlink_policy,
-            required_filenames=validated_required,
+            filenames=[],
+            optional_filenames=[],
+            directories=[root_path],
+        )
+    else:
+        raise ValueError(f"Unsupported manifest version: {version}")
+
+
+def _collect_abs_manifest(
+    directories: List[Path | str],
+    filenames: List[Path | str],
+    *,
+    optional_filenames: Optional[List[Path | str]] = None,
+    version: ManifestVersion,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+) -> BaseAssetManifest:
+    """
+    Collect provided lists of paths into a manifest with absolute paths.
+
+    This function:
+    1. Collects the specified directories and filenames
+    2. Captures metadata (mtime, size, permissions)
+    3. Sets hash="" (empty string) for all file entries
+    4. Returns a manifest with absolute paths
+
+    Args:
+        directories: List of directory paths whose full contents are collected.
+            All paths must exist and be directories. Empty directories are
+            included in the manifest (v2025 only).
+        filenames: List of file/symlink paths that must exist. Raises an
+            exception if any file from this list does not exist on the filesystem.
+        optional_filenames: List of file/symlink paths to include if they exist.
+            Missing files are silently ignored.
+        version: Manifest version to create (determines features)
+        symlink_policy: How to handle symlinks during collection:
+            - COLLAPSE: Follow all symlinks, treating them as files/directories.
+            - PRESERVE: Keep all symlinks with absolute targets. (v2025 only, default)
+            - TRANSITIVE_INCLUDE_TARGETS: Keep symlinks and add their targets. (v2025 only)
+            - EXCLUDE: Skip all symlinks entirely.
+            Note: COLLAPSE_ESCAPING is not supported (no root to escape from).
+        print_function_callback: Progress callback
+
+    Returns:
+        A manifest with absolute paths and hash="" for files
+
+    Raises:
+        ValueError: If symlink_policy is COLLAPSE_ESCAPING (not supported without root).
+        ValueError: If v2023 version is used with symlink_policy other than
+            COLLAPSE or EXCLUDE.
+        FileNotFoundError: If any directory does not exist.
+        FileNotFoundError: If any file in filenames does not exist.
+        ValueError: If any path in directories is not a directory.
+        ValueError: If any path in filenames is not a file or symlink.
+
+    Note:
+        - For v2023-03-03: Only COLLAPSE and EXCLUDE policies are supported.
+        - For v2025-12-04-beta: COLLAPSE, PRESERVE, TRANSITIVE_INCLUDE_TARGETS,
+          and EXCLUDE are supported.
+        - Use _hash_manifest() to fill in file hashes
+    """
+
+    # COLLAPSE_ESCAPING requires a root path to determine what "escaping" means
+    if symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
+        raise ValueError(
+            "symlink_policy=COLLAPSE_ESCAPING is not supported by _collect_abs_manifest() "
+            "because there is no root path to escape from. Use COLLAPSE, PRESERVE, "
+            "TRANSITIVE_INCLUDE_TARGETS, or EXCLUDE instead."
+        )
+
+    # Validate and normalize input paths
+    validated_directories: List[Path] = []
+    validated_filenames: List[Path] = []
+    validated_optional: List[Path] = []
+
+    for p in directories:
+        abs_path = Path(os.path.normpath(os.path.abspath(p)))
+        if not abs_path.exists():
+            raise FileNotFoundError(f"Directory does not exist: {abs_path}")
+        if not abs_path.is_dir():
+            raise ValueError(f"Path is not a directory: {abs_path}")
+        validated_directories.append(abs_path)
+
+    for p in filenames:
+        abs_path = Path(os.path.normpath(os.path.abspath(p)))
+        if not abs_path.exists():
+            raise FileNotFoundError(f"File does not exist: {abs_path}")
+        if not abs_path.is_file() and not abs_path.is_symlink():
+            raise ValueError(f"Path is not a file or symlink: {abs_path}")
+        validated_filenames.append(abs_path)
+
+    if optional_filenames:
+        for p in optional_filenames:
+            abs_path = Path(os.path.normpath(os.path.abspath(p)))
+            # Only add if it exists and is a file/symlink
+            if abs_path.exists() and (abs_path.is_file() or abs_path.is_symlink()):
+                validated_optional.append(abs_path)
+
+    # Dispatch to version-specific implementation
+    if version == ManifestVersion.v2023_03_03:
+        return _collect_manifest_v2023(
+            root_path=None,
+            print_function_callback=print_function_callback,
+            absolute_paths=True,
+            symlink_policy=symlink_policy,
+            filenames=validated_filenames,
+            optional_filenames=validated_optional,
+            directories=validated_directories,
+        )
+    elif version == ManifestVersion.v2025_12_04_beta:
+        return _collect_manifest_v2025(
+            root_path=None,
+            print_function_callback=print_function_callback,
+            absolute_paths=True,
+            symlink_policy=symlink_policy,
+            filenames=validated_filenames,
             optional_filenames=validated_optional,
             directories=validated_directories,
         )
@@ -215,24 +239,9 @@ def _collect_manifest(
         raise ValueError(f"Unsupported manifest version: {version}")
 
 
-def _validate_subpath(path: Path, root: Path, param_name: str) -> None:
-    """
-    Validate that a path is a sub-path of root.
-
-    Args:
-        path: The path to validate (must be absolute and normalized)
-        root: The root path (must be absolute and normalized)
-        param_name: Name of the parameter for error messages
-
-    Raises:
-        ValueError: If path is not a sub-path of root
-    """
-    try:
-        path.relative_to(root)
-    except ValueError:
-        raise ValueError(
-            f"Path in {param_name} is not a sub-path of root: {path} is not under {root}"
-        )
+# =============================================================================
+# Internal implementation functions
+# =============================================================================
 
 
 def _collect_manifest_v2023(
@@ -241,7 +250,7 @@ def _collect_manifest_v2023(
     *,
     absolute_paths: bool = False,
     symlink_policy: SymlinkPolicy,
-    required_filenames: List[Path],
+    filenames: List[Path],
     optional_filenames: List[Path],
     directories: List[Path],
 ) -> AssetManifest2023:
@@ -264,7 +273,7 @@ def _collect_manifest_v2023(
         print_function_callback: Progress callback
         absolute_paths: If True, store absolute paths
         symlink_policy: Required. Must be COLLAPSE or EXCLUDE.
-        required_filenames: List of required file paths (already validated)
+        filenames: List of required file paths (already validated)
         optional_filenames: List of optional file paths (already validated/filtered)
         directories: List of directory paths to walk (already validated)
 
@@ -341,7 +350,7 @@ def _collect_manifest_v2023(
         print_function_callback(f"Collected: {entry_path}")
 
     # Collect required and optional files
-    for full_path in required_filenames:
+    for full_path in filenames:
         collect_file(full_path)
 
     for full_path in optional_filenames:
@@ -349,8 +358,8 @@ def _collect_manifest_v2023(
 
     # Walk directories
     for dir_path in directories:
-        for dirpath, _, filenames in os.walk(dir_path, followlinks=followlinks):
-            for name in filenames:
+        for dirpath, _, walk_filenames in os.walk(dir_path, followlinks=followlinks):
+            for name in walk_filenames:
                 full_path = Path(dirpath) / name
 
                 # Handle symlinks according to policy
@@ -387,7 +396,7 @@ def _collect_manifest_v2023(
             if entry.path not in collected_paths:
                 file_entries.append(entry)
                 collected_paths.add(entry.path)
-                total_size += entry.size
+                total_size += entry.size or 0
 
     return AssetManifest2023(
         hash_alg=HashAlgorithm.XXH128,
@@ -445,7 +454,7 @@ def _collect_dir_symlink_v2023(
                 manifest_file_rel = f"{symlink_rel_path}/{rel_within_target.as_posix()}/{name}"
 
             if absolute_paths:
-                assert root_path is not None  # For absolute_paths with symlink, we need root to build path
+                assert root_path is not None  # For absolute_paths with symlink, we need root
                 entry_path = (root_path / manifest_file_rel).as_posix()
             else:
                 entry_path = manifest_file_rel
@@ -479,7 +488,7 @@ def _collect_manifest_v2025(
     *,
     absolute_paths: bool = False,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    required_filenames: List[Path],
+    filenames: List[Path],
     optional_filenames: List[Path],
     directories: List[Path],
 ) -> AssetManifest2025:
@@ -501,7 +510,7 @@ def _collect_manifest_v2025(
         print_function_callback: Progress callback
         absolute_paths: If True, store absolute paths
         symlink_policy: How to handle symlinks during collection
-        required_filenames: List of required file paths (already validated)
+        filenames: List of required file paths (already validated)
         optional_filenames: List of optional file paths (already validated/filtered)
         directories: List of directory paths to walk (already validated)
     """
@@ -583,7 +592,7 @@ def _collect_manifest_v2025(
                 print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
 
     # Collect required and optional files
-    for full_path in required_filenames:
+    for full_path in filenames:
         collect_file(full_path)
 
     for full_path in optional_filenames:
@@ -591,7 +600,7 @@ def _collect_manifest_v2025(
 
     # Walk directories
     for dir_to_walk in directories:
-        for dirpath, dirnames, filenames in os.walk(dir_to_walk, followlinks=followlinks):
+        for dirpath, dirnames, walk_filenames in os.walk(dir_to_walk, followlinks=followlinks):
             current_dir = Path(dirpath)
 
             # Record directory (except the directory itself if it's the only one and equals root)
@@ -659,7 +668,7 @@ def _collect_manifest_v2025(
                         dirnames.remove(name)
 
             # Process files
-            for name in filenames:
+            for name in walk_filenames:
                 full_path = Path(dirpath) / name
                 stat_info = full_path.stat(follow_symlinks=False)
                 if absolute_paths:
@@ -770,6 +779,11 @@ def _collect_manifest_v2025(
     )
 
 
+# =============================================================================
+# Helper functions
+# =============================================================================
+
+
 def _create_unhashed_file_entry(
     full_path: Path,
     rel_path: str,
@@ -810,7 +824,7 @@ def _create_unhashed_file_entry(
 
 
 def _remove_longpath_prefix(path: Path) -> Path:
-    """Returns a copy with '\\?\' longpath prefix removed if the path has it."""
+    """Returns a copy with '\\\\?\\' longpath prefix removed if the path has it."""
     if os.name == "nt" and path.parts[0].startswith("\\\\?\\"):
         return Path(path.parts[0][4:], *path.parts[1:])
     else:

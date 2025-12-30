@@ -21,6 +21,7 @@ from typing import List
 
 from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
     _collect_manifest,
+    _collect_abs_manifest,
     _create_unhashed_file_entry,
     _create_symlink_entry,
 )
@@ -397,7 +398,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         assert paths_by_name["link3.txt"].symlink_target == "link2.txt"
 
     def test_symlink_chain_preserved_absolute_paths(self, tmp_path: Path) -> None:
-        """Symlink chain of length 3 is preserved with absolute_paths=True."""
+        """Symlink chain of length 3 is preserved with _collect_abs_manifest and PRESERVE policy."""
         # Create: link3 -> link2 -> link1 -> target.txt
         target = tmp_path / "target.txt"
         target.write_text("content")
@@ -412,8 +413,13 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        # Test with absolute paths
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path, absolute_paths=True)
+        # Test with absolute paths using _collect_abs_manifest with PRESERVE policy
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
+            version=ManifestVersion.v2025_12_04_beta,
+            symlink_policy=SymlinkPolicy.PRESERVE,
+        )
 
         paths_by_name = {p.path: p for p in manifest.paths}
         # Each symlink should point to its immediate target (absolute), not the final target
@@ -629,13 +635,13 @@ class TestAbsolutePaths:
         assert manifest.paths[0].path == "file.txt"
 
     def test_v2023_absolute_paths_when_requested(self, tmp_path: Path) -> None:
-        """When absolute_paths=True, paths are absolute."""
+        """When using _collect_abs_manifest, paths are absolute."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
-            absolute_paths=True,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
@@ -648,10 +654,10 @@ class TestAbsolutePaths:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("content")
 
-        manifest = _collect_manifest(
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
-            absolute_paths=True,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
@@ -672,21 +678,27 @@ class TestAbsolutePaths:
         assert manifest.dirs[0].path == "subdir"
 
     def test_v2025_absolute_paths_when_requested(self, tmp_path: Path) -> None:
-        """When absolute_paths=True, paths are absolute."""
+        """When using _collect_abs_manifest, paths are absolute."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path, absolute_paths=True)
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
+            version=ManifestVersion.v2025_12_04_beta,
+        )
 
         # Check file path is absolute
         file_entry = [p for p in manifest.paths if "file.txt" in p.path][0]
         assert file_entry.path == (subdir / "file.txt").as_posix()
-        # Check dir path is absolute
-        assert manifest.dirs[0].path == subdir.as_posix()
+        # Check dir paths are absolute (includes root and subdir)
+        dir_paths = {d.path for d in manifest.dirs}
+        assert tmp_path.as_posix() in dir_paths
+        assert subdir.as_posix() in dir_paths
 
     def test_v2025_symlink_absolute_paths(self, tmp_path: Path) -> None:
-        """Symlink entries use absolute paths for both path and target when requested."""
+        """Symlink entries use absolute paths for both path and target with _collect_abs_manifest and PRESERVE policy."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
@@ -696,22 +708,27 @@ class TestAbsolutePaths:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path, absolute_paths=True)
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
+            version=ManifestVersion.v2025_12_04_beta,
+            symlink_policy=SymlinkPolicy.PRESERVE,
+        )
 
         # Find the symlink entry
         link_entry = [p for p in manifest.paths if "link.txt" in p.path][0]
         assert link_entry.path == link.as_posix()
-        # symlink_target should also be absolute when absolute_paths=True
+        # symlink_target should also be absolute with _collect_abs_manifest and PRESERVE
         assert link_entry.symlink_target == target.resolve().as_posix()
 
-    def test_dispatch_passes_absolute_paths(self, tmp_path: Path) -> None:
-        """Main function passes absolute_paths to version-specific functions."""
+    def test_collect_abs_manifest_produces_absolute_paths(self, tmp_path: Path) -> None:
+        """_collect_abs_manifest produces absolute paths."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = _collect_manifest(
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
             version=ManifestVersion.v2025_12_04_beta,
-            root=tmp_path,
-            absolute_paths=True,
         )
 
         assert manifest.paths[0].path == (tmp_path / "file.txt").as_posix()
@@ -886,14 +903,14 @@ class TestSymlinkPolicyV2023:
 
     def test_v2023_rejects_preserve(self, tmp_path: Path) -> None:
         """v2023 rejects PRESERVE policy."""
-        # PRESERVE requires absolute_paths=True, so we get that error first
-        with pytest.raises(ValueError, match="requires absolute_paths=True"):
+        # PRESERVE requires absolute paths, so we get that error first
+        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
             _collect_manifest(version=ManifestVersion.v2023_03_03, root=tmp_path, symlink_policy=SymlinkPolicy.PRESERVE)
 
     def test_v2023_rejects_transitive_include_targets(self, tmp_path: Path) -> None:
         """v2023 rejects TRANSITIVE_INCLUDE_TARGETS policy."""
-        # TRANSITIVE_INCLUDE_TARGETS requires absolute_paths=True, so we get that error first
-        with pytest.raises(ValueError, match="requires absolute_paths=True"):
+        # TRANSITIVE_INCLUDE_TARGETS requires absolute paths, so we get that error first
+        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
             _collect_manifest(
                 version=ManifestVersion.v2023_03_03,
                 root=tmp_path,
@@ -979,13 +996,12 @@ class TestSymlinkPolicyV2025:
         assert any("Excluding symlink" in msg for msg in messages)
 
     def test_v2025_preserve_requires_absolute_paths(self, tmp_path: Path) -> None:
-        """PRESERVE policy requires absolute_paths=True."""
-        with pytest.raises(ValueError, match="requires absolute_paths=True"):
+        """PRESERVE policy requires _collect_abs_manifest."""
+        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
             _collect_manifest(
                 version=ManifestVersion.v2025_12_04_beta,
                 root=tmp_path,
                 symlink_policy=SymlinkPolicy.PRESERVE,
-                absolute_paths=False,
             )
 
     def test_v2025_preserve_keeps_all_symlinks(self, tmp_path: Path) -> None:
@@ -999,11 +1015,11 @@ class TestSymlinkPolicyV2025:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
             version=ManifestVersion.v2025_12_04_beta,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.PRESERVE,
-            absolute_paths=True,
         )
 
         # Both entries should exist
@@ -1012,13 +1028,12 @@ class TestSymlinkPolicyV2025:
         assert link_entry.symlink_target == target.as_posix()
 
     def test_v2025_transitive_requires_absolute_paths(self, tmp_path: Path) -> None:
-        """TRANSITIVE_INCLUDE_TARGETS policy requires absolute_paths=True."""
-        with pytest.raises(ValueError, match="requires absolute_paths=True"):
+        """TRANSITIVE_INCLUDE_TARGETS policy requires _collect_abs_manifest."""
+        with pytest.raises(ValueError, match="Use _collect_abs_manifest\\(\\) instead"):
             _collect_manifest(
                 version=ManifestVersion.v2025_12_04_beta,
                 root=tmp_path,
                 symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
-                absolute_paths=False,
             )
 
     def test_v2025_default_is_collapse_escaping(self, tmp_path: Path) -> None:
@@ -1699,11 +1714,11 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = _collect_abs_manifest(
+            [tmp_path],
+            [],
             version=ManifestVersion.v2025_12_04_beta,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.PRESERVE,
-            absolute_paths=True,
         )
 
         paths_by_name = {p.path: p for p in manifest.paths}
@@ -1757,11 +1772,11 @@ class TestSymlinkChains:
         except OSError:
             pytest.skip("Symlinks not supported on this platform")
 
-        manifest = _collect_manifest(
+        manifest = _collect_abs_manifest(
+            [root],
+            [],
             version=ManifestVersion.v2025_12_04_beta,
-            root=root,
             symlink_policy=SymlinkPolicy.PRESERVE,
-            absolute_paths=True,
         )
 
         paths_by_name = {p.path: p for p in manifest.paths}

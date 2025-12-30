@@ -13,29 +13,33 @@ The manifest system uses composable operations that can be combined to implement
 │                        COMPOSABLE OPERATIONS                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  1. COLLECT: Files/Directories → Manifest (with hash="" for files)      │
-│     _collect_manifest(version, root, ...) → BaseAssetManifest           │
+│  1. COLLECT: Directory → Manifest (relative paths, hash="" for files)   │
+│     _collect_manifest(root, version, ...) → BaseAssetManifest           │
 │                                                                         │
-│  2. HASH: Manifest → Manifest (fills in hashes)                         │
+│  2. COLLECT_ABS: Paths → Manifest (absolute paths, hash="" for files)   │
+│     _collect_abs_manifest(directories, required_filenames, ...) →       │
+│                           BaseAssetManifest                             │
+│                                                                         │
+│  3. HASH: Manifest → Manifest (fills in hashes)                         │
 │     _hash_manifest(manifest, root, hash_cache, force_rehash)            │
 │                                                                         │
-│  3. HASH_UPLOAD: Manifest → Manifest (fills in hashes AND uploads)      │
+│  4. HASH_UPLOAD: Manifest → Manifest (fills in hashes AND uploads)      │
 │     _hash_upload_manifest(manifest, root, s3_bucket, s3_key_prefix,     │
 │                           credentials, ...) → BaseAssetManifest         │
 │                                                                         │
-│  4. FILTER: Manifest → Manifest (keeps matching entries)                │
+│  5. FILTER: Manifest → Manifest (keeps matching entries)                │
 │     _filter_manifest(manifest, entry_filter) → BaseAssetManifest        │
 │                                                                         │
-│  5. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
+│  6. DIFF: (Snapshot, Snapshot) → Diff Manifest                          │
 │     _compute_diff_manifest(parent, current, parent_hash, ignore_hashes) │
 │                                                                         │
-│  6. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
+│  7. COMPOSE: (Manifest, Manifest, ...) → Manifest                       │
 │     _compose_manifests(manifests) → BaseAssetManifest                   │
 │                                                                         │
-│  7. SUBTREE: (Manifest, subtree_path) → Manifest                        │
+│  8. SUBTREE: (Manifest, subtree_path) → Manifest                        │
 │     _subtree_manifest(manifest, subtree, symlink_policy)                │
 │                                                                         │
-│  8. JOIN: (Manifest, prefix) → Manifest                                 │
+│  9. JOIN: (Manifest, prefix) → Manifest                                 │
 │     _join_manifest(manifest, prefix) → BaseAssetManifest                │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -109,19 +113,15 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 **Location:** `_collect_manifest.py`
 
-Collects files and directories into a manifest WITHOUT computing hashes:
+Collects a single directory tree into a manifest with relative paths, WITHOUT computing hashes:
 
 ```python
 def _collect_manifest(
     *,
+    root: Path | str,
     version: ManifestVersion,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
-    root: Optional[Path | str] = None,
-    absolute_paths: bool = False,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    required_filenames: Optional[List[Path | str]] = None,
-    optional_filenames: Optional[List[Path | str]] = None,
-    directories: Optional[List[Path | str]] = None,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> BaseAssetManifest:
 ```
 
@@ -129,45 +129,20 @@ def _collect_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
+| `root` | Root directory path. The entire directory tree under this path is collected, and all manifest paths are relative to this root. |
 | `version` | Manifest version to create (determines features) |
-| `print_function_callback` | Progress callback for status messages |
-| `root` | Root directory path. Required when `absolute_paths=False` (to form relative paths). When provided, all paths in `required_filenames`, `optional_filenames`, and `directories` must be sub-paths of `root`. |
-| `absolute_paths` | If `True`, store absolute paths instead of relative. Useful for intermediate in-memory processing. Default `False` produces standard relative paths for on-disk storage. When `True`, `root` is optional and symlink targets are also stored as absolute paths. |
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
-| `required_filenames` | List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
-| `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
-| `directories` | List of directory paths whose full contents are collected. Empty directories are included in the manifest (v2025 only). |
+| `print_function_callback` | Progress callback for status messages |
 
-**Input Modes:**
+**Symlink Policy Options (for `_collect_manifest`):**
 
-The function operates in two modes:
+| Policy | Description | v2023 Support |
+|--------|-------------|---------------|
+| `COLLAPSE_ESCAPING` | Follow only symlinks that escape the root path; preserve symlinks within root as symlink entries. | ✗ (v2025 only) |
+| `COLLAPSE` | Follow all symlinks, treating them as files/directories. The directory walk follows symlinks. | ✓ |
+| `EXCLUDE` | Skip all symlinks entirely. | ✓ |
 
-1. **Explicit input mode**: When any of `required_filenames`, `optional_filenames`, or `directories` are provided, those fully characterize the input dataset.
-
-2. **Directory tree mode**: When none of the explicit input parameters are provided, `root` is required and the entire directory tree under `root` is collected (equivalent to `directories=[root]`).
-
-**Validation Rules:**
-
-| Condition | Behavior |
-|-----------|----------|
-| `absolute_paths=False` and `root` not provided | Raises `ValueError` |
-| No explicit inputs and `root` not provided | Raises `ValueError` |
-| Path in explicit inputs not under `root` (when `root` provided) | Raises `ValueError` |
-| File in `required_filenames` does not exist | Raises `FileNotFoundError` |
-| File in `optional_filenames` does not exist | Silently ignored |
-| Directory in `directories` does not exist | Raises `FileNotFoundError` |
-
-**Symlink Policy Options:**
-
-| Policy | Description | Requires `absolute_paths=True` | v2023 Support |
-|--------|-------------|-------------------------------|---------------|
-| `COLLAPSE` | Follow all symlinks, treating them as files/directories. The directory walk follows symlinks. | No | ✓ |
-| `COLLAPSE_ESCAPING` | Follow only symlinks that escape the root path; preserve symlinks within root as symlink entries. | No | ✗ |
-| `PRESERVE` | Keep all symlinks as symlink entries, including escaping ones. | Yes | ✗ |
-| `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. Targets outside root are collected transitively. | Yes | ✗ |
-| `EXCLUDE` | Skip all symlinks entirely. Unlike `COLLAPSE`, this leaves them out of the manifest. | No | ✓ |
-
-**Note:** For v2023-03-03, `symlink_policy` is a required parameter with no default. Only `COLLAPSE` and `EXCLUDE` are supported because v2023 cannot represent symlink entries. For v2025-12-04-beta, `symlink_policy` defaults to `COLLAPSE_ESCAPING`.
+**Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` policies require absolute paths and are not supported by `_collect_manifest`. Use `_collect_abs_manifest` instead.
 
 **Why COLLAPSE_ESCAPING is the default:** After capturing a manifest and transporting it to a different system (e.g., a render farm worker), the manifest is instantiated there. Escaping symlinks—those pointing outside the manifest root—cannot be preserved because their targets won't exist on the destination system. We have two choices: exclude them or collapse them. Since workload scripts may depend on those symlinks to access data, collapsing is preferred over exclusion. By collapsing escaping symlinks, we transport the actual data they reference, ensuring the workload functions correctly. Meanwhile, symlinks within the root are preserved, maintaining the original directory structure where possible.
 
@@ -176,41 +151,30 @@ The function operates in two modes:
 | Feature | v2023-03-03 | v2025-12-04-beta |
 |---------|-------------|------------------|
 | Regular files | ✓ (hash="") | ✓ (hash="") |
-| Symlinks | Skipped (format limitation) | ✓ (policy-dependent) |
+| Symlinks | Collapsed or excluded | ✓ (policy-dependent) |
 | Directories | Not included | ✓ (including empty) |
 | Execute bit | Not captured | ✓ (runnable field) |
-| `symlink_policy` | Required (COLLAPSE or EXCLUDE only) | Optional (default COLLAPSE_ESCAPING) |
+| `symlink_policy` | COLLAPSE or EXCLUDE only | COLLAPSE, COLLAPSE_ESCAPING, or EXCLUDE |
 
 **Key implementation details:**
 
 - Files have `hash=""` (empty string) to indicate hashing is needed
 - Symlinks have `symlink_target` set (no hash needed)
-- Symlink handling depends on `symlink_policy`
+- All paths in the manifest are relative to `root`
 - Uses `os.walk()` with `followlinks` based on policy
 
-**Helper functions:**
-
-- `_create_unhashed_file_entry()` - Creates file entry with `hash=""` and metadata
-- `_create_symlink_entry()` - Creates symlink entry with validated target
-
-**Example - Directory tree mode (legacy behavior):**
+**Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest
+from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
+    _collect_manifest
+)
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
 
 # Collect a v2025 manifest from a project directory (default: COLLAPSE_ESCAPING)
 manifest = _collect_manifest(
-    version=ManifestVersion.v2025_12_04_beta,
     root="/projects/my_scene",
-)
-
-# Collect with all symlinks preserved (requires absolute_paths)
-manifest_with_symlinks = _collect_manifest(
     version=ManifestVersion.v2025_12_04_beta,
-    root="/projects/my_scene",
-    absolute_paths=True,
-    symlink_policy=SymlinkPolicy.PRESERVE,
 )
 
 # Inspect the collected structure
@@ -234,58 +198,113 @@ Found 8 directories
   symlink: assets/current -> v2/model.blend
 ```
 
-**Example - Explicit input mode:**
+### 2. COLLECT_ABS: `_collect_abs_manifest()`
+
+**Location:** `_collect_manifest.py`
+
+Collects provided lists of paths into a manifest with absolute paths, WITHOUT computing hashes:
 
 ```python
-from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
-
-# Collect specific files and directories
-manifest = _collect_manifest(
-    version=ManifestVersion.v2025_12_04_beta,
-    root="/projects/my_scene",
-    required_filenames=[
-        "/projects/my_scene/scene.blend",
-        "/projects/my_scene/config.json",
-    ],
-    optional_filenames=[
-        "/projects/my_scene/cache.bin",  # Included if exists
-    ],
-    directories=[
-        "/projects/my_scene/textures",
-        "/projects/my_scene/models",
-    ],
-)
-
-# All paths must be under root
-print(f"Collected {len(manifest.paths)} files/symlinks")
+def _collect_abs_manifest(
+    directories: List[Path | str],
+    filenames: List[Path | str],
+    *,
+    optional_filenames: Optional[List[Path | str]] = None,
+    version: ManifestVersion,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+) -> BaseAssetManifest:
 ```
 
-**Example - Absolute paths without root:**
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `directories` | (positional) List of directory paths whose full contents are collected. All paths must exist and be directories. Empty directories are included in the manifest (v2025 only). |
+| `filenames` | (positional) List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
+| `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
+| `version` | Manifest version to create (determines features) |
+| `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
+| `print_function_callback` | Progress callback for status messages |
+
+**Symlink Policy Options (for `_collect_abs_manifest`):**
+
+| Policy | Description | v2023 Support |
+|--------|-------------|---------------|
+| `PRESERVE` | Keep all symlinks as symlink entries with absolute targets. (default) | ✗ (v2025 only) |
+| `COLLAPSE` | Follow all symlinks, treating them as files/directories. | ✓ |
+| `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. | ✗ (v2025 only) |
+| `EXCLUDE` | Skip all symlinks entirely. | ✓ |
+
+**Note:** `COLLAPSE_ESCAPING` is not supported by `_collect_abs_manifest` because there is no root path to determine what "escaping" means.
+
+**Validation Rules:**
+
+| Condition | Behavior |
+|-----------|----------|
+| `symlink_policy=COLLAPSE_ESCAPING` | Raises `ValueError` |
+| File in `filenames` does not exist | Raises `FileNotFoundError` |
+| File in `optional_filenames` does not exist | Silently ignored |
+| Directory in `directories` does not exist | Raises `FileNotFoundError` |
+| Path in `directories` is not a directory | Raises `ValueError` |
+| Path in `filenames` is not a file or symlink | Raises `ValueError` |
+
+**Key implementation details:**
+
+- Files have `hash=""` (empty string) to indicate hashing is needed
+- Symlinks have `symlink_target` set as absolute paths (no hash needed)
+- All paths in the manifest are absolute
+- Useful for intermediate in-memory processing or collecting from multiple locations
+
+**Example - Collecting from multiple directories:**
 
 ```python
-from deadline.job_attachments.asset_manifests._collect_manifest import _collect_manifest
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
+from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
+    _collect_abs_manifest
+)
+from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
 
-# Collect files from different locations using absolute paths
-manifest = _collect_manifest(
+# Collect files from different locations using absolute paths (default: PRESERVE symlinks)
+manifest = _collect_abs_manifest(
+    ["/data/shared/models", "/data/shared/textures"],  # directories (positional)
+    ["/home/user/project/scene.blend"],                 # filenames (positional)
+    optional_filenames=["/home/user/project/cache.bin"],  # Included if exists
     version=ManifestVersion.v2025_12_04_beta,
-    absolute_paths=True,  # Required when root is not provided
-    required_filenames=[
-        "/data/shared/textures/wood.png",
-        "/home/user/project/scene.blend",
-    ],
-    directories=[
-        "/data/shared/models",
-    ],
 )
 
 # Paths in manifest are absolute
 for entry in manifest.paths[:2]:
-    print(f"  {entry.path}")  # e.g., "/data/shared/textures/wood.png"
+    print(f"  {entry.path}")  # e.g., "/data/shared/models/car.obj"
 ```
 
-### 2. HASH: `_hash_manifest()`
+**Example - Symlinks are preserved by default:**
+
+```python
+from deadline.job_attachments.asset_manifests._operations._collect_manifest import (
+    _collect_abs_manifest
+)
+from deadline.job_attachments.asset_manifests.versions import ManifestVersion
+
+# Collect with symlinks preserved (default behavior)
+manifest = _collect_abs_manifest(
+    ["/projects/my_scene"],  # directories
+    [],                       # filenames (empty list)
+    version=ManifestVersion.v2025_12_04_beta,
+)
+
+# Symlinks have absolute targets
+for entry in manifest.paths:
+    if entry.symlink_target:
+        print(f"  symlink: {entry.path} -> {entry.symlink_target}")
+        # e.g., symlink: /projects/my_scene/link.txt -> /projects/my_scene/target.txt
+```
+
+**Helper functions (shared by both COLLECT operations):**
+
+- `_create_unhashed_file_entry()` - Creates file entry with `hash=""` and metadata
+- `_create_symlink_entry()` - Creates symlink entry with validated target
+
+### 3. HASH: `_hash_manifest()`
 
 **Location:** `_hash_manifest.py`
 
@@ -371,7 +390,7 @@ Output:
   large file: renders/output.exr (3 chunks)
 ```
 
-### 3. HASH_UPLOAD: `_hash_upload_manifest()`
+### 4. HASH_UPLOAD: `_hash_upload_manifest()`
 
 **Location:** `_hash_upload_manifest.py`
 
@@ -584,7 +603,7 @@ For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
 | Output sync from worker | HASH_UPLOAD |
 | Testing/debugging | HASH (simpler) |
 
-### 4. FILTER: `_filter_manifest()`
+### 5. FILTER: `_filter_manifest()`
 
 **Location:** `_filter_manifest.py`
 
@@ -657,7 +676,7 @@ def python_files_only(entry):
 py_manifest = _filter_manifest(manifest, python_files_only)
 ```
 
-### 5. DIFF: `_compute_diff_manifest()`
+### 6. DIFF: `_compute_diff_manifest()`
 
 **Location:** `_diff_manifest.py`
 
@@ -773,7 +792,7 @@ Diff manifest type: ManifestType.DIFF
 Parent hash: f8e9d0c1b2a34567...
 ```
 
-### 6. COMPOSE: `_compose_manifests()`
+### 7. COMPOSE: `_compose_manifests()`
 
 **Location:** `_compose_manifest.py`
 
@@ -854,7 +873,7 @@ task3_output = decode_manifest(read_file("task3_output.manifest"))
 merged = _compose_manifests([task1_output, task2_output, task3_output])
 ```
 
-### 7. SUBTREE: `_subtree_manifest()`
+### 8. SUBTREE: `_subtree_manifest()`
 
 **Location:** `_subtree_manifest.py`
 
@@ -1046,7 +1065,7 @@ textures = _subtree_manifest(full_manifest, "assets/textures")
 png_only = _filter_manifest(textures, lambda e: e.path.endswith(".png"))
 ```
 
-### 8. JOIN: `_join_manifest()`
+### 9. JOIN: `_join_manifest()`
 
 **Location:** `_join_manifest.py`
 

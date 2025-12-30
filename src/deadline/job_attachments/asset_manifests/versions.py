@@ -51,11 +51,11 @@ class SymlinkPolicy(str, Enum):
     Policy for handling symlinks during manifest collection.
 
     Policies:
-      COLLAPSE - Collapse all symlinks into files/directories by following them.
-          The directory tree walk follows symlinks, treating them as their targets.
       COLLAPSE_ESCAPING - Collapse only symlinks that escape the root path.
           Symlinks pointing outside root are followed and become files/directories.
           Symlinks pointing within root are preserved as symlink entries.
+      COLLAPSE - Collapse all symlinks into files/directories by following them.
+          The directory tree walk follows symlinks, treating them as their targets.
       PRESERVE - Keep all symlinks as symlink entries. Only allowed when
           absolute_paths=True, because escaping symlinks cannot be represented
           with conforming relative paths.
@@ -67,8 +67,8 @@ class SymlinkPolicy(str, Enum):
           which turns symlinks into files/directories, this leaves them out.
     """
 
-    COLLAPSE = "collapse"
     COLLAPSE_ESCAPING = "collapse_escaping"
+    COLLAPSE = "collapse"
+    EXCLUDE = "exclude"
     PRESERVE = "preserve"
     TRANSITIVE_INCLUDE_TARGETS = "transitive_include_targets"
-    EXCLUDE = "exclude"
