@@ -34,7 +34,7 @@ import posixpath
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..base_manifest import BaseAssetManifest
-from ..versions import ManifestVersion, SymlinkPolicy
+from ..versions import SymlinkPolicy
 from ._subtree_manifest import subtree_manifest
 
 
@@ -132,7 +132,7 @@ def partition_manifest(
     result: List[Tuple[str, BaseAssetManifest]] = []
 
     for root in all_roots:
-        if root == ".":
+        if root == "." or root == "":
             # Special case: root-level relative paths - return manifest as-is
             # (subtree_manifest doesn't accept "." as a subtree path)
             result.append((root, manifest))
@@ -179,10 +179,9 @@ def _is_absolute_path(path: str) -> bool:
         # Windows UNC path
         if path.startswith("//"):
             return True
-    else:
-        # POSIX absolute
-        if path.startswith("/"):
-            return True
+    # POSIX absolute (consider it absolute on Windows, even though it's half-absolute)
+    if path.startswith("/"):
+        return True
     return False
 
 
@@ -386,26 +385,24 @@ def _determine_common_root(
 
 def _longest_common_path_prefix(paths: List[str]) -> str:
     """
-    Find the longest common path prefix of a list of paths.
+    Find the longest common path prefix of a list of directory paths.
 
     This finds the longest directory path that is a prefix of all paths.
+    Since the input is directories (from _collect_all_dirs), a single directory
+    returns itself as the common prefix.
+
     For example:
-        ["/a/b/c/file.txt", "/a/b/d/file.txt"] -> "/a/b"
+        ["/a/b/c", "/a/b/d"] -> "/a/b"
         ["/a/b/c", "/a/b/c/d"] -> "/a/b/c"
-        ["a/b/c", "a/b/d"] -> "a/b"
+        ["a/b/c"] -> "a/b/c"
+        ["project/src"] -> "project/src"
     """
     if not paths:
         return ""
 
     if len(paths) == 1:
-        # Single path - return its parent directory (or itself if it looks like a directory)
-        path = paths[0]
-        # If path has no slash, it's a single component - return it
-        if "/" not in path:
-            return path
-        # Return the directory containing this path
-        parent = posixpath.dirname(path)
-        return parent if parent else path
+        # Single directory - return it as-is (it's already a directory path)
+        return paths[0]
 
     # Split all paths into components
     split_paths = [p.split("/") for p in paths]

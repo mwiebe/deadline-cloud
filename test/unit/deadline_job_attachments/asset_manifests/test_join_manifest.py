@@ -14,6 +14,7 @@ These tests cover:
 import os
 import pytest
 from typing import List
+from unittest.mock import patch
 
 from deadline.job_attachments.asset_manifests._operations import (
     join_manifest,
@@ -56,13 +57,13 @@ class TestHelperFunctions:
         assert _join_path("assets/textures", "wood.png") == "assets/textures/wood.png"
         assert _join_path("a/b", "c/d.txt") == "a/b/c/d.txt"
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only test")
+    @patch.object(os, "name", "posix")
     def test_join_path_absolute_posix(self) -> None:
         """Absolute POSIX prefix produces absolute paths."""
         assert _join_path("/projects/scene", "wood.png") == "/projects/scene/wood.png"
         assert _join_path("/a/b", "c/d.txt") == "/a/b/c/d.txt"
 
-    @pytest.mark.skipif(os.name != "nt", reason="Windows-only test")
+    @patch.object(os, "name", "nt")
     def test_join_path_absolute_windows(self) -> None:
         """Absolute Windows prefix produces absolute paths."""
         assert _join_path("C:/projects/scene", "wood.png") == "C:/projects/scene/wood.png"

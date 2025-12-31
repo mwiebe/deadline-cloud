@@ -80,10 +80,7 @@ class TestCollectAbsManifest:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         manifest = collect_abs_manifest(
             [tmp_path],
@@ -123,12 +120,9 @@ class TestCollectAbsManifestSymlinkChains:
         link2 = tmp_path / "link2.txt"
         link3 = tmp_path / "link3.txt"
 
-        try:
-            link1.symlink_to("target.txt")
-            link2.symlink_to("link1.txt")
-            link3.symlink_to("link2.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link1.symlink_to("target.txt")
+        link2.symlink_to("link1.txt")
+        link3.symlink_to("link2.txt")
 
         # Test with absolute paths using collect_abs_manifest with PRESERVE policy
         manifest = collect_abs_manifest(
@@ -150,10 +144,7 @@ class TestCollectAbsManifestSymlinkChains:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         manifest = collect_abs_manifest(
             [tmp_path],
@@ -181,11 +172,8 @@ class TestCollectAbsManifestSymlinkChains:
         link1 = tmp_path / "link1.txt"
         link2 = tmp_path / "link2.txt"
 
-        try:
-            link1.symlink_to("target.txt")
-            link2.symlink_to("link1.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link1.symlink_to("target.txt")
+        link2.symlink_to("link1.txt")
 
         manifest = collect_abs_manifest(
             [tmp_path],
@@ -237,13 +225,10 @@ class TestCollectAbsManifestSymlinkChains:
         root.mkdir()
         link = root / "link.txt"
 
-        try:
-            if use_absolute_symlink:
-                link.symlink_to(outside)  # Absolute path
-            else:
-                link.symlink_to("../outside.txt")  # Relative path
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        if use_absolute_symlink:
+            link.symlink_to(outside)  # Absolute path
+        else:
+            link.symlink_to("../outside.txt")  # Relative path
 
         manifest = collect_abs_manifest(
             [root],

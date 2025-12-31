@@ -15,6 +15,7 @@ These tests cover:
 import os
 import pytest
 from typing import List
+from unittest.mock import patch
 
 from deadline.job_attachments.asset_manifests._operations import (
     subtree_manifest,
@@ -43,19 +44,18 @@ from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import 
 class TestHelperFunctions:
     """Tests for helper functions."""
 
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only test")
     def test_is_absolute_path_posix(self) -> None:
-        """POSIX absolute paths are detected on POSIX systems."""
+        """POSIX absolute paths are detected."""
         assert _is_absolute_path("/home/user/file.txt") is True
         assert _is_absolute_path("/") is True
 
-    @pytest.mark.skipif(os.name != "nt", reason="Windows-only test")
+    @patch.object(os, "name", "nt")
     def test_is_absolute_path_windows_drive(self) -> None:
         """Windows drive letter paths are detected on Windows."""
         assert _is_absolute_path("C:/Users/file.txt") is True
         assert _is_absolute_path("D:\\Projects\\file.txt") is True
 
-    @pytest.mark.skipif(os.name != "nt", reason="Windows-only test")
+    @patch.object(os, "name", "nt")
     def test_is_absolute_path_windows_unc(self) -> None:
         """Windows UNC paths are detected on Windows."""
         assert _is_absolute_path("//server/share/file.txt") is True
@@ -68,13 +68,7 @@ class TestHelperFunctions:
         assert _is_absolute_path("./file.txt") is False
         assert _is_absolute_path("../file.txt") is False
 
-    @pytest.mark.skipif(os.name != "nt", reason="Windows-only test")
-    def test_posix_absolute_not_detected_on_windows(self) -> None:
-        """POSIX absolute paths are not detected as absolute on Windows."""
-        # On Windows, /home/user/file.txt is a relative path (relative to current drive)
-        assert _is_absolute_path("/home/user/file.txt") is False
-
-    @pytest.mark.skipif(os.name == "nt", reason="POSIX-only test")
+    @patch.object(os, "name", "posix")
     def test_windows_absolute_not_detected_on_posix(self) -> None:
         """Windows absolute paths are not detected as absolute on POSIX."""
         # On POSIX, C:/Users/file.txt is a relative path
@@ -618,6 +612,37 @@ class TestSubtreeManifestAbsolutePaths:
         for entry in result.paths:
             assert not entry.path.startswith("/")
             assert not (len(entry.path) >= 2 and entry.path[1] == ":")
+
+    def test_posix_root_subtree(self) -> None:
+        """POSIX root '/' subtree extracts all files with paths relative to root."""
+        from unittest.mock import patch
+
+        with patch.object(os, "name", "posix"):
+            manifest = self._create_v2025_manifest(
+                files=[
+                    {"path": "/home/user/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                    {"path": "/var/data/other.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                ],
+                dirs=[
+                    {"path": "/home"},
+                    {"path": "/home/user"},
+                    {"path": "/var"},
+                    {"path": "/var/data"},
+                ],
+            )
+
+            result = subtree_manifest(manifest, "/")
+
+            # All files should be included with paths relative to "/"
+            file_paths = {p.path for p in result.paths}
+            assert file_paths == {"home/user/file.txt", "var/data/other.txt"}
+
+            # Directories should also be rebased
+            dir_paths = {d.path for d in result.dirs}
+            assert "home" in dir_paths
+            assert "home/user" in dir_paths
+            assert "var" in dir_paths
+            assert "var/data" in dir_paths
 
 
 class TestSubtreeManifestDirectorySymlinks:

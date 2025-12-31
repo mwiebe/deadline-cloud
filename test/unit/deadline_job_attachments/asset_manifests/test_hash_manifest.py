@@ -187,10 +187,7 @@ class TestHashManifestV2025:
         target.write_text("target content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
         hashed = hash_manifest(collected, tmp_path)
@@ -798,10 +795,7 @@ class TestProgressCallback:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 

@@ -93,10 +93,7 @@ class TestCollectManifestDirectoryTreeV2023:
         target.write_text("target content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to(target)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to(target)
 
         messages: List[str] = []
         manifest = collect_manifest(
@@ -254,10 +251,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         target.write_text("target content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
@@ -280,10 +274,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         (target_dir / "file.txt").write_text("content")
         link_dir = tmp_path / "link_dir"
 
-        try:
-            link_dir.symlink_to("target_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link_dir.symlink_to("target_dir", target_is_directory=True)
 
         manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
@@ -304,10 +295,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("subdir/target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("subdir/target.txt")
 
         manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
@@ -319,10 +307,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         """Symlinks with absolute targets are excluded with EXCLUDE policy."""
         link = tmp_path / "absolute_link.txt"
 
-        try:
-            link.symlink_to("/absolute/path/target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("/absolute/path/target.txt")
 
         messages: List[str] = []
         manifest = collect_manifest(
@@ -339,10 +324,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         """Symlinks that escape the root are excluded with EXCLUDE policy."""
         link = tmp_path / "escaping_link.txt"
 
-        try:
-            link.symlink_to("../outside.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("../outside.txt")
 
         messages: List[str] = []
         manifest = collect_manifest(
@@ -363,10 +345,7 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         target.write_text("content")
         link = subdir / "link.txt"
 
-        try:
-            link.symlink_to("../target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("../target.txt")
 
         manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
 
@@ -384,12 +363,9 @@ class TestCollectManifestDirectoryTreeV2025Symlinks:
         link2 = tmp_path / "link2.txt"
         link3 = tmp_path / "link3.txt"
 
-        try:
-            link1.symlink_to("target.txt")
-            link2.symlink_to("link1.txt")
-            link3.symlink_to("link2.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link1.symlink_to("target.txt")
+        link2.symlink_to("link1.txt")
+        link3.symlink_to("link2.txt")
 
         # Test with relative paths (default)
         manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
@@ -533,10 +509,7 @@ class TestCreateSymlinkEntry:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         entry = _create_symlink_entry(link, "link.txt", tmp_path)
 
@@ -551,10 +524,7 @@ class TestCreateSymlinkEntry:
         target = tmp_path / "target.txt"
         target.touch()
 
-        try:
-            link.symlink_to(target)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to(target)
 
         with pytest.raises(ValueError, match="is not in the subpath of"):
             _create_symlink_entry(link, "subdir/link.txt", tmp_subdir)
@@ -567,10 +537,7 @@ class TestCreateSymlinkEntry:
         target = tmp_path / "target.txt"
         target.touch()
 
-        try:
-            link.symlink_to(target)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to(target)
 
         _create_symlink_entry(link, "subdir/link.txt", tmp_path)
 
@@ -582,10 +549,7 @@ class TestCreateSymlinkEntry:
         target.write_text("content")
         link = subdir / "link.txt"
 
-        try:
-            link.symlink_to("../target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("../target.txt")
 
         entry = _create_symlink_entry(link, "subdir/link.txt", tmp_path)
 
@@ -631,10 +595,7 @@ class TestVersionDifferences:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         manifest_v2023 = collect_manifest(
             version=ManifestVersion.v2023_03_03,
@@ -716,10 +677,7 @@ class TestSymlinkPolicyV2023:
         (target_dir / "file.txt").write_text("content")
         link_dir = tmp_path / "link_dir"
 
-        try:
-            link_dir.symlink_to("target_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link_dir.symlink_to("target_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
@@ -740,10 +698,7 @@ class TestSymlinkPolicyV2023:
         target.write_text("target content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         messages: List[str] = []
         manifest = collect_manifest(
@@ -765,10 +720,7 @@ class TestSymlinkPolicyV2023:
         (target_dir / "file.txt").write_text("content")
         link_dir = tmp_path / "link_dir"
 
-        try:
-            link_dir.symlink_to("target_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link_dir.symlink_to("target_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=ManifestVersion.v2023_03_03,
@@ -820,10 +772,7 @@ class TestSymlinkPolicyV2025:
         (target_dir / "file.txt").write_text("content")
         link_dir = tmp_path / "link_dir"
 
-        try:
-            link_dir.symlink_to("target_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link_dir.symlink_to("target_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
@@ -846,10 +795,7 @@ class TestSymlinkPolicyV2025:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         manifest = collect_manifest(
             version=ManifestVersion.v2025_12_04_beta,
@@ -869,10 +815,7 @@ class TestSymlinkPolicyV2025:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         messages: List[str] = []
         manifest = collect_manifest(
@@ -911,10 +854,7 @@ class TestSymlinkPolicyV2025:
         target.write_text("content")
         link = tmp_path / "link.txt"
 
-        try:
-            link.symlink_to("target.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link.symlink_to("target.txt")
 
         # Call without specifying symlink_policy
         manifest = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
@@ -958,10 +898,7 @@ class TestSymlinkPolicyV2025:
         root.mkdir()
         link_dir = root / "link_dir"
 
-        try:
-            link_dir.symlink_to("../outside_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link_dir.symlink_to("../outside_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=version,
@@ -1037,11 +974,8 @@ class TestSymlinkChains:
         link1 = tmp_path / "link1.txt"
         link2 = tmp_path / "link2.txt"
 
-        try:
-            link1.symlink_to("target.txt")
-            link2.symlink_to("link1.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link1.symlink_to("target.txt")
+        link2.symlink_to("link1.txt")
 
         manifest = collect_manifest(
             version=version,
@@ -1117,11 +1051,8 @@ class TestSymlinkChains:
         link1_dir = tmp_path / "link1_dir"
         link2_dir = tmp_path / "link2_dir"
 
-        try:
-            link1_dir.symlink_to("target_dir", target_is_directory=True)
-            link2_dir.symlink_to("link1_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link1_dir.symlink_to("target_dir", target_is_directory=True)
+        link2_dir.symlink_to("link1_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=version,
@@ -1238,14 +1169,11 @@ class TestSymlinkChains:
         link1 = root / "link1.txt"
         link2 = root / "link2.txt"
 
-        try:
-            if use_absolute_symlink:
-                link1.symlink_to(outside_file)  # Absolute path
-            else:
-                link1.symlink_to("../outside.txt")  # Relative path with ..
-            link2.symlink_to("link1.txt")
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        if use_absolute_symlink:
+            link1.symlink_to(outside_file)  # Absolute path
+        else:
+            link1.symlink_to("../outside.txt")  # Relative path with ..
+        link2.symlink_to("link1.txt")
 
         manifest = collect_manifest(
             version=version,
@@ -1358,16 +1286,13 @@ class TestSymlinkChains:
         link1_dir = root / "link1_dir"
         link2_dir = root / "link2_dir"
 
-        try:
-            if use_absolute_symlink:
-                link1_dir.symlink_to(outside_dir, target_is_directory=True)  # Absolute path
-            else:
-                link1_dir.symlink_to(
-                    "../outside_dir", target_is_directory=True
-                )  # Relative path with ..
-            link2_dir.symlink_to("link1_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        if use_absolute_symlink:
+            link1_dir.symlink_to(outside_dir, target_is_directory=True)  # Absolute path
+        else:
+            link1_dir.symlink_to(
+                "../outside_dir", target_is_directory=True
+            )  # Relative path with ..
+        link2_dir.symlink_to("link1_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=version,
@@ -1478,15 +1403,12 @@ class TestSymlinkChains:
         outside_link = tmp_path / "outside_link.txt"
         link = root / "link.txt"
 
-        try:
-            if use_absolute_symlinks:
-                outside_link.symlink_to(target)  # Absolute path
-                link.symlink_to(outside_link)  # Absolute path
-            else:
-                outside_link.symlink_to("root/target.txt")  # Relative path
-                link.symlink_to("../outside_link.txt")  # Relative path
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        if use_absolute_symlinks:
+            outside_link.symlink_to(target)  # Absolute path
+            link.symlink_to(outside_link)  # Absolute path
+        else:
+            outside_link.symlink_to("root/target.txt")  # Relative path
+            link.symlink_to("../outside_link.txt")  # Relative path
 
         manifest = collect_manifest(
             version=version,
@@ -1538,12 +1460,9 @@ class TestSymlinkChains:
         (target_dir / "file.txt").write_text("dir content")
         link_dir = tmp_path / "link_dir"
 
-        try:
-            link1.symlink_to("target.txt")
-            link2.symlink_to("link1.txt")
-            link_dir.symlink_to("target_dir", target_is_directory=True)
-        except OSError:
-            pytest.skip("Symlinks not supported on this platform")
+        link1.symlink_to("target.txt")
+        link2.symlink_to("link1.txt")
+        link_dir.symlink_to("target_dir", target_is_directory=True)
 
         manifest = collect_manifest(
             version=version,

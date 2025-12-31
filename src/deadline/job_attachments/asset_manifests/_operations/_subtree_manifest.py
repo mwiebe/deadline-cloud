@@ -83,7 +83,7 @@ def subtree_manifest(
     # Normalize subtree path
     subtree = _normalize_subtree_path(subtree)
     if not subtree or subtree == ".":
-        raise ValueError("subtree path cannot be empty")
+        raise ValueError("subtree path cannot be empty or '.'")
 
     # Validate path style consistency
     _validate_path_style_consistency(manifest, subtree)
@@ -127,8 +127,9 @@ def _normalize_subtree_path(subtree: str) -> str:
         subtree = subtree.replace("\\", "/")
     # Normalize path components (collapse .., ., etc.)
     subtree = posixpath.normpath(subtree)
-    # Remove trailing slash
-    subtree = subtree.rstrip("/")
+    # Remove trailing slash, but preserve root "/"
+    if subtree != "/":
+        subtree = subtree.rstrip("/")
     return subtree
 
 
@@ -141,10 +142,9 @@ def _is_absolute_path(path: str) -> bool:
         # Windows UNC path
         if path.startswith("//") or path.startswith("\\\\"):
             return True
-    else:
-        # POSIX absolute
-        if path.startswith("/"):
-            return True
+    # POSIX absolute (consider it absolute on Windows, even though it's half-absolute)
+    if path.startswith("/"):
+        return True
     return False
 
 
@@ -191,6 +191,9 @@ def _is_within_subtree(path: str, subtree: str) -> bool:
     # Exact match (the subtree directory itself)
     if path == subtree:
         return True
+    # Special case: root "/" contains all absolute paths
+    if subtree == "/":
+        return path.startswith("/")
     # Path is under subtree
     return path.startswith(subtree + "/")
 
@@ -200,10 +203,14 @@ def _rebase_path(path: str, subtree: str) -> str:
     Rebase a path relative to the new subtree root.
 
     Example: _rebase_path("assets/textures/wood.png", "assets/textures") -> "wood.png"
+    Example: _rebase_path("/home/user/file.txt", "/") -> "home/user/file.txt"
     """
     if path == subtree:
         # This shouldn't happen for files, but handle it
         return ""
+    # Special case: root "/" - just strip the leading slash
+    if subtree == "/":
+        return path[1:]  # Remove leading "/"
     # Strip the subtree prefix and the following slash
     return path[len(subtree) + 1 :]
 
@@ -273,7 +280,7 @@ def _subtree_manifest_v2025(
     for entry in manifest.paths:
         # Add all parent directories of this file
         parent = posixpath.dirname(entry.path)
-        while parent:
+        while parent and parent != "/":
             dir_lookup.add(parent)
             parent = posixpath.dirname(parent)
 
