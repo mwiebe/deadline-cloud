@@ -432,12 +432,14 @@ class TestPartitionManifestAutoRoots:
         with patch.object(os, "name", "posix"):
             result = partition_manifest(manifest, roots=["/projects/scene"])
 
-        # Should have explicit root first, then auto-determined root for remainder
-        assert len(result) == 2
+        # Should have explicit root first, then auto-determined roots for remainder
+        # Can't use "/" because it would include /projects/scene as a subpath
+        # Auto-roots should be as deep as possible (longest common prefix per group)
         roots = [r for r, _ in result]
         assert roots[0] == "/projects/scene"
-        # Remaining root should be "/" since /data and /home have no common prefix
-        assert roots[1] == "/"
+        # Remaining roots should be the deepest valid paths (sorted)
+        remaining_roots = sorted(roots[1:])
+        assert remaining_roots == ["/data/shared", "/home/user/cache"]
 
     def test_root_level_files_returns_dot_root(self) -> None:
         """Root-level relative files return '.' as root."""
@@ -743,3 +745,326 @@ class TestPartitionManifestOrdering:
         # Remaining should be sorted
         remaining = roots[1:]
         assert remaining == sorted(remaining)
+
+
+class TestPartitionManifestAdditionalRoots:
+    """Tests for auto-determining additional roots beyond explicit ones.
+
+    These tests cover edge cases where explicit roots are provided but don't
+    cover all paths in the manifest, requiring additional roots to be determined.
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_windows_explicit_root_with_remainder_same_drive(self) -> None:
+        """Windows: explicit root with remainder on same drive finds deepest common root."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "C:/data/textures/wood.png", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "C:/data/textures/metal.png", "hash": "h3", "size": 300, "mtime": 3000},
+            ]
+        )
+
+        with patch.object(os, "name", "nt"):
+            result = partition_manifest(manifest, roots=["C:/projects/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "C:/projects/scene"
+        # Remainder should be C:/data/textures (deepest common prefix)
+        assert "C:/data/textures" in roots
+
+    def test_windows_explicit_root_with_remainder_multiple_drives(self) -> None:
+        """Windows: explicit root with remainder across multiple drives."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "D:/assets/textures/wood.png", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "E:/cache/temp/data.bin", "hash": "h3", "size": 300, "mtime": 3000},
+            ]
+        )
+
+        with patch.object(os, "name", "nt"):
+            result = partition_manifest(manifest, roots=["C:/projects/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "C:/projects/scene"
+        # Each drive should get its own deepest root
+        remaining = sorted(roots[1:])
+        assert remaining == ["D:/assets/textures", "E:/cache/temp"]
+
+    def test_windows_explicit_root_with_unc_remainder(self) -> None:
+        """Windows: explicit root with UNC path remainder."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
+                {
+                    "path": "//server/share/assets/texture.png",
+                    "hash": "h2",
+                    "size": 200,
+                    "mtime": 2000,
+                },
+                {
+                    "path": "//server/share/assets/model.obj",
+                    "hash": "h3",
+                    "size": 300,
+                    "mtime": 3000,
+                },
+            ]
+        )
+
+        with patch.object(os, "name", "nt"):
+            result = partition_manifest(manifest, roots=["C:/projects/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "C:/projects/scene"
+        # UNC remainder should be deepest common prefix
+        assert "//server/share/assets" in roots
+
+    def test_relative_explicit_root_with_remainder(self) -> None:
+        """Relative paths: explicit root with remainder finds deepest common root."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "libs/common/utils.py", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "libs/common/helpers.py", "hash": "h3", "size": 300, "mtime": 3000},
+                {"path": "data/cache/temp.bin", "hash": "h4", "size": 400, "mtime": 4000},
+            ]
+        )
+
+        result = partition_manifest(manifest, roots=["project/src"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "project/src"
+        # Remainder should be deepest common prefixes per top-level
+        remaining = sorted(roots[1:])
+        assert remaining == ["data/cache", "libs/common"]
+
+    def test_referenced_paths_only_introduces_remainder(self) -> None:
+        """referenced_paths introduces additional root when no manifest files there."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+            ]
+        )
+
+        result = partition_manifest(
+            manifest,
+            roots=["project"],
+            referenced_paths=["output/renders/final"],
+        )
+
+        roots = [r for r, _ in result]
+        assert "project" in roots
+        # referenced_paths should create additional root
+        assert "output/renders/final" in roots
+
+    def test_referenced_paths_deepens_remainder_root(self) -> None:
+        """referenced_paths affects the depth of remainder root determination."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "data/assets/texture.png", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
+
+        # Without referenced_paths, remainder root would be data/assets
+        result_without = partition_manifest(manifest, roots=["project"])
+        roots_without = [r for r, _ in result_without]
+        assert "data/assets" in roots_without
+
+        # With referenced_paths at data level, remainder root should be data
+        result_with = partition_manifest(
+            manifest,
+            roots=["project"],
+            referenced_paths=["data/cache"],
+        )
+        roots_with = [r for r, _ in result_with]
+        assert "data" in roots_with
+
+    def test_posix_many_remainder_paths_same_toplevel(self) -> None:
+        """POSIX: many remainder paths under same top-level find deepest common."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
+                {
+                    "path": "/data/assets/textures/wood.png",
+                    "hash": "h2",
+                    "size": 200,
+                    "mtime": 2000,
+                },
+                {
+                    "path": "/data/assets/textures/metal.png",
+                    "hash": "h3",
+                    "size": 300,
+                    "mtime": 3000,
+                },
+                {"path": "/data/assets/models/chair.obj", "hash": "h4", "size": 400, "mtime": 4000},
+                {"path": "/data/assets/models/table.obj", "hash": "h5", "size": 500, "mtime": 5000},
+            ]
+        )
+
+        with patch.object(os, "name", "posix"):
+            result = partition_manifest(manifest, roots=["/projects/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "/projects/scene"
+        # All /data paths share /data/assets as common prefix
+        assert "/data/assets" in roots
+
+    def test_posix_remainder_with_nested_explicit_root(self) -> None:
+        """POSIX: remainder paths when explicit root is deeply nested."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "/projects/client/job/scene/assets/model.blend",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+                {"path": "/shared/lib/utils.py", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "/tmp/cache/data.bin", "hash": "h3", "size": 300, "mtime": 3000},
+            ]
+        )
+
+        with patch.object(os, "name", "posix"):
+            result = partition_manifest(manifest, roots=["/projects/client/job/scene/assets"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "/projects/client/job/scene/assets"
+        remaining = sorted(roots[1:])
+        # Each top-level gets its deepest path
+        assert remaining == ["/shared/lib", "/tmp/cache"]
+
+    def test_multiple_explicit_roots_with_remainder(self) -> None:
+        """Multiple explicit roots with paths not covered by any."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "project/tests/test_main.py", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "libs/utils/helpers.py", "hash": "h3", "size": 300, "mtime": 3000},
+            ]
+        )
+
+        result = partition_manifest(manifest, roots=["project/src", "project/tests"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "project/src"
+        assert roots[1] == "project/tests"
+        # Remainder
+        assert "libs/utils" in roots
+
+    def test_explicit_root_covers_all_no_remainder(self) -> None:
+        """Explicit root that covers all paths produces no remainder roots."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "project/src/utils.py", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "project/tests/test.py", "hash": "h3", "size": 300, "mtime": 3000},
+            ]
+        )
+
+        result = partition_manifest(manifest, roots=["project"])
+
+        roots = [r for r, _ in result]
+        assert roots == ["project"]
+
+    def test_posix_single_file_remainder(self) -> None:
+        """POSIX: single file in remainder gets its parent as root."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "/etc/config.ini", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
+
+        with patch.object(os, "name", "posix"):
+            result = partition_manifest(manifest, roots=["/projects/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "/projects/scene"
+        # Single file's parent directory becomes the root
+        assert "/etc" in roots
+
+    def test_windows_mixed_drives_and_unc_remainder(self) -> None:
+        """Windows: remainder with both drive letters and UNC paths."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "D:/data/texture1.png", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "D:/data/texture2.png", "hash": "h3", "size": 300, "mtime": 3000},
+                {"path": "//server/share/lib/utils.py", "hash": "h4", "size": 400, "mtime": 4000},
+                {"path": "//server/share/lib/helpers.py", "hash": "h5", "size": 500, "mtime": 5000},
+                {"path": "//other/backup/file.dat", "hash": "h6", "size": 600, "mtime": 6000},
+            ]
+        )
+
+        with patch.object(os, "name", "nt"):
+            result = partition_manifest(manifest, roots=["C:/projects/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "C:/projects/scene"
+        remaining = sorted(roots[1:])
+        # D: drive, two UNC roots
+        assert remaining == ["//other/backup", "//server/share/lib", "D:/data"]
+
+    def test_remainder_with_common_prefix_at_different_depths(self) -> None:
+        """Remainder paths with varying depths find appropriate common prefixes."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "libs/a/b/c/deep.py", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "libs/a/b/c/deeper.py", "hash": "h3", "size": 300, "mtime": 3000},
+                {"path": "libs/a/shallow.py", "hash": "h4", "size": 400, "mtime": 4000},
+            ]
+        )
+
+        result = partition_manifest(manifest, roots=["project"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "project"
+        # Common prefix of all libs paths is libs/a
+        assert "libs/a" in roots
+
+    def test_posix_explicit_root_is_subpath_of_potential_remainder(self) -> None:
+        """POSIX: explicit root prevents its ancestors from being remainder roots."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "/data/project/scene/model.blend",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+                {"path": "/data/shared/texture.png", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "/home/user/cache.bin", "hash": "h3", "size": 300, "mtime": 3000},
+            ]
+        )
+
+        with patch.object(os, "name", "posix"):
+            result = partition_manifest(manifest, roots=["/data/project/scene"])
+
+        roots = [r for r, _ in result]
+        assert roots[0] == "/data/project/scene"
+        # /data can't be a remainder root because /data/project/scene is under it
+        # So we should get /data/shared and /home/user separately
+        remaining = sorted(roots[1:])
+        assert remaining == ["/data/shared", "/home/user"]

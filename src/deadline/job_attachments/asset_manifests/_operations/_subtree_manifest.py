@@ -280,9 +280,15 @@ def _subtree_manifest_v2025(
     for entry in manifest.paths:
         # Add all parent directories of this file
         parent = posixpath.dirname(entry.path)
-        while parent and parent != "/":
+        seen_parents: Set[str] = set()  # Prevent infinite loops with UNC paths
+        while parent and parent != "/" and parent not in seen_parents:
+            seen_parents.add(parent)
             dir_lookup.add(parent)
-            parent = posixpath.dirname(parent)
+            new_parent = posixpath.dirname(parent)
+            if new_parent == parent:
+                # posixpath.dirname returns same value (e.g., "//server" -> "//server")
+                break
+            parent = new_parent
 
     result_paths: List[ManifestFilePath2025] = []
     result_dirs: List[ManifestDirectoryPath2025] = []

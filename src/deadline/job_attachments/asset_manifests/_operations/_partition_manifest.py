@@ -226,6 +226,12 @@ def _is_path_under_root(path: str, root: str) -> bool:
     """Check if a path is under the given root (or is the root itself)."""
     if path == root:
         return True
+    # Special case: root "/" contains all absolute paths
+    if root == "/":
+        return path.startswith("/")
+    # Special case: root "." contains all relative paths
+    if root == ".":
+        return not _is_absolute_path(path)
     # Path is under root if it starts with root + "/"
     return path.startswith(root + "/")
 
@@ -456,55 +462,172 @@ def _determine_additional_roots(
 
         additional_roots: List[str] = []
         for drive_root, drive_paths in paths_by_drive.items():
-            root = _find_valid_root_for_paths(
+            roots = _find_valid_roots_for_paths(
                 paths=drive_paths,
                 explicit_roots=explicit_roots,
                 print_function_callback=print_function_callback,
             )
-            if root:
-                additional_roots.append(root)
+            additional_roots.extend(roots)
 
         return additional_roots
     else:
-        # POSIX or relative: find a single valid root
-        root = _find_valid_root_for_paths(
+        # POSIX or relative: find valid roots
+        return _find_valid_roots_for_paths(
             paths=remaining_paths,
             explicit_roots=explicit_roots,
             print_function_callback=print_function_callback,
         )
-        return [root] if root else []
 
 
-def _find_valid_root_for_paths(
+def _find_valid_roots_for_paths(
     paths: List[str],
     explicit_roots: List[str],
     print_function_callback: Callable[[Any], None],
-) -> Optional[str]:
+) -> List[str]:
     """
-    Find a valid root for the given paths that doesn't include any explicit root as a subpath.
+    Find valid roots for the given paths that don't include any explicit root as a subpath.
 
-    Starts with the longest common prefix and shortens if needed.
+    Tries to find a single common root first. If that would include an explicit root,
+    groups paths by their top-level directory and finds the deepest valid root for each group.
     """
     if not paths:
-        return None
+        return []
 
     candidate = _longest_common_path_prefix(paths)
 
     # Check if candidate includes any explicit root as a subpath
-    while candidate:
-        includes_explicit = any(_is_path_under_root(root, candidate) for root in explicit_roots)
-        if not includes_explicit:
-            print_function_callback(f"Auto-determined additional root: {candidate}")
-            return candidate
+    includes_explicit = any(_is_path_under_root(root, candidate) for root in explicit_roots)
+    if not includes_explicit:
+        print_function_callback(f"Auto-determined additional root: {candidate}")
+        return [candidate]
 
-        # Shorten candidate by removing last component
-        parent = posixpath.dirname(candidate)
-        if parent == candidate:
-            # Can't shorten further (reached root)
-            break
-        candidate = parent
+    # The common root would include an explicit root - need to split into multiple roots
+    # Group paths by their first differing component after the problematic prefix
 
-    # Fallback: use individual paths as roots (shouldn't normally happen)
-    # This handles edge cases where paths are scattered
-    print_function_callback(f"Warning: Could not find common root for {len(paths)} paths")
-    return paths[0] if paths else None
+    # Find which explicit root is causing the problem
+    problematic_root = next(
+        (root for root in explicit_roots if _is_path_under_root(root, candidate)), None
+    )
+
+    if problematic_root is None:
+        # Shouldn't happen, but fallback
+        print_function_callback(f"Auto-determined additional root: {candidate}")
+        return [candidate]
+
+    # We need to group paths by their top-level directory relative to candidate
+    # For "/" candidate, group by first path component after /
+    # For "." candidate, group by first path component
+    # For other candidates, we need to find paths that don't go through the problematic root
+
+    if candidate == "/":
+        # Group by top-level directory (e.g., /data, /home)
+        paths_by_toplevel: Dict[str, List[str]] = {}
+        for path in paths:
+            # Extract top-level directory: "/data/foo" -> "/data"
+            parts = path.split("/")
+            if len(parts) >= 2 and parts[0] == "":
+                toplevel = "/" + parts[1]
+            else:
+                toplevel = path
+            if toplevel not in paths_by_toplevel:
+                paths_by_toplevel[toplevel] = []
+            paths_by_toplevel[toplevel].append(path)
+
+        # For each top-level group, find the deepest valid root
+        result: List[str] = []
+        for toplevel, group_paths in paths_by_toplevel.items():
+            # Find the longest common prefix within this group
+            group_common = _longest_common_path_prefix(group_paths)
+            # Check if it's valid
+            group_includes_explicit = any(
+                _is_path_under_root(root, group_common) for root in explicit_roots
+            )
+            if not group_includes_explicit:
+                print_function_callback(f"Auto-determined additional root: {group_common}")
+                result.append(group_common)
+            else:
+                # Need to recurse further within this group
+                group_roots = _find_valid_roots_for_paths(
+                    paths=group_paths,
+                    explicit_roots=explicit_roots,
+                    print_function_callback=print_function_callback,
+                )
+                result.extend(group_roots)
+        return result
+    elif candidate == ".":
+        # Group by top-level directory for relative paths
+        paths_by_toplevel = {}
+        for path in paths:
+            parts = path.split("/")
+            toplevel = parts[0]
+            if toplevel not in paths_by_toplevel:
+                paths_by_toplevel[toplevel] = []
+            paths_by_toplevel[toplevel].append(path)
+
+        result = []
+        for toplevel, group_paths in paths_by_toplevel.items():
+            # Find the longest common prefix within this group
+            group_common = _longest_common_path_prefix(group_paths)
+            # Check if it's valid
+            group_includes_explicit = any(
+                _is_path_under_root(root, group_common) for root in explicit_roots
+            )
+            if not group_includes_explicit:
+                print_function_callback(f"Auto-determined additional root: {group_common}")
+                result.append(group_common)
+            else:
+                # Need to recurse further within this group
+                group_roots = _find_valid_roots_for_paths(
+                    paths=group_paths,
+                    explicit_roots=explicit_roots,
+                    print_function_callback=print_function_callback,
+                )
+                result.extend(group_roots)
+        return result
+    else:
+        # candidate is a specific path like "/data" or "C:/projects"
+        # The problematic root is under candidate, so we need to split paths
+        # into those that go through the problematic root's parent vs others
+
+        # Group paths by their next component after candidate
+        candidate_depth = len(candidate.rstrip("/").split("/"))
+        paths_by_next: Dict[str, List[str]] = {}
+
+        for path in paths:
+            parts = path.split("/")
+            # Handle paths that start with empty string (absolute paths)
+            if parts and parts[0] == "":
+                # Absolute path - adjust for leading empty part
+                if len(parts) > candidate_depth:
+                    next_component = "/".join(parts[: candidate_depth + 1])
+                else:
+                    next_component = path
+            else:
+                # Relative path
+                if len(parts) > candidate_depth:
+                    next_component = "/".join(parts[: candidate_depth + 1])
+                else:
+                    next_component = path
+
+            if next_component not in paths_by_next:
+                paths_by_next[next_component] = []
+            paths_by_next[next_component].append(path)
+
+        result = []
+        for next_comp, group_paths in paths_by_next.items():
+            group_common = _longest_common_path_prefix(group_paths)
+            group_includes_explicit = any(
+                _is_path_under_root(root, group_common) for root in explicit_roots
+            )
+            if not group_includes_explicit:
+                print_function_callback(f"Auto-determined additional root: {group_common}")
+                result.append(group_common)
+            else:
+                # Still problematic - recurse
+                group_roots = _find_valid_roots_for_paths(
+                    paths=group_paths,
+                    explicit_roots=explicit_roots,
+                    print_function_callback=print_function_callback,
+                )
+                result.extend(group_roots)
+        return result

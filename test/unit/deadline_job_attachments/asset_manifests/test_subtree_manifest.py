@@ -904,3 +904,372 @@ class TestPathSeparatorHandling:
 
             paths = {p.path for p in result.paths}
             assert "wood.png" in paths
+
+
+class TestSubtreeManifestUNCPaths:
+    """Tests for Windows UNC path handling in subtree extraction.
+
+    These tests verify that:
+    - UNC paths (//server/share/...) are handled correctly
+    - The dir_lookup building doesn't infinite loop on UNC paths
+    - Subtree extraction works with UNC path roots
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    @patch.object(os, "name", "nt")
+    def test_unc_path_subtree_extraction(self) -> None:
+        """UNC path subtree extraction works correctly."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "//server/share/assets/textures/wood.png",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+                {
+                    "path": "//server/share/assets/textures/metal.png",
+                    "hash": "h2",
+                    "size": 200,
+                    "mtime": 2000,
+                },
+                {
+                    "path": "//server/share/assets/models/chair.blend",
+                    "hash": "h3",
+                    "size": 300,
+                    "mtime": 3000,
+                },
+            ],
+            dirs=[
+                {"path": "//server/share"},
+                {"path": "//server/share/assets"},
+                {"path": "//server/share/assets/textures"},
+                {"path": "//server/share/assets/models"},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "//server/share/assets/textures")
+
+        file_paths = {p.path for p in result.paths}
+        assert file_paths == {"wood.png", "metal.png"}
+
+    @patch.object(os, "name", "nt")
+    def test_unc_path_deep_nesting_no_infinite_loop(self) -> None:
+        """Deeply nested UNC paths don't cause infinite loop in dir_lookup building.
+
+        This tests the fix for posixpath.dirname("//server") returning "//server",
+        which previously caused an infinite loop.
+        """
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "//server/share/a/b/c/d/e/f/file.txt",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+            ],
+            dirs=[],  # No explicit dirs - forces dir_lookup to be built from file paths
+        )
+
+        # This should complete without hanging
+        result = subtree_manifest(manifest, "//server/share/a/b/c")
+
+        file_paths = {p.path for p in result.paths}
+        assert file_paths == {"d/e/f/file.txt"}
+
+    @patch.object(os, "name", "nt")
+    def test_unc_path_with_symlink_collapse(self) -> None:
+        """UNC paths with symlinks that need collapsing work correctly."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "//server/share/project/link",
+                    "symlink_target": "//server/share/shared/data",
+                },
+                {
+                    "path": "//server/share/shared/data/file.txt",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+            ],
+            dirs=[
+                {"path": "//server/share"},
+                {"path": "//server/share/project"},
+                {"path": "//server/share/shared"},
+                {"path": "//server/share/shared/data"},
+            ],
+        )
+
+        result = subtree_manifest(
+            manifest, "//server/share/project", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+        )
+
+        file_paths = {p.path for p in result.paths}
+        # The symlink should be collapsed to include the directory contents
+        assert "link/file.txt" in file_paths
+
+    @patch.object(os, "name", "nt")
+    def test_unc_path_multiple_servers(self) -> None:
+        """Manifest with files from multiple UNC servers works correctly."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "//server1/share/assets/file1.txt",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+                {
+                    "path": "//server1/share/assets/file2.txt",
+                    "hash": "h2",
+                    "size": 200,
+                    "mtime": 2000,
+                },
+                {
+                    "path": "//server2/share/assets/file3.txt",
+                    "hash": "h3",
+                    "size": 300,
+                    "mtime": 3000,
+                },
+            ],
+            dirs=[],
+        )
+
+        result = subtree_manifest(manifest, "//server1/share/assets")
+
+        file_paths = {p.path for p in result.paths}
+        # Only files from server1 should be included
+        assert file_paths == {"file1.txt", "file2.txt"}
+
+    @patch.object(os, "name", "nt")
+    def test_unc_path_share_root_subtree(self) -> None:
+        """Extracting subtree at UNC share root level works."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "//server/share/file1.txt",
+                    "hash": "h1",
+                    "size": 100,
+                    "mtime": 1000,
+                },
+                {
+                    "path": "//server/share/subdir/file2.txt",
+                    "hash": "h2",
+                    "size": 200,
+                    "mtime": 2000,
+                },
+            ],
+            dirs=[
+                {"path": "//server/share"},
+                {"path": "//server/share/subdir"},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "//server/share")
+
+        file_paths = {p.path for p in result.paths}
+        assert file_paths == {"file1.txt", "subdir/file2.txt"}
+
+
+class TestSubtreeManifestRelativePaths:
+    """Tests for relative path edge cases in subtree extraction.
+
+    These tests verify handling of:
+    - Relative paths with various directory structures
+    - Edge cases that might trip up path manipulation
+    """
+
+    def _create_v2025_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AssetManifest2025:
+        """Helper to create a v2025 manifest."""
+        file_entries = [ManifestFilePath2025(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def test_relative_path_single_component_subtree(self) -> None:
+        """Single component subtree works with relative paths."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "assets/file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "assets/sub/file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "other/file3.txt", "hash": "h3", "size": 300, "mtime": 3000},
+            ],
+            dirs=[
+                {"path": "assets"},
+                {"path": "assets/sub"},
+                {"path": "other"},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "assets")
+
+        file_paths = {p.path for p in result.paths}
+        assert file_paths == {"file1.txt", "sub/file2.txt"}
+
+    def test_relative_path_deep_subtree(self) -> None:
+        """Deeply nested relative subtree works correctly."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "a/b/c/d/e/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "a/b/c/d/other.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "a/b/c/outside.txt", "hash": "h3", "size": 300, "mtime": 3000},
+            ],
+            dirs=[],
+        )
+
+        result = subtree_manifest(manifest, "a/b/c/d")
+
+        file_paths = {p.path for p in result.paths}
+        assert file_paths == {"e/file.txt", "other.txt"}
+
+    def test_relative_path_similar_prefixes(self) -> None:
+        """Paths with similar prefixes are correctly distinguished."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "assets/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "assets2/file.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "assets_backup/file.txt", "hash": "h3", "size": 300, "mtime": 3000},
+            ],
+            dirs=[],
+        )
+
+        result = subtree_manifest(manifest, "assets")
+
+        file_paths = {p.path for p in result.paths}
+        # Only "assets/file.txt" should match, not "assets2" or "assets_backup"
+        assert file_paths == {"file.txt"}
+
+    def test_relative_path_with_symlink_within_subtree(self) -> None:
+        """Relative paths with symlinks pointing within subtree are preserved."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "project/src/link", "symlink_target": "project/src/main.py"},
+            ],
+            dirs=[
+                {"path": "project"},
+                {"path": "project/src"},
+            ],
+        )
+
+        result = subtree_manifest(
+            manifest, "project/src", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+        )
+
+        paths_by_name = {p.path: p for p in result.paths}
+        assert "main.py" in paths_by_name
+        assert "link" in paths_by_name
+        # Symlink target should be rebased
+        assert paths_by_name["link"].symlink_target == "main.py"
+
+    def test_relative_path_with_escaping_symlink(self) -> None:
+        """Relative paths with escaping symlinks are collapsed correctly."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "project/src/link", "symlink_target": "shared/data.txt"},
+                {"path": "shared/data.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+            dirs=[
+                {"path": "project"},
+                {"path": "project/src"},
+                {"path": "shared"},
+            ],
+        )
+
+        result = subtree_manifest(
+            manifest, "project/src", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+        )
+
+        paths_by_name = {p.path: p for p in result.paths}
+        assert "link" in paths_by_name
+        # Symlink should be collapsed to the target's content
+        assert paths_by_name["link"].symlink_target is None
+        assert paths_by_name["link"].hash == "h1"
+
+    def test_relative_path_empty_result(self) -> None:
+        """Subtree with no matching relative paths returns empty manifest."""
+        manifest = self._create_v2025_manifest(
+            files=[
+                {"path": "other/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+            dirs=[{"path": "other"}],
+        )
+
+        result = subtree_manifest(manifest, "nonexistent")
+
+        assert len(result.paths) == 0
+        assert result.totalSize == 0
+
+    def test_relative_path_preserves_all_metadata(self) -> None:
+        """All file metadata is preserved when extracting relative path subtree."""
+        # 256MB chunk size, so 3 chunks requires > 512MB (2 chunks) and <= 768MB (3 chunks)
+        # Use 700MB = 734003200 bytes
+        large_file_size = 700 * 1024 * 1024
+        manifest = self._create_v2025_manifest(
+            files=[
+                {
+                    "path": "project/data/large.bin",
+                    "chunkhashes": ["c1", "c2", "c3"],
+                    "size": large_file_size,
+                    "mtime": 1234567890,
+                    "runnable": False,
+                },
+                {
+                    "path": "project/bin/script.sh",
+                    "hash": "h1",
+                    "size": 500,
+                    "mtime": 1234567891,
+                    "runnable": True,
+                },
+            ],
+            dirs=[],
+        )
+
+        result = subtree_manifest(manifest, "project")
+
+        paths_by_name = {p.path: p for p in result.paths}
+
+        # Check large file metadata
+        large_file = paths_by_name["data/large.bin"]
+        assert large_file.chunkhashes == ["c1", "c2", "c3"]
+        assert large_file.size == large_file_size
+        assert large_file.mtime == 1234567890
+
+        # Check runnable file metadata
+        script = paths_by_name["bin/script.sh"]
+        assert script.runnable is True
+        assert script.hash == "h1"
