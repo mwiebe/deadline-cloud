@@ -39,10 +39,11 @@ Here are the operations for working with data snapshots:
 │         Collects from lists of directories and filenames into a         │
 │         snapshot with absolute paths. No hashing.                       │
 │                                                                         │
-│  2. HASH: (Manifest, abs_prefix?) → Manifest                            │
+│  2. HASH: AbsSnapshot → AbsSnapshot                                     │
 │         Computes hashes for all files in the manifest.                  │
+│         Requires absolute paths; raises error for relative paths.       │
 │                                                                         │
-│  3. HASH_UPLOAD: (Manifest, abs_prefix?, DataCache) → Manifest          │
+│  3. HASH_UPLOAD: (AbsSnapshot, DataCache) → AbsSnapshot                 │
 │         Pipelines read/hash/upload for all files, returning a           │
 │         manifest with hashes populated.                                 │
 │                                                                         │
@@ -285,17 +286,29 @@ for entry in manifest.paths:
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `collect_manifest()`:
+Fills in hashes for a manifest that was created by `collect_manifest()`. The input manifest must have absolute paths.
 
 ```python
 def hash_manifest(
     manifest: BaseAssetManifest,
-    root: Path | str,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> BaseAssetManifest:
 ```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `manifest` | Manifest with absolute paths and empty hashes (from `collect_manifest`) |
+| `hash_cache` | Optional hash cache for efficiency |
+| `force_rehash` | If `True`, ignore cache and recalculate all hashes |
+| `print_function_callback` | Progress callback for status messages |
+
+**Returns:** A NEW manifest with all hashes filled in
+
+**Raises:** `ValueError` if the manifest contains relative paths
 
 **Hash cache behavior:**
 
@@ -334,31 +347,26 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
     hash_manifest,
-    subtree_manifest,
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 
-# First collect the directory tree with absolute paths
+# Collect the directory tree with absolute paths
 abs_manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
     version=ManifestVersion.v2025_12_04_beta,
 )
 
-# Extract as relative paths
-unhashed = subtree_manifest(abs_manifest, "/projects/my_scene")
-
-# Then hash with a cache for efficiency
+# Hash with a cache for efficiency
 with HashCache("/tmp/hash_cache") as cache:
     hashed = hash_manifest(
-        manifest=unhashed,
-        root="/projects/my_scene",
+        manifest=abs_manifest,
         hash_cache=cache,
         force_rehash=False,  # Use cached hashes when available
     )
 
-# Now entries have their hashes filled in
+# Now entries have their hashes filled in (paths are still absolute)
 for entry in hashed.paths[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
@@ -370,8 +378,8 @@ for entry in hashed.paths[:2]:
 
 Output:
 ```
-  file: assets/model.blend hash=a1b2c3d4e5f67890...
-  large file: renders/output.exr (3 chunks)
+  file: /projects/my_scene/assets/model.blend hash=a1b2c3d4e5f67890...
+  large file: /projects/my_scene/renders/output.exr (3 chunks)
 ```
 
 ### 3. HASH_UPLOAD: `hash_upload_manifest()`

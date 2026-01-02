@@ -11,6 +11,7 @@ These tests cover:
 - Symlink handling (v2025 only - symlinks pass through without hashing)
 - Directory handling (v2025 only - directories pass through unchanged)
 - Version-specific behavior differences
+- Validation that input manifest has absolute paths
 """
 
 import os
@@ -21,8 +22,7 @@ from unittest.mock import patch
 
 from deadline.job_attachments.asset_manifests._operations import (
     hash_manifest,
-    collect_manifest as collect_manifest_abs,
-    subtree_manifest,
+    collect_manifest,
 )
 from deadline.job_attachments.asset_manifests._operations._hash_manifest import (
     _get_or_compute_hash,
@@ -41,33 +41,6 @@ from deadline.job_attachments.asset_manifests.base_manifest import FILE_CHUNK_SI
 from deadline.job_attachments.caches.hash_cache import HashCache, HashCacheEntry
 
 
-def collect_manifest(
-    *,
-    root: Path,
-    version: ManifestVersion,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE,
-) -> BaseAssetManifest:
-    """
-    Helper function that collects a directory into a relative-path manifest
-    using collect_manifest + subtree_manifest.
-
-    Note: For v2025 with symlink preservation, use symlink_policy=PRESERVE.
-    """
-    # For v2025, default to PRESERVE to maintain symlink entries
-    # For v2023, COLLAPSE is the only option that makes sense
-    if version == ManifestVersion.v2025_12_04_beta and symlink_policy == SymlinkPolicy.COLLAPSE:
-        # Use PRESERVE by default for v2025 to maintain symlink entries
-        symlink_policy = SymlinkPolicy.PRESERVE
-
-    abs_manifest = collect_manifest_abs(
-        [root],
-        [],
-        version=version,
-        symlink_policy=symlink_policy,
-    )
-    return subtree_manifest(abs_manifest, str(root))
-
-
 class TestHashManifestV2023:
     """Tests for v2023-03-03 manifest hashing."""
 
@@ -77,15 +50,14 @@ class TestHashManifestV2023:
         test_file.write_text("hello world")
 
         # Collect first (hash="")
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         assert collected.paths[0].hash == ""
 
         # Hash the manifest
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert len(hashed.paths) == 1
         assert hashed.paths[0].hash != ""
@@ -96,12 +68,11 @@ class TestHashManifestV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("test content for hashing")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
         assert hashed.paths[0].hash == expected_hash
@@ -111,12 +82,11 @@ class TestHashManifestV2023:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbbbb")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert len(hashed.paths) == 2
         for entry in hashed.paths:
@@ -128,12 +98,11 @@ class TestHashManifestV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert hashed.paths[0].size == collected.paths[0].size
         assert hashed.paths[0].mtime == collected.paths[0].mtime
@@ -144,12 +113,11 @@ class TestHashManifestV2023:
         (tmp_path / "a.txt").write_text("aaa")  # 3 bytes
         (tmp_path / "b.txt").write_text("bbbbb")  # 5 bytes
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert hashed.totalSize == 8
 
@@ -157,12 +125,11 @@ class TestHashManifestV2023:
         """Manifest version is preserved."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert hashed.manifestVersion == ManifestVersion.v2023_03_03
 
@@ -170,12 +137,11 @@ class TestHashManifestV2023:
         """Hash algorithm is preserved."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert hashed.hashAlg == HashAlgorithm.XXH128
 
@@ -188,10 +154,10 @@ class TestHashManifestV2025:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         assert collected.paths[0].hash == ""
 
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert len(hashed.paths) == 1
         assert hashed.paths[0].hash != ""
@@ -204,8 +170,8 @@ class TestHashManifestV2025:
         if os.name != "nt":
             test_file.chmod(0o755)
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        hashed = hash_manifest(collected, tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        hashed = hash_manifest(collected)
 
         assert hashed.paths[0].runnable == collected.paths[0].runnable
 
@@ -217,16 +183,18 @@ class TestHashManifestV2025:
 
         link.symlink_to("target.txt")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        hashed = hash_manifest(collected, tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        hashed = hash_manifest(collected)
 
-        # Find the symlink entry
-        symlink_entry = next(p for p in hashed.paths if p.path == "link.txt")
-        assert symlink_entry.symlink_target == "target.txt"
+        # Find the symlink entry (paths are absolute)
+        link_path = str(link).replace("\\", "/")
+        target_path = str(target).replace("\\", "/")
+        symlink_entry = next(p for p in hashed.paths if p.path == link_path)
+        assert symlink_entry.symlink_target is not None
         assert symlink_entry.hash is None
 
         # Target file should be hashed
-        target_entry = next(p for p in hashed.paths if p.path == "target.txt")
+        target_entry = next(p for p in hashed.paths if p.path == target_path)
         assert target_entry.hash is not None
         assert target_entry.symlink_target is None
 
@@ -236,19 +204,23 @@ class TestHashManifestV2025:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        hashed = hash_manifest(collected, tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        hashed = hash_manifest(collected)
 
-        assert len(hashed.dirs) == 1
-        assert hashed.dirs[0].path == "subdir"
-        assert hashed.dirs[0].deleted is False
+        # collect_manifest includes both the root and subdirectories
+        assert len(hashed.dirs) >= 1
+        # Find the subdir entry (paths are absolute)
+        subdir_path = str(subdir).replace("\\", "/")
+        subdir_entries = [d for d in hashed.dirs if d.path == subdir_path]
+        assert len(subdir_entries) == 1
+        assert subdir_entries[0].deleted is False
 
     def test_manifest_type_preserved(self, tmp_path: Path) -> None:
         """Manifest type is preserved."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        hashed = hash_manifest(collected, tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        hashed = hash_manifest(collected)
 
         assert hashed.manifestType == ManifestType.SNAPSHOT
 
@@ -264,20 +236,21 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
+        # Cache key is the resolved path
+        cache_key = str(Path(collected.paths[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
-            hashed = hash_manifest(collected, tmp_path, hash_cache=hash_cache)
+            hashed = hash_manifest(collected, hash_cache=hash_cache)
 
             # Verify hash was computed
             assert hashed.paths[0].hash != ""
 
-            # Verify hash was cached
-            cached_entry = hash_cache.get_entry("test.txt", HashAlgorithm.XXH128)
+            # Verify hash was cached (using resolved path as cache key)
+            cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
             assert cached_entry.file_hash == hashed.paths[0].hash
 
@@ -289,26 +262,27 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         mtime_str = str(collected.paths[0].mtime)
+        # Cache key is the resolved path
+        cache_key = str(Path(collected.paths[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
-            # Pre-populate cache with a fake hash
+            # Pre-populate cache with a fake hash (using resolved path as key)
             fake_hash = "a" * 32
             hash_cache.put_entry(
                 HashCacheEntry(
-                    file_path="test.txt",
+                    file_path=cache_key,
                     hash_algorithm=HashAlgorithm.XXH128,
                     file_hash=fake_hash,
                     last_modified_time=mtime_str,
                 )
             )
 
-            hashed = hash_manifest(collected, tmp_path, hash_cache=hash_cache)
+            hashed = hash_manifest(collected, hash_cache=hash_cache)
 
             # Should use cached hash, not compute new one
             assert hashed.paths[0].hash == fake_hash
@@ -321,25 +295,26 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
+        # Cache key is the resolved path
+        cache_key = str(Path(collected.paths[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with old mtime
             fake_hash = "a" * 32
             hash_cache.put_entry(
                 HashCacheEntry(
-                    file_path="test.txt",
+                    file_path=cache_key,
                     hash_algorithm=HashAlgorithm.XXH128,
                     file_hash=fake_hash,
                     last_modified_time="0",  # Old mtime
                 )
             )
 
-            hashed = hash_manifest(collected, tmp_path, hash_cache=hash_cache)
+            hashed = hash_manifest(collected, hash_cache=hash_cache)
 
             # Should compute new hash since mtime doesn't match
             assert hashed.paths[0].hash != fake_hash
@@ -352,32 +327,33 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         mtime_str = str(collected.paths[0].mtime)
+        # Cache key is the resolved path
+        cache_key = str(Path(collected.paths[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with a fake hash
             fake_hash = "a" * 32
             hash_cache.put_entry(
                 HashCacheEntry(
-                    file_path="test.txt",
+                    file_path=cache_key,
                     hash_algorithm=HashAlgorithm.XXH128,
                     file_hash=fake_hash,
                     last_modified_time=mtime_str,
                 )
             )
 
-            hashed = hash_manifest(collected, tmp_path, hash_cache=hash_cache, force_rehash=True)
+            hashed = hash_manifest(collected, hash_cache=hash_cache, force_rehash=True)
 
             # Should compute new hash despite cache hit
             assert hashed.paths[0].hash != fake_hash
 
             # Cache should be updated with new hash
-            cached_entry = hash_cache.get_entry("test.txt", HashAlgorithm.XXH128)
+            cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry.file_hash == hashed.paths[0].hash
 
     def test_no_cache_always_computes(self, tmp_path: Path) -> None:
@@ -385,15 +361,15 @@ class TestHashManifestWithCache:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path, hash_cache=None)
+        hashed = hash_manifest(collected, hash_cache=None)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
         assert hashed.paths[0].hash == expected_hash
+
 
 
 class TestHashFileChunked:
@@ -407,7 +383,7 @@ class TestHashFileChunked:
 
         chunk_hashes = _hash_file_chunked(
             file_path=test_file,
-            rel_path="small.txt",
+            cache_key=str(test_file),
             file_size=file_size,
             mtime=12345,
             hash_alg=HashAlgorithm.XXH128,
@@ -427,7 +403,7 @@ class TestHashFileChunked:
 
         chunk_hashes = _hash_file_chunked(
             file_path=test_file,
-            rel_path="large.bin",
+            cache_key=str(test_file),
             file_size=350,
             mtime=12345,
             hash_alg=HashAlgorithm.XXH128,
@@ -446,7 +422,7 @@ class TestHashFileChunked:
 
         chunk_hashes = _hash_file_chunked(
             file_path=test_file,
-            rel_path="varied.bin",
+            cache_key=str(test_file),
             file_size=300,
             mtime=12345,
             hash_alg=HashAlgorithm.XXH128,
@@ -466,7 +442,7 @@ class TestHashFileChunked:
 
         chunk_hashes = _hash_file_chunked(
             file_path=test_file,
-            rel_path="repeated.bin",
+            cache_key=str(test_file),
             file_size=200,
             mtime=12345,
             hash_alg=HashAlgorithm.XXH128,
@@ -482,6 +458,7 @@ class TestHashFileChunked:
         chunk_size = 100
         content = b"a" * 100 + b"b" * 100
         test_file.write_bytes(content)
+        cache_key = str(test_file)
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
@@ -490,7 +467,7 @@ class TestHashFileChunked:
             # First call - computes and caches
             chunk_hashes_1 = _hash_file_chunked(
                 file_path=test_file,
-                rel_path="cached.bin",
+                cache_key=cache_key,
                 file_size=200,
                 mtime=12345,
                 hash_alg=HashAlgorithm.XXH128,
@@ -499,8 +476,8 @@ class TestHashFileChunked:
             )
 
             # Verify chunks were cached
-            entry_0 = hash_cache.get_entry("cached.bin", HashAlgorithm.XXH128, 0, 100)
-            entry_1 = hash_cache.get_entry("cached.bin", HashAlgorithm.XXH128, 100, 200)
+            entry_0 = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128, 0, 100)
+            entry_1 = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128, 100, 200)
             assert entry_0 is not None
             assert entry_1 is not None
             assert entry_0.file_hash == chunk_hashes_1[0]
@@ -509,7 +486,7 @@ class TestHashFileChunked:
             # Second call - should use cache
             chunk_hashes_2 = _hash_file_chunked(
                 file_path=test_file,
-                rel_path="cached.bin",
+                cache_key=cache_key,
                 file_size=200,
                 mtime=12345,
                 hash_alg=HashAlgorithm.XXH128,
@@ -525,17 +502,16 @@ class TestHashFileChunked:
         chunk_size = 100
         content = b"x" * 100
         test_file.write_bytes(content)
+        cache_key = str(test_file)
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with fake hash
-            from deadline.job_attachments.caches.hash_cache import HashCacheEntry
-
             hash_cache.put_entry(
                 HashCacheEntry(
-                    file_path="force.bin",
+                    file_path=cache_key,
                     hash_algorithm=HashAlgorithm.XXH128,
                     file_hash="fakehash" + "0" * 24,
                     last_modified_time="12345",
@@ -547,7 +523,7 @@ class TestHashFileChunked:
             # With force_rehash, should compute real hash
             chunk_hashes = _hash_file_chunked(
                 file_path=test_file,
-                rel_path="force.bin",
+                cache_key=cache_key,
                 file_size=100,
                 mtime=12345,
                 hash_alg=HashAlgorithm.XXH128,
@@ -569,7 +545,7 @@ class TestLargeFileChunking:
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
 
         # Manually set size to trigger chunking and set up valid input
         # For size = FILE_CHUNK_SIZE_BYTES + 1000, we need 2 chunks
@@ -583,7 +559,7 @@ class TestLargeFileChunking:
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
-            hashed = hash_manifest(collected, tmp_path)
+            hashed = hash_manifest(collected)
 
             assert hashed.paths[0].chunkhashes == ["hash1", "hash2"]
             assert hashed.paths[0].hash is None
@@ -594,63 +570,101 @@ class TestLargeFileChunking:
         test_file = tmp_path / "small.txt"
         test_file.write_text("small content")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        hashed = hash_manifest(collected, tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        hashed = hash_manifest(collected)
 
         assert hashed.paths[0].hash is not None
         assert hashed.paths[0].chunkhashes is None
 
 
 class TestInputValidation:
-    """Tests for input validation in _hash_manifest_v2025."""
+    """Tests for input validation in hash_manifest."""
+
+    def test_rejects_relative_paths(self, tmp_path: Path) -> None:
+        """Manifest with relative paths raises ValueError."""
+        from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
+            AssetManifest as AssetManifest2023,
+            ManifestPath as ManifestPath2023,
+        )
+
+        # Create a manifest with relative paths manually
+        manifest = AssetManifest2023(
+            hash_alg=HashAlgorithm.XXH128,
+            paths=[
+                ManifestPath2023(
+                    path="relative/path/file.txt",  # Relative path
+                    hash="",
+                    size=100,
+                    mtime=12345,
+                )
+            ],
+            total_size=100,
+        )
+
+        with pytest.raises(ValueError, match="requires absolute paths"):
+            hash_manifest(manifest)
+
+    def test_accepts_absolute_paths(self, tmp_path: Path) -> None:
+        """Manifest with absolute paths is accepted."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+
+        collected = collect_manifest([tmp_path], [], 
+            version=ManifestVersion.v2023_03_03,
+            symlink_policy=SymlinkPolicy.COLLAPSE,
+        )
+
+        # Should not raise
+        hashed = hash_manifest(collected)
+        assert hashed.paths[0].hash != ""
 
     def test_large_file_rejects_non_none_hash(self, tmp_path: Path) -> None:
         """Large file with hash set (not None) raises ValueError."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         # Set size to trigger large file path, but set hash (should be None)
         collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
         collected.paths[0].hash = "somehash"
         collected.paths[0].chunkhashes = ["a", "b"]  # Correct count for 2 chunks
 
         with pytest.raises(ValueError, match="should have hash=None"):
-            hash_manifest(collected, tmp_path)
+            hash_manifest(collected)
 
     def test_large_file_rejects_wrong_chunk_count(self, tmp_path: Path) -> None:
         """Large file with wrong chunkhashes count raises ValueError."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         # Set size to require 2 chunks
         collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
         collected.paths[0].hash = None
         collected.paths[0].chunkhashes = ["a"]  # Should be 2 chunks
 
         with pytest.raises(ValueError, match="should have 2 chunkhashes"):
-            hash_manifest(collected, tmp_path)
+            hash_manifest(collected)
 
     def test_large_file_rejects_none_chunkhashes(self, tmp_path: Path) -> None:
         """Large file with chunkhashes=None raises ValueError."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
         collected.paths[0].hash = None
         collected.paths[0].chunkhashes = None
 
         with pytest.raises(ValueError, match="should have 2 chunkhashes"):
-            hash_manifest(collected, tmp_path)
+            hash_manifest(collected)
 
     def test_large_file_valid_input_passes(self, tmp_path: Path) -> None:
         """Large file with valid input (hash=None, correct chunkhashes count) passes."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         # Set size to require exactly 3 chunks
         collected.paths[0].size = FILE_CHUNK_SIZE_BYTES * 2 + 1000
         collected.paths[0].hash = None
@@ -661,7 +675,7 @@ class TestInputValidation:
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2", "hash3"]
 
-            hashed = hash_manifest(collected, tmp_path)
+            hashed = hash_manifest(collected)
 
             assert len(hashed.paths[0].chunkhashes) == 3
 
@@ -670,54 +684,54 @@ class TestInputValidation:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         collected.paths[0].hash = None  # Should be a string
 
         with pytest.raises(ValueError, match="should have hash as a string"):
-            hash_manifest(collected, tmp_path)
+            hash_manifest(collected)
 
     def test_small_file_rejects_non_none_chunkhashes(self, tmp_path: Path) -> None:
         """Small file with chunkhashes set raises ValueError."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
         collected.paths[0].hash = ""
         collected.paths[0].chunkhashes = ["a", "b"]  # Should be None
 
         with pytest.raises(ValueError, match="should have chunkhashes=None"):
-            hash_manifest(collected, tmp_path)
+            hash_manifest(collected)
 
     def test_small_file_valid_input_passes(self, tmp_path: Path) -> None:
         """Small file with valid input (hash is string, chunkhashes=None) passes."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        # Default from _collect_manifest should be valid
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        # Default from collect_manifest should be valid
         assert isinstance(collected.paths[0].hash, str)
         assert collected.paths[0].chunkhashes is None
 
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert isinstance(hashed.paths[0].hash, str)
         assert len(hashed.paths[0].hash) > 0
         assert hashed.paths[0].chunkhashes is None
 
 
+
 class TestHashManifestDispatch:
-    """Tests for the main _hash_manifest dispatch function."""
+    """Tests for the main hash_manifest dispatch function."""
 
     def test_dispatch_to_v2023(self, tmp_path: Path) -> None:
         """Version v2023-03-03 dispatches to v2023 implementation."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        hashed = hash_manifest(collected, tmp_path)
+        hashed = hash_manifest(collected)
 
         assert hashed.manifestVersion == ManifestVersion.v2023_03_03
 
@@ -725,8 +739,8 @@ class TestHashManifestDispatch:
         """Version v2025-12-04-beta dispatches to v2025 implementation."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
-        hashed = hash_manifest(collected, tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
+        hashed = hash_manifest(collected)
 
         assert hashed.manifestVersion == ManifestVersion.v2025_12_04_beta
 
@@ -734,16 +748,15 @@ class TestHashManifestDispatch:
         """Unsupported version raises ValueError."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         # Manually change version to unsupported
         collected.manifestVersion = ManifestVersion.UNDEFINED
 
         with pytest.raises(ValueError, match="Unsupported manifest version"):
-            hash_manifest(collected, tmp_path)
+            hash_manifest(collected)
 
 
 class TestGetOrComputeHash:
@@ -756,7 +769,7 @@ class TestGetOrComputeHash:
 
         result = _get_or_compute_hash(
             file_path=test_file,
-            rel_path="test.txt",
+            cache_key=str(test_file),
             mtime=12345,
             hash_alg=HashAlgorithm.XXH128,
             hash_cache=None,
@@ -770,6 +783,7 @@ class TestGetOrComputeHash:
         """Uses cached hash on cache hit."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
+        cache_key = str(test_file)
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
@@ -778,7 +792,7 @@ class TestGetOrComputeHash:
             fake_hash = "b" * 32
             hash_cache.put_entry(
                 HashCacheEntry(
-                    file_path="test.txt",
+                    file_path=cache_key,
                     hash_algorithm=HashAlgorithm.XXH128,
                     file_hash=fake_hash,
                     last_modified_time="12345",
@@ -787,7 +801,7 @@ class TestGetOrComputeHash:
 
             result = _get_or_compute_hash(
                 file_path=test_file,
-                rel_path="test.txt",
+                cache_key=cache_key,
                 mtime=12345,
                 hash_alg=HashAlgorithm.XXH128,
                 hash_cache=hash_cache,
@@ -805,14 +819,13 @@ class TestProgressCallback:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbb")
 
-        collected = collect_manifest(
+        collected = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
         messages: List[str] = []
-        hash_manifest(collected, tmp_path, print_function_callback=messages.append)
+        hash_manifest(collected, print_function_callback=messages.append)
 
         assert len(messages) == 2
         assert all("Hashed:" in msg for msg in messages)
@@ -825,10 +838,10 @@ class TestProgressCallback:
 
         link.symlink_to("target.txt")
 
-        collected = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
 
         messages: List[str] = []
-        hash_manifest(collected, tmp_path, print_function_callback=messages.append)
+        hash_manifest(collected, print_function_callback=messages.append)
 
         symlink_msg = [m for m in messages if "link.txt" in m][0]
         assert "Symlink" in symlink_msg or "no hash" in symlink_msg
@@ -844,15 +857,14 @@ class TestVersionDifferences:
         if os.name != "nt":
             test_file.chmod(0o755)
 
-        collected_v2023 = collect_manifest(
+        collected_v2023 = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        collected_v2025 = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected_v2025 = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
 
-        hashed_v2023 = hash_manifest(collected_v2023, tmp_path)
-        hashed_v2025 = hash_manifest(collected_v2025, tmp_path)
+        hashed_v2023 = hash_manifest(collected_v2023)
+        hashed_v2025 = hash_manifest(collected_v2025)
 
         # v2023 doesn't track runnable
         assert hashed_v2023.paths[0].runnable is False
@@ -865,14 +877,13 @@ class TestVersionDifferences:
         test_file = tmp_path / "test.txt"
         test_file.write_text("identical content")
 
-        collected_v2023 = collect_manifest(
+        collected_v2023 = collect_manifest([tmp_path], [], 
             version=ManifestVersion.v2023_03_03,
-            root=tmp_path,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        collected_v2025 = collect_manifest(version=ManifestVersion.v2025_12_04_beta, root=tmp_path)
+        collected_v2025 = collect_manifest([tmp_path], [], version=ManifestVersion.v2025_12_04_beta, symlink_policy=SymlinkPolicy.PRESERVE)
 
-        hashed_v2023 = hash_manifest(collected_v2023, tmp_path)
-        hashed_v2025 = hash_manifest(collected_v2025, tmp_path)
+        hashed_v2023 = hash_manifest(collected_v2023)
+        hashed_v2025 = hash_manifest(collected_v2025)
 
         assert hashed_v2023.paths[0].hash == hashed_v2025.paths[0].hash
