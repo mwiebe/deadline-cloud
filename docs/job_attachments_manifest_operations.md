@@ -188,9 +188,9 @@ The v2023 and v2025 modules continue to provide:
 
 | Task | Status | Notes |
 |------|--------|-------|
-| Create `manifest.py` with unified classes | ☐ Not started | |
-| Create mixin classes for validation | ☐ Not started | |
-| Create concrete manifest classes | ☐ Not started | |
+| Create `manifest.py` with unified classes | ✓ Done | Created Manifest, ManifestFilePath, ManifestDirectoryPath |
+| Create mixin classes for validation | ✓ Done | AbsManifestMixin, RelManifestMixin, SnapshotManifestMixin, DiffManifestMixin |
+| Create concrete manifest classes | ✓ Done | AbsSnapshotManifest, AbsDiffManifest, RelSnapshotManifest, RelDiffManifest |
 | Update `base_manifest.py` to use aliases | ☐ Not started | |
 | Update v2023 module for compatibility | ☐ Not started | |
 | Update v2025 module for compatibility | ☐ Not started | |
