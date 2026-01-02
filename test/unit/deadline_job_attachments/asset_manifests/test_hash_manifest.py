@@ -50,7 +50,7 @@ class TestHashManifestV2023:
         test_file.write_text("hello world")
 
         # Collect first (hash="")
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -68,7 +68,7 @@ class TestHashManifestV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("test content for hashing")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -82,7 +82,7 @@ class TestHashManifestV2023:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbbbb")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -98,7 +98,7 @@ class TestHashManifestV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -113,7 +113,7 @@ class TestHashManifestV2023:
         (tmp_path / "a.txt").write_text("aaa")  # 3 bytes
         (tmp_path / "b.txt").write_text("bbbbb")  # 5 bytes
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -125,7 +125,7 @@ class TestHashManifestV2023:
         """Manifest version is preserved."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -137,7 +137,7 @@ class TestHashManifestV2023:
         """Hash algorithm is preserved."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -236,7 +236,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -262,7 +262,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -295,7 +295,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -327,7 +327,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -361,7 +361,7 @@ class TestHashManifestWithCache:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -609,7 +609,7 @@ class TestInputValidation:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -727,7 +727,7 @@ class TestHashManifestDispatch:
         """Version v2023-03-03 dispatches to v2023 implementation."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -748,7 +748,7 @@ class TestHashManifestDispatch:
         """Unsupported version raises ValueError."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -819,7 +819,7 @@ class TestProgressCallback:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbb")
 
-        collected = collect_manifest([tmp_path], [], 
+        collected = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -857,7 +857,7 @@ class TestVersionDifferences:
         if os.name != "nt":
             test_file.chmod(0o755)
 
-        collected_v2023 = collect_manifest([tmp_path], [], 
+        collected_v2023 = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -877,7 +877,7 @@ class TestVersionDifferences:
         test_file = tmp_path / "test.txt"
         test_file.write_text("identical content")
 
-        collected_v2023 = collect_manifest([tmp_path], [], 
+        collected_v2023 = collect_manifest([tmp_path], [],
             version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
@@ -887,3 +887,278 @@ class TestVersionDifferences:
         hashed_v2025 = hash_manifest(collected_v2025)
 
         assert hashed_v2023.paths[0].hash == hashed_v2025.paths[0].hash
+
+
+class TestHashDiffManifest:
+    """Tests for hashing diff manifests (v2025 only)."""
+
+    def test_diff_manifest_hashes_new_files(self, tmp_path: Path) -> None:
+        """Diff manifest with new files gets hashes computed."""
+        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+            AssetManifest as AssetManifest2025,
+            ManifestFilePath as ManifestFilePath2025,
+            ManifestDirectoryPath as ManifestDirectoryPath2025,
+        )
+
+        # Create a test file
+        test_file = tmp_path / "new_file.txt"
+        test_file.write_text("new content")
+        file_stat = test_file.stat()
+        abs_path = str(test_file).replace("\\", "/")
+
+        # Create a diff manifest with a new file (hash="")
+        diff_manifest = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath2025(
+                    path=abs_path,
+                    hash="",  # Empty hash to be filled
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+            manifest_type=ManifestType.DIFF,
+            parent_manifest_hash="parent123",
+        )
+
+        hashed = hash_manifest(diff_manifest)
+
+        # Verify hash was computed
+        assert hashed.paths[0].hash != ""
+        assert len(hashed.paths[0].hash) == 32
+        # Verify manifest type is preserved
+        assert hashed.manifestType == ManifestType.DIFF
+        # Verify parent hash is preserved
+        assert hashed.parentManifestHash == "parent123"
+
+    def test_diff_manifest_preserves_deleted_entries(self, tmp_path: Path) -> None:
+        """Diff manifest deleted entries are passed through unchanged."""
+        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+            AssetManifest as AssetManifest2025,
+            ManifestFilePath as ManifestFilePath2025,
+            ManifestDirectoryPath as ManifestDirectoryPath2025,
+        )
+
+        # Create a diff manifest with a deleted file entry
+        diff_manifest = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath2025(
+                    path="/some/deleted/file.txt",
+                    deleted=True,
+                )
+            ],
+            total_size=0,
+            manifest_type=ManifestType.DIFF,
+            parent_manifest_hash="parent456",
+        )
+
+        hashed = hash_manifest(diff_manifest)
+
+        # Verify deleted entry is preserved
+        assert len(hashed.paths) == 1
+        assert hashed.paths[0].deleted is True
+        assert hashed.paths[0].path == "/some/deleted/file.txt"
+        # Verify manifest type is preserved
+        assert hashed.manifestType == ManifestType.DIFF
+
+    def test_diff_manifest_preserves_deleted_directories(self, tmp_path: Path) -> None:
+        """Diff manifest deleted directory entries are passed through unchanged."""
+        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+            AssetManifest as AssetManifest2025,
+            ManifestFilePath as ManifestFilePath2025,
+            ManifestDirectoryPath as ManifestDirectoryPath2025,
+        )
+
+        # Create a diff manifest with a deleted directory entry
+        diff_manifest = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[
+                ManifestDirectoryPath2025(
+                    path="/some/deleted/dir",
+                    deleted=True,
+                )
+            ],
+            paths=[],
+            total_size=0,
+            manifest_type=ManifestType.DIFF,
+        )
+
+        hashed = hash_manifest(diff_manifest)
+
+        # Verify deleted directory is preserved
+        assert len(hashed.dirs) == 1
+        assert hashed.dirs[0].deleted is True
+        assert hashed.dirs[0].path == "/some/deleted/dir"
+        # Verify manifest type is preserved
+        assert hashed.manifestType == ManifestType.DIFF
+
+    def test_diff_manifest_mixed_entries(self, tmp_path: Path) -> None:
+        """Diff manifest with new, modified, and deleted entries."""
+        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+            AssetManifest as AssetManifest2025,
+            ManifestFilePath as ManifestFilePath2025,
+            ManifestDirectoryPath as ManifestDirectoryPath2025,
+        )
+
+        # Create test files
+        new_file = tmp_path / "new.txt"
+        new_file.write_text("new content")
+        new_stat = new_file.stat()
+        new_path = str(new_file).replace("\\", "/")
+
+        modified_file = tmp_path / "modified.txt"
+        modified_file.write_text("modified content")
+        mod_stat = modified_file.stat()
+        mod_path = str(modified_file).replace("\\", "/")
+
+        # Create a diff manifest with mixed entries
+        diff_manifest = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[
+                ManifestDirectoryPath2025(path="/new/dir", deleted=False),
+                ManifestDirectoryPath2025(path="/deleted/dir", deleted=True),
+            ],
+            paths=[
+                # New file
+                ManifestFilePath2025(
+                    path=new_path,
+                    hash="",
+                    size=int(new_stat.st_size),
+                    mtime=int(new_stat.st_mtime_ns // 1000),
+                ),
+                # Modified file
+                ManifestFilePath2025(
+                    path=mod_path,
+                    hash="",
+                    size=int(mod_stat.st_size),
+                    mtime=int(mod_stat.st_mtime_ns // 1000),
+                ),
+                # Deleted file
+                ManifestFilePath2025(
+                    path="/old/deleted.txt",
+                    deleted=True,
+                ),
+            ],
+            total_size=int(new_stat.st_size) + int(mod_stat.st_size),
+            manifest_type=ManifestType.DIFF,
+            parent_manifest_hash="parent789",
+        )
+
+        hashed = hash_manifest(diff_manifest)
+
+        # Verify manifest type preserved
+        assert hashed.manifestType == ManifestType.DIFF
+        assert hashed.parentManifestHash == "parent789"
+
+        # Verify directories
+        assert len(hashed.dirs) == 2
+        new_dir = next(d for d in hashed.dirs if d.path == "/new/dir")
+        deleted_dir = next(d for d in hashed.dirs if d.path == "/deleted/dir")
+        assert new_dir.deleted is False
+        assert deleted_dir.deleted is True
+
+        # Verify files
+        assert len(hashed.paths) == 3
+
+        # New file should be hashed
+        new_entry = next(p for p in hashed.paths if p.path == new_path)
+        assert new_entry.hash != ""
+        assert new_entry.deleted is False
+
+        # Modified file should be hashed
+        mod_entry = next(p for p in hashed.paths if p.path == mod_path)
+        assert mod_entry.hash != ""
+        assert mod_entry.deleted is False
+
+        # Deleted file should be unchanged
+        del_entry = next(p for p in hashed.paths if p.path == "/old/deleted.txt")
+        assert del_entry.deleted is True
+
+    def test_diff_manifest_with_symlinks(self, tmp_path: Path) -> None:
+        """Diff manifest with symlink entries passes them through unchanged."""
+        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+            AssetManifest as AssetManifest2025,
+            ManifestFilePath as ManifestFilePath2025,
+            ManifestDirectoryPath as ManifestDirectoryPath2025,
+        )
+
+        # Create a diff manifest with a symlink entry
+        # Note: In absolute-path manifests, symlink targets must also be absolute
+        diff_manifest = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath2025(
+                    path="/some/new/link.txt",
+                    symlink_target="/some/absolute/target.txt",
+                )
+            ],
+            total_size=0,
+            manifest_type=ManifestType.DIFF,
+        )
+
+        hashed = hash_manifest(diff_manifest)
+
+        # Verify symlink is preserved with absolute target
+        assert len(hashed.paths) == 1
+        assert hashed.paths[0].symlink_target == "/some/absolute/target.txt"
+        assert hashed.paths[0].hash is None
+        # Verify manifest type is preserved
+        assert hashed.manifestType == ManifestType.DIFF
+
+    def test_snapshot_manifest_type_preserved(self, tmp_path: Path) -> None:
+        """Snapshot manifest type is preserved after hashing."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+
+        collected = collect_manifest(
+            [tmp_path], [],
+            version=ManifestVersion.v2025_12_04_beta,
+            symlink_policy=SymlinkPolicy.PRESERVE,
+        )
+
+        # collect_manifest creates SNAPSHOT type
+        assert collected.manifestType == ManifestType.SNAPSHOT
+
+        hashed = hash_manifest(collected)
+
+        # Verify snapshot type is preserved
+        assert hashed.manifestType == ManifestType.SNAPSHOT
+
+    def test_diff_manifest_parent_hash_none_preserved(self, tmp_path: Path) -> None:
+        """Diff manifest with no parent hash preserves None."""
+        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
+            AssetManifest as AssetManifest2025,
+            ManifestFilePath as ManifestFilePath2025,
+            ManifestDirectoryPath as ManifestDirectoryPath2025,
+        )
+
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("content")
+        file_stat = test_file.stat()
+        abs_path = str(test_file).replace("\\", "/")
+
+        diff_manifest = AssetManifest2025(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath2025(
+                    path=abs_path,
+                    hash="",
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+            manifest_type=ManifestType.DIFF,
+            parent_manifest_hash=None,  # No parent hash
+        )
+
+        hashed = hash_manifest(diff_manifest)
+
+        assert hashed.manifestType == ManifestType.DIFF
+        assert hashed.parentManifestHash is None

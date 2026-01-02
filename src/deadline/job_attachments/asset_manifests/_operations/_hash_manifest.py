@@ -1,10 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Module for filling in hashes for manifest objects that were created by collect_manifest.
+Module for filling in hashes for manifest objects that were created by collect_manifest
+or compute_diff_manifest.
 
 This module implements the HASH operation from the composable manifest operations design:
-    HASH: AbsSnapshot (with hash="") → AbsSnapshot (with hashes filled in)
+    HASH: AbsManifest (with hash="") → AbsManifest (with hashes filled in)
+
+Where AbsManifest can be either:
+    - AbsSnapshot: A full directory tree snapshot with absolute paths
+    - AbsDiff: A diff manifest with absolute paths (contains new/modified/deleted entries)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
@@ -54,17 +59,20 @@ def hash_manifest(
     """
     Fill in hashes for a manifest structure with absolute paths.
 
-    Given a manifest with hash="" for file entries (from collect_manifest),
-    computes and fills in the actual hashes.
+    Given a manifest with hash="" for file entries (from collect_manifest or
+    compute_diff_manifest), computes and fills in the actual hashes.
 
     Args:
-        manifest: Manifest with absolute paths and empty hashes (from collect_manifest)
+        manifest: Manifest with absolute paths and empty hashes. Can be either:
+            - A snapshot manifest (from collect_manifest)
+            - A diff manifest (from compute_diff_manifest with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
         print_function_callback: Progress callback
 
     Returns:
-        A NEW manifest with all hashes filled in
+        A NEW manifest with all hashes filled in. The manifest type (snapshot/diff)
+        and parentManifestHash are preserved from the input.
 
     Raises:
         ValueError: If the manifest contains relative paths (paths must be absolute)
@@ -77,10 +85,16 @@ def hash_manifest(
         - If force_rehash=True: always compute hash, update cache
         - If hash_cache is None: always compute hash
 
+    Manifest Type Handling:
+        - Snapshot manifests: All file entries are hashed
+        - Diff manifests: Only new/modified file entries are hashed;
+          deleted entries are passed through unchanged (no hash needed)
+
     Note:
-        - Input manifest must have absolute paths (from collect_manifest)
+        - Input manifest must have absolute paths (from collect_manifest or join_manifest)
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
+        - Deleted entries are unchanged (they mark deletions, no hash needed)
         - For v2025 large files (>256MB): computes chunkhashes
         - Returns a NEW manifest (does not mutate input)
     """

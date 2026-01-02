@@ -39,11 +39,12 @@ Here are the operations for working with data snapshots:
 │         Collects from lists of directories and filenames into a         │
 │         snapshot with absolute paths. No hashing.                       │
 │                                                                         │
-│  2. HASH: AbsSnapshot → AbsSnapshot                                     │
+│  2. HASH: AbsManifest → AbsManifest                                     │
 │         Computes hashes for all files in the manifest.                  │
+│         Works with both snapshots and diffs.                            │
 │         Requires absolute paths; raises error for relative paths.       │
 │                                                                         │
-│  3. HASH_UPLOAD: (AbsSnapshot, DataCache) → AbsSnapshot                 │
+│  3. HASH_UPLOAD: (AbsManifest, DataCache) → AbsManifest                 │
 │         Pipelines read/hash/upload for all files, returning a           │
 │         manifest with hashes populated.                                 │
 │                                                                         │
@@ -157,6 +158,49 @@ This convention ensures manifests are portable across platforms:
 4. **All operations:** Path comparisons and manipulations use forward slashes consistently.
 
 **Note:** Operations that accept path parameters (SUBTREE, JOIN) normalize backslashes to forward slashes only when running on Windows. On POSIX systems, backslashes are preserved as valid filename characters.
+
+## Symlink Target Path Consistency
+
+**Symlink targets must use the same path style (absolute or relative) as the manifest's entry paths.**
+
+| Manifest Type | Entry Paths | Symlink Targets |
+|---------------|-------------|-----------------|
+| AbsSnapshot / AbsDiff | Absolute (e.g., `/projects/scene/file.txt`) | Absolute (e.g., `/projects/scene/target.txt`) |
+| RelSnapshot / RelDiff | Relative (e.g., `scene/file.txt`) | Relative (e.g., `scene/target.txt`) |
+
+**Important:** In relative-path manifests, symlink targets are relative to the manifest root, NOT relative to the symlink's location. This differs from on-filesystem symlink representations where targets are typically relative to the symlink's parent directory.
+
+| Context | Symlink Target Interpretation |
+|---------|------------------------------|
+| Filesystem | Relative to symlink's parent directory |
+| Manifest (relative) | Relative to manifest root |
+
+This consistency requirement ensures:
+
+1. **Portability:** Relative manifests can be relocated without breaking symlink references
+2. **Correctness:** Operations like SUBTREE and JOIN can transform symlink targets consistently with entry paths
+3. **Validation:** Tools can verify manifest integrity by checking path style consistency
+
+**Example - Absolute manifest with symlinks:**
+
+```python
+# In an absolute-path manifest, symlink targets are also absolute
+ManifestFilePath(
+    path="/projects/my_scene/link.txt",
+    symlink_target="/projects/my_scene/target.txt",  # Absolute target
+)
+```
+
+**Example - Relative manifest with symlinks:**
+
+```python
+# In a relative-path manifest, symlink targets are relative to manifest root
+# NOT relative to the symlink's parent directory
+ManifestFilePath(
+    path="my_scene/link.txt",
+    symlink_target="my_scene/target.txt",  # Relative to manifest root, not to my_scene/
+)
+```
 
 ## Module Organization
 
@@ -286,7 +330,7 @@ for entry in manifest.paths:
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `collect_manifest()`. The input manifest must have absolute paths.
+Fills in hashes for a manifest that was created by `collect_manifest()` or `compute_diff_manifest()`. The input manifest must have absolute paths.
 
 ```python
 def hash_manifest(
@@ -301,12 +345,12 @@ def hash_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and empty hashes (from `collect_manifest`) |
+| `manifest` | Manifest with absolute paths and empty hashes. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `print_function_callback` | Progress callback for status messages |
 
-**Returns:** A NEW manifest with all hashes filled in
+**Returns:** A NEW manifest with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -333,15 +377,24 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 | Regular file (≤256MB) | Compute single hash |
 | Large file (>256MB) | Compute chunkhashes |
 | Symlink | Pass through unchanged |
-| Deleted marker | Pass through unchanged |
+| Deleted marker | Pass through unchanged (diff manifests only) |
 | Directory | Pass through unchanged |
+
+**Manifest type handling:**
+
+| Manifest Type | Behavior |
+|---------------|----------|
+| Snapshot | All file entries are hashed |
+| Diff | Only new/modified file entries are hashed; deleted entries pass through unchanged |
+
+The `manifestType` and `parentManifestHash` fields are preserved from the input manifest.
 
 **Helper functions:**
 
 - `_get_or_compute_hash()` - Gets hash from cache or computes it (supports byte ranges)
 - `_hash_file_chunked()` - Hashes large file in chunks with cache support
 
-**Example:**
+**Example - Hashing a snapshot:**
 
 ```python
 from deadline.job_attachments.asset_manifests._operations import (
@@ -380,6 +433,33 @@ Output:
 ```
   file: /projects/my_scene/assets/model.blend hash=a1b2c3d4e5f67890...
   large file: /projects/my_scene/renders/output.exr (3 chunks)
+```
+
+**Example - Hashing a diff manifest:**
+
+```python
+from deadline.job_attachments.asset_manifests._operations import (
+    compute_diff_manifest,
+    hash_manifest,
+)
+
+# Compute a diff between two snapshots (with ignore_hashes=True for fast comparison)
+diff = compute_diff_manifest(
+    parent=parent_snapshot,
+    current=current_snapshot,
+    parent_manifest_hash="abc123...",
+    ignore_hashes=True,  # Compare by mtime/size only
+)
+
+# Now hash the diff to fill in hashes for new/modified files
+hashed_diff = hash_manifest(diff)
+
+# Deleted entries are preserved unchanged
+for entry in hashed_diff.paths:
+    if entry.deleted:
+        print(f"  deleted: {entry.path}")
+    else:
+        print(f"  new/modified: {entry.path} hash={entry.hash[:16]}...")
 ```
 
 ### 3. HASH_UPLOAD: `hash_upload_manifest()`
