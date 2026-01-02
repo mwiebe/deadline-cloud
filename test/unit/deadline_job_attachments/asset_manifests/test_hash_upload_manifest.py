@@ -81,7 +81,7 @@ class TestChunkWorkItem:
         """Test creating a chunk work item."""
         item = _ChunkWorkItem(
             file_path=Path("/test/file.txt"),
-            rel_path="file.txt",
+            cache_key="/test/file.txt",
             file_size=1000,
             mtime=12345,
             chunk_index=0,
@@ -89,7 +89,7 @@ class TestChunkWorkItem:
             chunk_end=1000,
         )
         assert item.file_path == Path("/test/file.txt")
-        assert item.rel_path == "file.txt"
+        assert item.cache_key == "/test/file.txt"
         assert item.file_size == 1000
         assert item.chunk_index == 0
         assert item.data is None
@@ -125,13 +125,11 @@ class TestHashUploadManifestV2023:
             total_size=0,
         )
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = hash_upload_manifest(
-                manifest=manifest,
-                root=tmpdir,
-                s3_bucket="test-bucket",
-                s3_key_prefix="Data",
-            )
+        result = hash_upload_manifest(
+            manifest=manifest,
+            s3_bucket="test-bucket",
+            s3_key_prefix="Data",
+        )
 
         assert isinstance(result, AssetManifest2023)
         assert len(result.paths) == 0
@@ -169,11 +167,14 @@ class TestHashUploadManifestV2023:
             test_file.write_text("Hello, World!")
             file_stat = test_file.stat()
 
+            # Use absolute path in manifest (as required by HASH_UPLOAD)
+            abs_path = str(test_file.as_posix())
+
             manifest = AssetManifest2023(
                 hash_alg=HashAlgorithm.XXH128,
                 paths=[
                     ManifestPath2023(
-                        path="test.txt",
+                        path=abs_path,
                         hash="",  # Empty hash to be filled
                         size=int(file_stat.st_size),
                         mtime=int(file_stat.st_mtime_ns // 1000),
@@ -184,7 +185,6 @@ class TestHashUploadManifestV2023:
 
             result = hash_upload_manifest(
                 manifest=manifest,
-                root=tmpdir,
                 s3_bucket="test-bucket",
                 s3_key_prefix="Data",
             )
@@ -192,7 +192,7 @@ class TestHashUploadManifestV2023:
         assert isinstance(result, AssetManifest2023)
         assert len(result.paths) == 1
         assert result.paths[0].hash != ""  # Hash should be filled in
-        assert result.paths[0].path == "test.txt"
+        assert result.paths[0].path == abs_path
 
         # Verify S3 upload was called
         mock_s3_client.put_object.assert_called()
@@ -221,28 +221,27 @@ class TestHashUploadManifestV2025:
         mock_s3_client = MagicMock()
         mock_get_s3_client.return_value = mock_s3_client
 
+        # Use absolute paths as required by HASH_UPLOAD
         manifest = AssetManifest2025(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
                 ManifestFilePath2025(
-                    path="link.txt",
-                    symlink_target="target.txt",
+                    path="/test/link.txt",
+                    symlink_target="/test/target.txt",
                 )
             ],
             total_size=0,
         )
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = hash_upload_manifest(
-                manifest=manifest,
-                root=tmpdir,
-                s3_bucket="test-bucket",
-                s3_key_prefix="Data",
-            )
+        result = hash_upload_manifest(
+            manifest=manifest,
+            s3_bucket="test-bucket",
+            s3_key_prefix="Data",
+        )
 
         assert isinstance(result, AssetManifest2025)
         assert len(result.paths) == 1
-        assert result.paths[0].symlink_target == "target.txt"
+        assert result.paths[0].symlink_target == "/test/target.txt"
         # Symlinks should not trigger S3 uploads
         mock_s3_client.put_object.assert_not_called()

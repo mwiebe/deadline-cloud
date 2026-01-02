@@ -391,7 +391,6 @@ Fills in hashes for a manifest AND uploads file content to S3 in a pipelined man
 ```python
 def hash_upload_manifest(
     manifest: BaseAssetManifest,
-    root: Path | str,
     s3_bucket: str,
     s3_key_prefix: str,
     boto3_session: Optional[boto3.Session] = None,
@@ -408,8 +407,7 @@ def hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with empty hashes (from `collect_manifest`) |
-| `root` | Root directory path (needed to read files) |
+| `manifest` | Manifest with absolute paths and empty hashes (from `collect_manifest`) |
 | `s3_bucket` | S3 bucket name for uploads |
 | `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
 | `boto3_session` | Optional boto3 session for AWS credentials |
@@ -420,7 +418,9 @@ def hash_upload_manifest(
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
-**Returns:** A NEW manifest with all hashes filled in (same as HASH operation output)
+**Returns:** A NEW manifest with all hashes filled in
+
+**Raises:** `ValueError` if the manifest contains relative paths
 
 **Pipelined Architecture:**
 
@@ -534,28 +534,23 @@ When both caches hit, the file is completely skipped (no read, no hash, no uploa
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
     hash_upload_manifest,
-    subtree_manifest,
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
-# First collect the directory tree with absolute paths
+# Collect the directory tree with absolute paths
 abs_manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
     version=ManifestVersion.v2025_12_04_beta,
 )
 
-# Extract as relative paths
-unhashed = subtree_manifest(abs_manifest, "/projects/my_scene")
-
-# Hash and upload in a single pipelined pass
+# Hash and upload in a single pipelined pass (manifest has absolute paths)
 with HashCache("/tmp/hash_cache") as hash_cache:
     with S3CheckCache("/tmp/s3_cache") as s3_cache:
         hashed = hash_upload_manifest(
-            manifest=unhashed,
-            root="/projects/my_scene",
+            manifest=abs_manifest,
             s3_bucket="my-job-attachments-bucket",
             s3_key_prefix="Data",
             hash_cache=hash_cache,
@@ -563,7 +558,7 @@ with HashCache("/tmp/hash_cache") as hash_cache:
             max_memory_bytes=1024 * 1024 * 1024,  # 1GB memory limit
         )
 
-# Now entries have their hashes filled in AND files are uploaded
+# Now entries have their hashes filled in AND files are uploaded (paths are still absolute)
 for entry in hashed.paths[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
@@ -575,8 +570,8 @@ for entry in hashed.paths[:2]:
 
 Output:
 ```
-  file: assets/model.blend hash=a1b2c3d4e5f67890... - uploaded
-  large file: renders/output.exr (3 chunks) - uploaded
+  file: /projects/my_scene/assets/model.blend hash=a1b2c3d4e5f67890... - uploaded
+  large file: /projects/my_scene/renders/output.exr (3 chunks) - uploaded
 ```
 
 **Performance Comparison:**
