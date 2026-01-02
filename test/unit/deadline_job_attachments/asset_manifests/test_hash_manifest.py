@@ -21,7 +21,8 @@ from unittest.mock import patch
 
 from deadline.job_attachments.asset_manifests._operations import (
     hash_manifest,
-    collect_manifest,
+    collect_abs_manifest,
+    subtree_manifest,
 )
 from deadline.job_attachments.asset_manifests._operations._hash_manifest import (
     _get_or_compute_hash,
@@ -36,8 +37,36 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import (
     HashAlgorithm,
     hash_file,
 )
-from deadline.job_attachments.asset_manifests.base_manifest import FILE_CHUNK_SIZE_BYTES
+from deadline.job_attachments.asset_manifests.base_manifest import FILE_CHUNK_SIZE_BYTES, BaseAssetManifest
 from deadline.job_attachments.caches.hash_cache import HashCache, HashCacheEntry
+
+
+def collect_manifest(
+    *,
+    root: Path,
+    version: ManifestVersion,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE,
+) -> BaseAssetManifest:
+    """
+    Helper function that replicates the old collect_manifest behavior
+    using collect_abs_manifest + subtree_manifest.
+
+    Note: For v2025 with symlink preservation, use symlink_policy=PRESERVE.
+    The old COLLAPSE_ESCAPING behavior is not available through this helper.
+    """
+    # For v2025, default to PRESERVE to maintain symlink entries
+    # For v2023, COLLAPSE is the only option that makes sense
+    if version == ManifestVersion.v2025_12_04_beta and symlink_policy == SymlinkPolicy.COLLAPSE:
+        # Use PRESERVE by default for v2025 to maintain symlink entries
+        symlink_policy = SymlinkPolicy.PRESERVE
+
+    abs_manifest = collect_abs_manifest(
+        [root],
+        [],
+        version=version,
+        symlink_policy=symlink_policy,
+    )
+    return subtree_manifest(abs_manifest, str(root))
 
 
 class TestHashManifestV2023:

@@ -3,8 +3,7 @@
 """
 Module for collecting directory structure into manifest objects WITHOUT computing hashes.
 
-This module implements the COLLECT operations from the composable manifest operations design:
-    COLLECT: Directory → Manifest (with hash="" for files, relative paths)
+This module implements the COLLECT_ABS operation from the composable manifest operations design:
     COLLECT_ABS: Paths → Manifest (with hash="" for files, absolute paths)
 
 The separation of collection from hashing enables:
@@ -34,94 +33,6 @@ from ..v2025_12_04.asset_manifest import (
     ManifestDirectoryPath as ManifestDirectoryPath2025,
     ManifestFilePath as ManifestFilePath2025,
 )
-
-
-def collect_manifest(
-    *,
-    root: Path | str,
-    version: ManifestVersion,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
-    """
-    Collect a single directory tree into a manifest with relative paths.
-
-    This function:
-    1. Walks the directory tree at `root`
-    2. Collects files, symlinks, and directories (version-dependent)
-    3. Captures metadata (mtime, size, permissions)
-    4. Sets hash="" (empty string) for all file entries
-    5. Returns a manifest with paths relative to `root`
-
-    Args:
-        root: Root directory path. The entire directory tree under this path
-            is collected, and all manifest paths are relative to this root.
-        version: Manifest version to create (determines features)
-        symlink_policy: How to handle symlinks during collection:
-            - COLLAPSE_ESCAPING: Follow only symlinks that escape root; preserve others.
-              (v2025 only)
-            - COLLAPSE: Follow all symlinks, treating them as files/directories.
-            - EXCLUDE: Skip all symlinks entirely.
-            - PRESERVE: Not supported (see collect_abs_manifest).
-            - TRANSITIVE_INCLUDE_TARGETS: Not supported (see collect_abs_manifest).
-        print_function_callback: Progress callback
-
-    Returns:
-        A manifest with relative paths and hash="" for files
-
-    Raises:
-        ValueError: If symlink_policy is PRESERVE or TRANSITIVE_INCLUDE_TARGETS
-            (these require absolute paths, use collect_abs_manifest instead).
-        ValueError: If v2023 version is used with symlink_policy other than
-            COLLAPSE or EXCLUDE.
-        FileNotFoundError: If root does not exist.
-        ValueError: If root is not a directory.
-
-    Note:
-        - For v2023-03-03: Only COLLAPSE and EXCLUDE policies are supported.
-          Only files are collected (symlinks and directories cannot be represented
-          in the manifest format, but directories are still traversed to find files).
-        - For v2025-12-04-beta: Files, symlinks, and directories are collected.
-        - Symlinks have symlink_target set (no hash needed)
-        - Use hash_manifest() to fill in file hashes
-    """
-    # Validate symlink_policy - PRESERVE and TRANSITIVE_INCLUDE_TARGETS require absolute paths
-    if symlink_policy in (SymlinkPolicy.PRESERVE, SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS):
-        raise ValueError(
-            f"symlink_policy={symlink_policy.value} requires absolute paths. "
-            "Use collect_abs_manifest() instead."
-        )
-
-    # Normalize and validate root path
-    root_path = Path(os.path.normpath(os.path.abspath(root)))
-    if not root_path.exists():
-        raise FileNotFoundError(f"Root directory does not exist: {root_path}")
-    if not root_path.is_dir():
-        raise ValueError(f"Root path is not a directory: {root_path}")
-
-    # Dispatch to version-specific implementation
-    if version == ManifestVersion.v2023_03_03:
-        return _collect_manifest_v2023(
-            root_path=root_path,
-            print_function_callback=print_function_callback,
-            absolute_paths=False,
-            symlink_policy=symlink_policy,
-            filenames=[],
-            optional_filenames=[],
-            directories=[root_path],
-        )
-    elif version == ManifestVersion.v2025_12_04_beta:
-        return _collect_manifest_v2025(
-            root_path=root_path,
-            print_function_callback=print_function_callback,
-            absolute_paths=False,
-            symlink_policy=symlink_policy,
-            filenames=[],
-            optional_filenames=[],
-            directories=[root_path],
-        )
-    else:
-        raise ValueError(f"Unsupported manifest version: {version}")
 
 
 def collect_abs_manifest(

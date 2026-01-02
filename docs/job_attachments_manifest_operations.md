@@ -35,18 +35,14 @@ Here are the operations for working with data snapshots:
 │                 FILE SYSTEM AND DATA CACHE OPERATIONS                   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  1. COLLECT: Directory → RelSnapshot                                    │
-│         Scans a directory tree, collecting files, directories, and      │
-│         symlinks into a snapshot with relative paths. No hashing.       │
-│                                                                         │
-│  2. COLLECT_ABS: Paths → AbsSnapshot                                    │
+│  1. COLLECT_ABS: Paths → AbsSnapshot                                    │
 │         Collects from lists of directories and filenames into a         │
 │         snapshot with absolute paths. No hashing.                       │
 │                                                                         │
-│  3. HASH: (Manifest, abs_prefix?) → Manifest                            │
+│  2. HASH: (Manifest, abs_prefix?) → Manifest                            │
 │         Computes hashes for all files in the manifest.                  │
 │                                                                         │
-│  4. HASH_UPLOAD: (Manifest, abs_prefix?, DataCache) → Manifest          │
+│  3. HASH_UPLOAD: (Manifest, abs_prefix?, DataCache) → Manifest          │
 │         Pipelines read/hash/upload for all files, returning a           │
 │         manifest with hashes populated.                                 │
 │                                                                         │
@@ -58,24 +54,24 @@ Here are the operations for working with data snapshots:
 │                       MANIFEST TRANSFORMATIONS                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  5. FILTER: Manifest → Manifest                                         │
+│  4. FILTER: Manifest → Manifest                                         │
 │         Applies a filter to entries, returning only accepted ones.      │
 │                                                                         │
-│  6. DIFF: (Snapshot, Snapshot) → Diff                                   │
+│  5. DIFF: (Snapshot, Snapshot) → Diff                                   │
 │         Compares two snapshots, returning a diff of the changes.        │
 │                                                                         │
-│  7. COMPOSE: (Snapshot, Diff, ...) → Snapshot                           │
+│  6. COMPOSE: (Snapshot, Diff, ...) → Snapshot                           │
 │     COMPOSE: (Diff, Diff, ...) → Diff                                   │
 │         Layers diffs together, optionally onto a snapshot base,         │
 │         as if applied sequentially to a filesystem.                     │
 │                                                                         │
-│  8. SUBTREE: (Snapshot, subtree_path) → RelSnapshot                     │
+│  7. SUBTREE: (Snapshot, subtree_path) → RelSnapshot                     │
 │         Extracts a subtree, returning a snapshot with relative paths.   │
 │                                                                         │
-│  9. PARTITION: (Snapshot, roots?) → List[(root, RelSnapshot)]           │
+│  8. PARTITION: (Snapshot, roots?) → List[(root, RelSnapshot)]           │
 │         Partitions a manifest into multiple (root, RelSnapshot) pairs.  │
 │                                                                         │
-│ 10. JOIN: (RelSnapshot, abs_prefix) → AbsSnapshot                       │
+│  9. JOIN: (RelSnapshot, abs_prefix) → AbsSnapshot                       │
 │     JOIN: (RelSnapshot, rel_prefix) → RelSnapshot                       │
 │         Prepends a prefix to all paths.                                 │
 │                                                                         │
@@ -88,9 +84,9 @@ Here are the operations for working with data snapshots:
    collect all the input asset files the job depends on into one or more manifests
    attached to the job.
     1. Use COLLECT_ABS, providing directories and individual filenames to collect.
-       Either set the manifest_policy to TRANSITIVE_INCLUDE_TARGETS to ensure all
-       symlink targets are included, or later use COLLAPSE_ESCAPING when splitting
-       into subtrees.
+       Set the symlink_policy to COLLAPSE_ESCAPING to ensure all
+       symlink targets that are not part of the dataset become files instead of
+       staying as symlinks.
     2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
        cache. This populates all the hash values in the manifest.
     3. Use PARTITION to divide up the absolute_manifest into a collection of
@@ -100,7 +96,7 @@ Here are the operations for working with data snapshots:
    the asset data ready and would like to pre-populate your render farm data cache
    in the cloud.
     1. Use COLLECT_ABS, providing the directories and individual filenames of the
-       asset data.
+       asset data. Use COLLAPSE_ESCAPING for the symlink_policy.
     2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
        cache. There's no need to convert the manifest to relative paths, as what's
        important for this use case is populating the local hash cache and the
@@ -112,6 +108,12 @@ Here are the operations for working with data snapshots:
     1. Same as for submitting a job to a cloud render farm with COLLECT_ABS/HASH_UPLOAD/PARTITION,
        but when using HASH_UPLOAD provide a DataCache that goes to your local file system
        to place in a zip file instead of uploading to the cloud.
+4. To collect a single directory tree into a manifest with relative paths:
+    1. Use COLLECT_ABS with a single directory to collect, with PRESERVE as
+       the symlink_policy
+    2. Use SUBTREE to extract the directory as a relative-path manifest,
+       with COLLAPSE_ESCAPING as the symlink_policy.
+    3.
 
 ### Benefits of Composable Design
 
@@ -121,7 +123,7 @@ Here are the operations for working with data snapshots:
 4. **Flexibility:** Custom filters enable advanced filtering beyond glob patterns
 5. **Consistency:** Same filter applied to both sides ensures correct diff computation
 
-### Why Separate COLLECT, HASH, and HASH_UPLOAD?
+### Why Separate COLLECT_ABS, HASH, and HASH_UPLOAD?
 
 Separating structure collection, hashing, and hashing+uploading enables:
 
@@ -148,7 +150,7 @@ This convention ensures manifests are portable across platforms:
 
 **Implementation requirements:**
 
-1. **COLLECT operation:** When scanning the filesystem on Windows, use `Path.as_posix()` to convert paths to forward slashes. On POSIX, paths already use forward slashes.
+1. **COLLECT_ABS operation:** When scanning the filesystem on Windows, use `Path.as_posix()` to convert paths to forward slashes. On POSIX, paths already use forward slashes.
 2. **SUBTREE operation:** The `_normalize_subtree_path()` function converts backslashes to forward slashes in the subtree parameter only when running on Windows.
 3. **JOIN operation:** The `_normalize_prefix()` function converts backslashes to forward slashes in the prefix parameter only when running on Windows.
 4. **All operations:** Path comparisons and manipulations use forward slashes consistently.
@@ -161,7 +163,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 | Module | Operation | Description |
 |--------|-----------|-------------|
-| `_collect_manifest.py` | COLLECT | Scans directory, creates manifest with `hash=""` |
+| `_collect_manifest.py` | COLLECT_ABS | Scans directories/files, creates manifest with `hash=""` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
@@ -173,96 +175,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 ## Operation Details
 
-### 1. COLLECT: `collect_manifest()`
-
-**Location:** `_collect_manifest.py`
-
-Collects a single directory tree into a manifest with relative paths, WITHOUT computing hashes:
-
-```python
-def collect_manifest(
-    *,
-    root: Path | str,
-    version: ManifestVersion,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
-```
-
-**Parameters:**
-
-| Parameter | Description |
-|-----------|-------------|
-| `root` | Root directory path. The entire directory tree under this path is collected, and all manifest paths are relative to this root. |
-| `version` | Manifest version to create (determines features) |
-| `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
-| `print_function_callback` | Progress callback for status messages |
-
-**Symlink Policy Options (for `collect_manifest`):**
-
-| Policy | Description | v2023 Support |
-|--------|-------------|---------------|
-| `COLLAPSE_ESCAPING` | Follow only symlinks that escape the root path; preserve symlinks within root as symlink entries. | ✗ (v2025 only) |
-| `COLLAPSE` | Follow all symlinks, treating them as files/directories. The directory walk follows symlinks. | ✓ |
-| `EXCLUDE` | Skip all symlinks entirely. | ✓ |
-
-**Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` policies require absolute paths and are not supported by `collect_manifest`. Use `collect_abs_manifest` instead.
-
-**Why COLLAPSE_ESCAPING is the default:** After capturing a manifest and transporting it to a different system (e.g., a render farm worker), the manifest is instantiated there. Escaping symlinks—those pointing outside the manifest root—cannot be preserved because their targets won't exist on the destination system. We have two choices: exclude them or collapse them. Since workload scripts may depend on those symlinks to access data, collapsing is preferred over exclusion. By collapsing escaping symlinks, we transport the actual data they reference, ensuring the workload functions correctly. Meanwhile, symlinks within the root are preserved, maintaining the original directory structure where possible.
-
-**Behavior by version:**
-
-| Feature | v2023-03-03 | v2025-12-04-beta |
-|---------|-------------|------------------|
-| Regular files | ✓ (hash="") | ✓ (hash="") |
-| Symlinks | Collapsed or excluded | ✓ (policy-dependent) |
-| Directories | Not included | ✓ (including empty) |
-| Execute bit | Not captured | ✓ (runnable field) |
-| `symlink_policy` | COLLAPSE or EXCLUDE only | COLLAPSE, COLLAPSE_ESCAPING, or EXCLUDE |
-
-**Key implementation details:**
-
-- Files have `hash=""` (empty string) to indicate hashing is needed
-- Symlinks have `symlink_target` set (no hash needed)
-- All paths in the manifest are relative to `root`
-- Uses `os.walk()` with `followlinks` based on policy
-
-**Example:**
-
-```python
-from deadline.job_attachments.asset_manifests._operations import (
-    collect_manifest
-)
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
-
-# Collect a v2025 manifest from a project directory (default: COLLAPSE_ESCAPING)
-manifest = collect_manifest(
-    root="/projects/my_scene",
-    version=ManifestVersion.v2025_12_04_beta,
-)
-
-# Inspect the collected structure
-print(f"Found {len(manifest.paths)} files/symlinks")
-print(f"Found {len(manifest.dirs)} directories")
-
-for entry in manifest.paths[:3]:
-    if entry.symlink_target:
-        print(f"  symlink: {entry.path} -> {entry.symlink_target}")
-    else:
-        print(f"  file: {entry.path} (size={entry.size}, hash='{entry.hash}')")
-        # Note: hash is "" until hash_manifest() is called
-```
-
-Output:
-```
-Found 42 files/symlinks
-Found 8 directories
-  file: assets/model.blend (size=15234567, hash='')
-  file: assets/texture.png (size=2048576, hash='')
-  symlink: assets/current -> v2/model.blend
-```
-
-### 2. COLLECT_ABS: `collect_abs_manifest()`
+### 1. COLLECT_ABS: `collect_abs_manifest()`
 
 **Location:** `_collect_manifest.py`
 
@@ -363,16 +276,16 @@ for entry in manifest.paths:
         # e.g., symlink: /projects/my_scene/link.txt -> /projects/my_scene/target.txt
 ```
 
-**Helper functions (shared by both COLLECT operations):**
+**Helper functions:**
 
 - `_create_unhashed_file_entry()` - Creates file entry with `hash=""` and metadata
 - `_create_symlink_entry()` - Creates symlink entry with validated target
 
-### 3. HASH: `hash_manifest()`
+### 2. HASH: `hash_manifest()`
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `collect_manifest()`:
+Fills in hashes for a manifest that was created by `collect_abs_manifest()`:
 
 ```python
 def hash_manifest(
@@ -418,16 +331,23 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import collect_manifest
-from deadline.job_attachments.asset_manifests._operations import hash_manifest
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_abs_manifest,
+    hash_manifest,
+    subtree_manifest,
+)
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 
-# First collect the directory tree
-unhashed = collect_manifest(
-    root="/projects/my_scene",
+# First collect the directory tree with absolute paths
+abs_manifest = collect_abs_manifest(
+    ["/projects/my_scene"],  # directories
+    [],                       # filenames
     version=ManifestVersion.v2025_12_04_beta,
 )
+
+# Extract as relative paths
+unhashed = subtree_manifest(abs_manifest, "/projects/my_scene")
 
 # Then hash with a cache for efficiency
 with HashCache("/tmp/hash_cache") as cache:
@@ -454,7 +374,7 @@ Output:
   large file: renders/output.exr (3 chunks)
 ```
 
-### 4. HASH_UPLOAD: `hash_upload_manifest()`
+### 3. HASH_UPLOAD: `hash_upload_manifest()`
 
 **Location:** `_hash_upload_manifest.py`
 
@@ -480,7 +400,7 @@ def hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with empty hashes (from `collect_manifest`) |
+| `manifest` | Manifest with empty hashes (from `collect_abs_manifest`) |
 | `root` | Root directory path (needed to read files) |
 | `s3_bucket` | S3 bucket name for uploads |
 | `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
@@ -604,20 +524,23 @@ When both caches hit, the file is completely skipped (no read, no hash, no uploa
 
 ```python
 from deadline.job_attachments.asset_manifests._operations import (
-    collect_manifest
-)
-from deadline.job_attachments.asset_manifests._operations import (
-    hash_upload_manifest
+    collect_abs_manifest,
+    hash_upload_manifest,
+    subtree_manifest,
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
-# First collect the directory tree
-unhashed = collect_manifest(
-    root="/projects/my_scene",
+# First collect the directory tree with absolute paths
+abs_manifest = collect_abs_manifest(
+    ["/projects/my_scene"],  # directories
+    [],                       # filenames
     version=ManifestVersion.v2025_12_04_beta,
 )
+
+# Extract as relative paths
+unhashed = subtree_manifest(abs_manifest, "/projects/my_scene")
 
 # Hash and upload in a single pipelined pass
 with HashCache("/tmp/hash_cache") as hash_cache:
@@ -667,7 +590,7 @@ For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
 | Output sync from worker | HASH_UPLOAD |
 | Testing/debugging | HASH (simpler) |
 
-### 5. FILTER: `filter_manifest()`
+### 4. FILTER: `filter_manifest()`
 
 **Location:** `_filter_manifest.py`
 
@@ -742,7 +665,7 @@ def python_files_only(entry):
 py_manifest = filter_manifest(manifest, python_files_only)
 ```
 
-### 6. DIFF: `compute_diff_manifest()`
+### 5. DIFF: `compute_diff_manifest()`
 
 **Location:** `_diff_manifest.py`
 
@@ -858,7 +781,7 @@ Diff manifest type: ManifestType.DIFF
 Parent hash: f8e9d0c1b2a34567...
 ```
 
-### 7. COMPOSE: `compose_manifests()`
+### 6. COMPOSE: `compose_manifests()`
 
 **Location:** `_compose_manifest.py`
 
@@ -939,7 +862,7 @@ task3_output = decode_manifest(read_file("task3_output.manifest"))
 merged = compose_manifests([task1_output, task2_output, task3_output])
 ```
 
-### 8. SUBTREE: `subtree_manifest()`
+### 7. SUBTREE: `subtree_manifest()`
 
 **Location:** `_subtree_manifest.py`
 
@@ -1018,7 +941,7 @@ When re-rooting a manifest, symlinks that were previously "within root" may now 
 
 **Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported for SUBTREE. Since the output always uses relative paths, escaping symlinks cannot be represented—a relative symlink target like `../outside/file.txt` would point outside the manifest root, which is invalid. Therefore, escaping symlinks must either be collapsed or excluded.
 
-**Note:** Unlike COLLECT, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
+**Note:** Unlike COLLECT_ABS, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
 
 **Important: Symlink Target Storage Format:**
 
@@ -1032,7 +955,7 @@ When collapsing a symlink, the operation looks up the target path in the origina
 
 - **File target:** The symlink entry is replaced with a copy of the target file entry (using the symlink's path, but the target's hash, size, mtime, runnable)
 - **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current` with target `assets/shared/v2` containing `assets/shared/v2/a.txt` and `assets/shared/v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
-- **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT), the symlink is excluded with a warning
+- **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT_ABS), the symlink is excluded with a warning
 
 **Preserved Symlink Target Rebasing:**
 
@@ -1131,7 +1054,7 @@ textures = subtree_manifest(full_manifest, "assets/textures")
 png_only = filter_manifest(textures, lambda e: e.path.endswith(".png"))
 ```
 
-### 9. PARTITION: `partition_manifest()`
+### 8. PARTITION: `partition_manifest()`
 
 **Location:** `_partition_manifest.py`
 
@@ -1287,7 +1210,7 @@ composed = compose_manifests([abs1, abs2])
 # composed ≈ abs_manifest
 ```
 
-### 10. JOIN: `join_manifest()`
+### 9. JOIN: `join_manifest()`
 
 **Location:** `_join_manifest.py`
 
@@ -1407,21 +1330,24 @@ back_to_subtree = subtree_manifest(original, "assets/textures")
 Create a complete snapshot manifest from a directory:
 
 ```
-Directory ──[collect]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered ──[save]──► File
+Directory ──[collect_abs]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered ──[save]──► File
 ```
 
 ```python
-# Step 1: Collect directory tree (no hashes yet)
-unhashed = collect_manifest(root, version)
+# Step 1: Collect directory tree with absolute paths
+abs_manifest = collect_abs_manifest([root], [], version=version)
 
-# Step 2: Hash all files
+# Step 2: Extract as relative paths
+unhashed = subtree_manifest(abs_manifest, root)
+
+# Step 3: Hash all files
 hashed = hash_manifest(unhashed, root, hash_cache)
 
-# Step 3: Filter the snapshot
+# Step 4: Filter the snapshot
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
 filtered = filter_manifest(hashed, filter)
 
-# Step 4: Write to file
+# Step 5: Write to file
 manifest_path = _write_manifest(root, filtered, destination, name)
 ```
 
@@ -1432,8 +1358,8 @@ Compare by mtime/size without hashing unchanged files:
 ```
 Parent File ──[load]──► Parent ──[filter]──► Filtered Parent ──┐
                                                                ├──[diff]──► Diff Manifest
-Directory ──[collect]──► Unhashed ──[filter]──► Filtered Current ─┘
-                         (no hashes)
+Directory ──[collect_abs]──► AbsSnapshot ──[subtree]──► Unhashed ──[filter]──► Filtered Current ─┘
+                                                        (no hashes)
 ```
 
 ```python
@@ -1443,8 +1369,9 @@ with open(parent_path) as f:
     parent = decode_manifest(parent_str)
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
-# Collect current directory (no hashes)
-current_unhashed = collect_manifest(root, version)
+# Collect current directory with absolute paths, then extract as relative
+abs_manifest = collect_abs_manifest([root], [], version=version)
+current_unhashed = subtree_manifest(abs_manifest, root)
 
 # Filter BOTH with same patterns
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
@@ -1469,7 +1396,7 @@ Hash everything for definitive comparison:
 ```
 Parent File ──[load]──► Parent ──[filter]──► Filtered Parent ──┐
                                                                ├──[diff]──► Diff Manifest
-Directory ──[collect]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered Current ─┘
+Directory ──[collect_abs]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered Current ─┘
 ```
 
 ```python
@@ -1480,7 +1407,8 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect and hash current directory
-current_unhashed = collect_manifest(root, version)
+abs_manifest = collect_abs_manifest([root], [], version=version)
+current_unhashed = subtree_manifest(abs_manifest, root)
 current_hashed = hash_manifest(current_unhashed, root, hash_cache, force_rehash=True)
 
 # Filter BOTH with same patterns
