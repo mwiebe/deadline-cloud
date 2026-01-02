@@ -134,6 +134,70 @@ Separating structure collection, hashing, and hashing+uploading enables:
 - **Deferred hashing:** Collect structure first, hash only what's needed
 - **Reduced redundant reads:** The HASH_UPLOAD operation reads chunks of files to memory, then performs a hash + upload instead of one read for hash and a second read for upload.
 
+## In-progress Refactor
+
+This section tracks progress on unifying the in-memory manifest representation.
+
+### Goal
+
+**Before:** There are two memory manifest formats (v2023 and v2025), and there are two on-disk manifest formats (v2023 and v2025).
+
+**After:** There is one memory manifest format (unversioned, matches the current v2025 memory format), and there are two on-disk manifest formats.
+
+### Constraint
+
+We must maintain backwards compatibility on all `Base*` classes and the v2023 interface.
+
+### Design
+
+In `job_attachments/asset_manifests/manifest.py`, we define the unified manifest classes:
+
+```
+Manifest Classes (new unified in-memory representation)
+├── Manifest                    # Base class, calls validations from mixins
+├── AbsManifestMixin            # Validates absolute paths
+├── RelManifestMixin            # Validates relative paths
+├── SnapshotManifestMixin       # Validates snapshot constraints
+├── DiffManifestMixin           # Validates diff constraints
+│
+├── AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin)
+├── AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin)
+├── RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin)
+└── RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin)
+
+Path/Directory Classes (also in manifest.py)
+├── ManifestFilePath            # File entry (unified, matches v2025 capabilities)
+└── ManifestDirectoryPath       # Directory entry
+```
+
+For backwards compatibility in `base_manifest.py`:
+
+```python
+# Aliases for backwards compatibility
+from .manifest import Manifest as BaseAssetManifest
+from .manifest import ManifestFilePath as BaseManifestPath
+from .manifest import ManifestDirectoryPath as BaseManifestDirectoryPath
+```
+
+The v2023 and v2025 modules continue to provide:
+- `encode()` - Serialize to on-disk format
+- `decode()` - Deserialize from on-disk format
+- Version-specific validation during encode (e.g., v2023 rejects symlinks)
+
+### Progress
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Create `manifest.py` with unified classes | ☐ Not started | |
+| Create mixin classes for validation | ☐ Not started | |
+| Create concrete manifest classes | ☐ Not started | |
+| Update `base_manifest.py` to use aliases | ☐ Not started | |
+| Update v2023 module for compatibility | ☐ Not started | |
+| Update v2025 module for compatibility | ☐ Not started | |
+| Update operations to use new classes | ☐ Not started | |
+| Update tests | ☐ Not started | |
+| Verify backwards compatibility | ☐ Not started | |
+
 ## Path Separator Convention
 
 **All paths in manifests use forward slashes (`/`) as the directory separator, regardless of the host operating system.**
