@@ -1,4 +1,4 @@
-# Composable Manifest Operations
+# Composable Data Snapshot Operations
 
 A manifest is a data structure that captures a directory tree snapshot—similar to a zip file's table of contents, but without the actual file content. It records metadata for each file (path, size, modification time, content hash) and, in newer formats, directories and symlinks. Manifests enable efficient change detection, incremental uploads, and content-addressable storage workflows.
 
@@ -10,19 +10,29 @@ The manifest system uses composable operations that can be combined to implement
 
 Here are the manifest types used by these operations:
 
-| Type | Description |
-|------|-------------|
-| Manifest | Any of the following manifest types |
-| Snapshot | A snapshot manifest with either absolute or relative paths |
-| Diff | A diff manifest with either absolute or relative paths |
-| AbsSnapshot | A snapshot manifest with absolute paths |
-| AbsDiff | A diff manifest with absolute paths |
-| RelSnapshot | A snapshot manifest with relative paths |
-| RelDiff | A diff manifest with relative paths |
+```
+Manifest
+├── Snapshot
+│   ├── AbsSnapshot    (absolute paths)
+│   └── RelSnapshot    (relative paths)
+└── Diff
+    ├── AbsDiff        (absolute paths)
+    └── RelDiff        (relative paths)
+```
+
+Here are the data cache types used by these operations:
+
+```
+DataCache
+├── S3DataCache         (data on S3)
+└── FileSystemDataCache (data on a file system)
+```
+
+Here are the operations for working with data snapshots:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                   COMPOSABLE MANIFEST OPERATIONS                        │
+│                 FILE SYSTEM AND DATA CACHE OPERATIONS                   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  1. COLLECT: Directory → RelSnapshot                                    │
@@ -33,12 +43,20 @@ Here are the manifest types used by these operations:
 │         Collects from lists of directories and filenames into a         │
 │         snapshot with absolute paths. No hashing.                       │
 │                                                                         │
-│  3. HASH: Manifest → Manifest                                           │
+│  3. HASH: (Manifest, abs_prefix?) → Manifest                            │
 │         Computes hashes for all files in the manifest.                  │
 │                                                                         │
-│  4. HASH_UPLOAD: Manifest → Manifest                                    │
+│  4. HASH_UPLOAD: (Manifest, abs_prefix?, DataCache) → Manifest          │
 │         Pipelines read/hash/upload for all files, returning a           │
 │         manifest with hashes populated.                                 │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       MANIFEST TRANSFORMATIONS                          │
+├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  5. FILTER: Manifest → Manifest                                         │
 │         Applies a filter to entries, returning only accepted ones.      │
@@ -66,15 +84,34 @@ Here are the manifest types used by these operations:
 
 ### Use Cases
 
-1. When submitting a job to a cloud render farm, collect all the input asset files the
-   job depends on into one or more manifests attached to the job.
+1. (`deadline bundle submit`) When submitting a job to a cloud render farm,
+   collect all the input asset files the job depends on into one or more manifests
+   attached to the job.
     1. Use COLLECT_ABS, providing directories and individual filenames to collect.
        Either set the manifest_policy to TRANSITIVE_INCLUDE_TARGETS to ensure all
        symlink targets are included, or later use COLLAPSE_ESCAPING when splitting
        into subtrees.
-    2. Use PARTITION to divide up the absolute_manifest into a collection of
+    2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
+       cache. This populates all the hash values in the manifest.
+    3. Use PARTITION to divide up the absolute_manifest into a collection of
        (root_path, relative_manifest) pairs. This is the input format needed by
        the Deadline Cloud CreateJob API.
+2. (TBD - `deadline queue upload-cache-inputs`) Before submitting a job, you have much of
+   the asset data ready and would like to pre-populate your render farm data cache
+   in the cloud.
+    1. Use COLLECT_ABS, providing the directories and individual filenames of the
+       asset data.
+    2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
+       cache. There's no need to convert the manifest to relative paths, as what's
+       important for this use case is populating the local hash cache and the
+       cloud data cache.
+3. (`deadline bundle submit --save-debug-snapshot`) When debugging a job, create
+   a portable debug snapshot of all the input asset files. With a debug snapshot
+   in hand, you can provide a reproducible artifact to a render TD or to
+   vendor support personnel.
+    1. Same as for submitting a job to a cloud render farm with COLLECT_ABS/HASH_UPLOAD/PARTITION,
+       but when using HASH_UPLOAD provide a DataCache that goes to your local file system
+       to place in a zip file instead of uploading to the cloud.
 
 ### Benefits of Composable Design
 
@@ -126,7 +163,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 |--------|-----------|-------------|
 | `_collect_manifest.py` | COLLECT | Scans directory, creates manifest with `hash=""` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
-| `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to S3 in a pipelined manner |
+| `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
