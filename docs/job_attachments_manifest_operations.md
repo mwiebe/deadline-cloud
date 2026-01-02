@@ -35,7 +35,7 @@ Here are the operations for working with data snapshots:
 │                 FILE SYSTEM AND DATA CACHE OPERATIONS                   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  1. COLLECT_ABS: Paths → AbsSnapshot                                    │
+│  1. COLLECT: Paths → AbsSnapshot                                        │
 │         Collects from lists of directories and filenames into a         │
 │         snapshot with absolute paths. No hashing.                       │
 │                                                                         │
@@ -83,7 +83,7 @@ Here are the operations for working with data snapshots:
 1. (`deadline bundle submit`) When submitting a job to a cloud render farm,
    collect all the input asset files the job depends on into one or more manifests
    attached to the job.
-    1. Use COLLECT_ABS, providing directories and individual filenames to collect.
+    1. Use COLLECT, providing directories and individual filenames to collect.
        Set the symlink_policy to COLLAPSE_ESCAPING to ensure all
        symlink targets that are not part of the dataset become files instead of
        staying as symlinks.
@@ -95,7 +95,7 @@ Here are the operations for working with data snapshots:
 2. (TBD - `deadline queue upload-cache-inputs`) Before submitting a job, you have much of
    the asset data ready and would like to pre-populate your render farm data cache
    in the cloud.
-    1. Use COLLECT_ABS, providing the directories and individual filenames of the
+    1. Use COLLECT, providing the directories and individual filenames of the
        asset data. Use COLLAPSE_ESCAPING for the symlink_policy.
     2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
        cache. There's no need to convert the manifest to relative paths, as what's
@@ -105,11 +105,11 @@ Here are the operations for working with data snapshots:
    a portable debug snapshot of all the input asset files. With a debug snapshot
    in hand, you can provide a reproducible artifact to a render TD or to
    vendor support personnel.
-    1. Same as for submitting a job to a cloud render farm with COLLECT_ABS/HASH_UPLOAD/PARTITION,
+    1. Same as for submitting a job to a cloud render farm with COLLECT/HASH_UPLOAD/PARTITION,
        but when using HASH_UPLOAD provide a DataCache that goes to your local file system
        to place in a zip file instead of uploading to the cloud.
 4. To collect a single directory tree into a manifest with relative paths:
-    1. Use COLLECT_ABS with a single directory to collect, with PRESERVE as
+    1. Use COLLECT with a single directory to collect, with PRESERVE as
        the symlink_policy
     2. Use SUBTREE to extract the directory as a relative-path manifest,
        with COLLAPSE_ESCAPING as the symlink_policy.
@@ -123,7 +123,7 @@ Here are the operations for working with data snapshots:
 4. **Flexibility:** Custom filters enable advanced filtering beyond glob patterns
 5. **Consistency:** Same filter applied to both sides ensures correct diff computation
 
-### Why Separate COLLECT_ABS, HASH, and HASH_UPLOAD?
+### Why Separate COLLECT, HASH, and HASH_UPLOAD?
 
 Separating structure collection, hashing, and hashing+uploading enables:
 
@@ -150,7 +150,7 @@ This convention ensures manifests are portable across platforms:
 
 **Implementation requirements:**
 
-1. **COLLECT_ABS operation:** When scanning the filesystem on Windows, use `Path.as_posix()` to convert paths to forward slashes. On POSIX, paths already use forward slashes.
+1. **COLLECT operation:** When scanning the filesystem on Windows, use `Path.as_posix()` to convert paths to forward slashes. On POSIX, paths already use forward slashes.
 2. **SUBTREE operation:** The `_normalize_subtree_path()` function converts backslashes to forward slashes in the subtree parameter only when running on Windows.
 3. **JOIN operation:** The `_normalize_prefix()` function converts backslashes to forward slashes in the prefix parameter only when running on Windows.
 4. **All operations:** Path comparisons and manipulations use forward slashes consistently.
@@ -163,7 +163,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 | Module | Operation | Description |
 |--------|-----------|-------------|
-| `_collect_manifest.py` | COLLECT_ABS | Scans directories/files, creates manifest with `hash=""` |
+| `_collect_manifest.py` | COLLECT | Scans directories/files, creates manifest with `hash=""` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
@@ -175,14 +175,14 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 ## Operation Details
 
-### 1. COLLECT_ABS: `collect_abs_manifest()`
+### 1. COLLECT: `collect_manifest()`
 
 **Location:** `_collect_manifest.py`
 
 Collects provided lists of paths into a manifest with absolute paths, WITHOUT computing hashes:
 
 ```python
-def collect_abs_manifest(
+def collect_manifest(
     directories: List[Path | str],
     filenames: List[Path | str],
     *,
@@ -204,7 +204,7 @@ def collect_abs_manifest(
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
 | `print_function_callback` | Progress callback for status messages |
 
-**Symlink Policy Options (for `collect_abs_manifest`):**
+**Symlink Policy Options (for `collect_manifest`):**
 
 | Policy | Description | v2023 Support |
 |--------|-------------|---------------|
@@ -213,7 +213,7 @@ def collect_abs_manifest(
 | `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. | ✗ (v2025 only) |
 | `EXCLUDE` | Skip all symlinks entirely. | ✓ |
 
-**Note:** `COLLAPSE_ESCAPING` is not supported by `collect_abs_manifest` because there is no root path to determine what "escaping" means.
+**Note:** `COLLAPSE_ESCAPING` is not supported by `collect_manifest` because there is no root path to determine what "escaping" means.
 
 **Validation Rules:**
 
@@ -237,12 +237,12 @@ def collect_abs_manifest(
 
 ```python
 from deadline.job_attachments.asset_manifests._operations import (
-    collect_abs_manifest
+    collect_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
 
 # Collect files from different locations using absolute paths (default: PRESERVE symlinks)
-manifest = collect_abs_manifest(
+manifest = collect_manifest(
     ["/data/shared/models", "/data/shared/textures"],  # directories (positional)
     ["/home/user/project/scene.blend"],                 # filenames (positional)
     optional_filenames=["/home/user/project/cache.bin"],  # Included if exists
@@ -258,12 +258,12 @@ for entry in manifest.paths[:2]:
 
 ```python
 from deadline.job_attachments.asset_manifests._operations import (
-    collect_abs_manifest
+    collect_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 
 # Collect with symlinks preserved (default behavior)
-manifest = collect_abs_manifest(
+manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames (empty list)
     version=ManifestVersion.v2025_12_04_beta,
@@ -285,7 +285,7 @@ for entry in manifest.paths:
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `collect_abs_manifest()`:
+Fills in hashes for a manifest that was created by `collect_manifest()`:
 
 ```python
 def hash_manifest(
@@ -332,7 +332,7 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 
 ```python
 from deadline.job_attachments.asset_manifests._operations import (
-    collect_abs_manifest,
+    collect_manifest,
     hash_manifest,
     subtree_manifest,
 )
@@ -340,7 +340,7 @@ from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 
 # First collect the directory tree with absolute paths
-abs_manifest = collect_abs_manifest(
+abs_manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
     version=ManifestVersion.v2025_12_04_beta,
@@ -400,7 +400,7 @@ def hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with empty hashes (from `collect_abs_manifest`) |
+| `manifest` | Manifest with empty hashes (from `collect_manifest`) |
 | `root` | Root directory path (needed to read files) |
 | `s3_bucket` | S3 bucket name for uploads |
 | `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
@@ -524,7 +524,7 @@ When both caches hit, the file is completely skipped (no read, no hash, no uploa
 
 ```python
 from deadline.job_attachments.asset_manifests._operations import (
-    collect_abs_manifest,
+    collect_manifest,
     hash_upload_manifest,
     subtree_manifest,
 )
@@ -533,7 +533,7 @@ from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
 # First collect the directory tree with absolute paths
-abs_manifest = collect_abs_manifest(
+abs_manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
     version=ManifestVersion.v2025_12_04_beta,
@@ -941,7 +941,7 @@ When re-rooting a manifest, symlinks that were previously "within root" may now 
 
 **Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported for SUBTREE. Since the output always uses relative paths, escaping symlinks cannot be represented—a relative symlink target like `../outside/file.txt` would point outside the manifest root, which is invalid. Therefore, escaping symlinks must either be collapsed or excluded.
 
-**Note:** Unlike COLLECT_ABS, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
+**Note:** Unlike COLLECT, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
 
 **Important: Symlink Target Storage Format:**
 
@@ -955,7 +955,7 @@ When collapsing a symlink, the operation looks up the target path in the origina
 
 - **File target:** The symlink entry is replaced with a copy of the target file entry (using the symlink's path, but the target's hash, size, mtime, runnable)
 - **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current` with target `assets/shared/v2` containing `assets/shared/v2/a.txt` and `assets/shared/v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
-- **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT_ABS), the symlink is excluded with a warning
+- **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT), the symlink is excluded with a warning
 
 **Preserved Symlink Target Rebasing:**
 
@@ -1330,12 +1330,12 @@ back_to_subtree = subtree_manifest(original, "assets/textures")
 Create a complete snapshot manifest from a directory:
 
 ```
-Directory ──[collect_abs]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered ──[save]──► File
+Directory ──[collect]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered ──[save]──► File
 ```
 
 ```python
 # Step 1: Collect directory tree with absolute paths
-abs_manifest = collect_abs_manifest([root], [], version=version)
+abs_manifest = collect_manifest([root], [], version=version)
 
 # Step 2: Extract as relative paths
 unhashed = subtree_manifest(abs_manifest, root)
@@ -1358,7 +1358,7 @@ Compare by mtime/size without hashing unchanged files:
 ```
 Parent File ──[load]──► Parent ──[filter]──► Filtered Parent ──┐
                                                                ├──[diff]──► Diff Manifest
-Directory ──[collect_abs]──► AbsSnapshot ──[subtree]──► Unhashed ──[filter]──► Filtered Current ─┘
+Directory ──[collect]──► AbsSnapshot ──[subtree]──► Unhashed ──[filter]──► Filtered Current ─┘
                                                         (no hashes)
 ```
 
@@ -1370,7 +1370,7 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect current directory with absolute paths, then extract as relative
-abs_manifest = collect_abs_manifest([root], [], version=version)
+abs_manifest = collect_manifest([root], [], version=version)
 current_unhashed = subtree_manifest(abs_manifest, root)
 
 # Filter BOTH with same patterns
@@ -1396,7 +1396,7 @@ Hash everything for definitive comparison:
 ```
 Parent File ──[load]──► Parent ──[filter]──► Filtered Parent ──┐
                                                                ├──[diff]──► Diff Manifest
-Directory ──[collect_abs]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered Current ─┘
+Directory ──[collect]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered Current ─┘
 ```
 
 ```python
@@ -1407,7 +1407,7 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect and hash current directory
-abs_manifest = collect_abs_manifest([root], [], version=version)
+abs_manifest = collect_manifest([root], [], version=version)
 current_unhashed = subtree_manifest(abs_manifest, root)
 current_hashed = hash_manifest(current_unhashed, root, hash_cache, force_rehash=True)
 

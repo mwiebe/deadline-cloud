@@ -3,8 +3,8 @@
 """
 Module for collecting directory structure into manifest objects WITHOUT computing hashes.
 
-This module implements the COLLECT_ABS operation from the composable manifest operations design:
-    COLLECT_ABS: Paths → Manifest (with hash="" for files, absolute paths)
+This module implements the COLLECT operation from the composable manifest operations design:
+    COLLECT: Paths → Manifest (with hash="" for files, absolute paths)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
@@ -35,7 +35,7 @@ from ..v2025_12_04.asset_manifest import (
 )
 
 
-def collect_abs_manifest(
+def collect_manifest(
     directories: List[Path | str],
     filenames: List[Path | str],
     *,
@@ -92,7 +92,7 @@ def collect_abs_manifest(
     # COLLAPSE_ESCAPING requires a root path to determine what "escaping" means
     if symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
         raise ValueError(
-            "symlink_policy=COLLAPSE_ESCAPING is not supported by collect_abs_manifest() "
+            "symlink_policy=COLLAPSE_ESCAPING is not supported by collect_manifest() "
             "because there is no root path to escape from. Use COLLAPSE, PRESERVE, "
             "TRANSITIVE_INCLUDE_TARGETS, or EXCLUDE instead."
         )

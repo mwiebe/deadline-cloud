@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 from deadline.job_attachments.asset_manifests._operations import (
     hash_manifest,
-    collect_abs_manifest,
+    collect_manifest as collect_manifest_abs,
     subtree_manifest,
 )
 from deadline.job_attachments.asset_manifests._operations._hash_manifest import (
@@ -48,11 +48,10 @@ def collect_manifest(
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE,
 ) -> BaseAssetManifest:
     """
-    Helper function that replicates the old collect_manifest behavior
-    using collect_abs_manifest + subtree_manifest.
+    Helper function that collects a directory into a relative-path manifest
+    using collect_manifest + subtree_manifest.
 
     Note: For v2025 with symlink preservation, use symlink_policy=PRESERVE.
-    The old COLLAPSE_ESCAPING behavior is not available through this helper.
     """
     # For v2025, default to PRESERVE to maintain symlink entries
     # For v2023, COLLAPSE is the only option that makes sense
@@ -60,7 +59,7 @@ def collect_manifest(
         # Use PRESERVE by default for v2025 to maintain symlink entries
         symlink_policy = SymlinkPolicy.PRESERVE
 
-    abs_manifest = collect_abs_manifest(
+    abs_manifest = collect_manifest_abs(
         [root],
         [],
         version=version,

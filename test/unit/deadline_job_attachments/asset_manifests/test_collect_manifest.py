@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_abs_manifest function.
+Tests for collect_manifest function.
 
 These tests cover:
 - Absolute path generation for files and directories
@@ -14,7 +14,7 @@ import pytest
 from pathlib import Path
 
 from deadline.job_attachments.asset_manifests._operations import (
-    collect_abs_manifest,
+    collect_manifest,
 )
 from deadline.job_attachments.asset_manifests.versions import (
     ManifestVersion,
@@ -22,14 +22,14 @@ from deadline.job_attachments.asset_manifests.versions import (
 )
 
 
-class TestCollectAbsManifest:
-    """Tests for collect_abs_manifest function."""
+class TestCollectManifest:
+    """Tests for collect_manifest function."""
 
     def test_v2023_absolute_paths(self, tmp_path: Path) -> None:
-        """When using collect_abs_manifest, paths are absolute."""
+        """When using collect_manifest, paths are absolute."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2023_03_03,
@@ -45,7 +45,7 @@ class TestCollectAbsManifest:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("content")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2023_03_03,
@@ -55,12 +55,12 @@ class TestCollectAbsManifest:
         assert manifest.paths[0].path == (subdir / "nested.txt").as_posix()
 
     def test_v2025_absolute_paths(self, tmp_path: Path) -> None:
-        """When using collect_abs_manifest, paths are absolute."""
+        """When using collect_manifest, paths are absolute."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -75,14 +75,14 @@ class TestCollectAbsManifest:
         assert subdir.as_posix() in dir_paths
 
     def test_v2025_symlink_absolute_paths(self, tmp_path: Path) -> None:
-        """Symlink entries use absolute paths for both path and target with collect_abs_manifest and PRESERVE policy."""
+        """Symlink entries use absolute paths for both path and target with collect_manifest and PRESERVE policy."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
 
         link.symlink_to("target.txt")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -92,14 +92,14 @@ class TestCollectAbsManifest:
         # Find the symlink entry
         link_entry = [p for p in manifest.paths if "link.txt" in p.path][0]
         assert link_entry.path == link.as_posix()
-        # symlink_target should also be absolute with collect_abs_manifest and PRESERVE
+        # symlink_target should also be absolute with collect_manifest and PRESERVE
         assert link_entry.symlink_target == target.resolve().as_posix()
 
     def test_produces_absolute_paths(self, tmp_path: Path) -> None:
-        """collect_abs_manifest produces absolute paths."""
+        """collect_manifest produces absolute paths."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -108,11 +108,11 @@ class TestCollectAbsManifest:
         assert manifest.paths[0].path == (tmp_path / "file.txt").as_posix()
 
 
-class TestCollectAbsManifestSymlinkChains:
-    """Tests for symlink chain handling with collect_abs_manifest."""
+class TestCollectManifestSymlinkChains:
+    """Tests for symlink chain handling with collect_manifest."""
 
     def test_symlink_chain_preserved_with_preserve_policy(self, tmp_path: Path) -> None:
-        """Symlink chain of length 3 is preserved with collect_abs_manifest and PRESERVE policy."""
+        """Symlink chain of length 3 is preserved with collect_manifest and PRESERVE policy."""
         # Create: link3 -> link2 -> link1 -> target.txt
         target = tmp_path / "target.txt"
         target.write_text("content")
@@ -124,8 +124,8 @@ class TestCollectAbsManifestSymlinkChains:
         link2.symlink_to("link1.txt")
         link3.symlink_to("link2.txt")
 
-        # Test with absolute paths using collect_abs_manifest with PRESERVE policy
-        manifest = collect_abs_manifest(
+        # Test with absolute paths using collect_manifest with PRESERVE policy
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -146,7 +146,7 @@ class TestCollectAbsManifestSymlinkChains:
 
         link.symlink_to("target.txt")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -175,7 +175,7 @@ class TestCollectAbsManifestSymlinkChains:
         link1.symlink_to("target.txt")
         link2.symlink_to("link1.txt")
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [tmp_path],
             [],
             version=ManifestVersion.v2025_12_04_beta,
@@ -230,7 +230,7 @@ class TestCollectAbsManifestSymlinkChains:
         else:
             link.symlink_to("../outside.txt")  # Relative path
 
-        manifest = collect_abs_manifest(
+        manifest = collect_manifest(
             [root],
             [],
             version=ManifestVersion.v2025_12_04_beta,
