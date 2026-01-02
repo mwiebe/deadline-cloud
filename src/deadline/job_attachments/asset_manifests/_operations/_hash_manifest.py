@@ -20,7 +20,6 @@ The separation of collection from hashing enables:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
@@ -107,18 +106,14 @@ def hash_manifest(
                 f"Expected AssetManifest2023 for version {manifest.manifestVersion}, "
                 f"got {type(manifest).__name__}"
             )
-        return _hash_manifest_v2023(
-            manifest, hash_cache, force_rehash, print_function_callback
-        )
+        return _hash_manifest_v2023(manifest, hash_cache, force_rehash, print_function_callback)
     elif manifest.manifestVersion == ManifestVersion.v2025_12_04_beta:
         if not isinstance(manifest, AssetManifest2025):
             raise TypeError(
                 f"Expected AssetManifest2025 for version {manifest.manifestVersion}, "
                 f"got {type(manifest).__name__}"
             )
-        return _hash_manifest_v2025(
-            manifest, hash_cache, force_rehash, print_function_callback
-        )
+        return _hash_manifest_v2025(manifest, hash_cache, force_rehash, print_function_callback)
     else:
         raise ValueError(f"Unsupported manifest version: {manifest.manifestVersion}")
 

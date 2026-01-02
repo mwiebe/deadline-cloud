@@ -487,7 +487,7 @@ def hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and empty hashes (from `collect_manifest`) |
+| `manifest` | Manifest with absolute paths and empty hashes. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `s3_bucket` | S3 bucket name for uploads |
 | `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
 | `boto3_session` | Optional boto3 session for AWS credentials |
@@ -498,7 +498,7 @@ def hash_upload_manifest(
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
-**Returns:** A NEW manifest with all hashes filled in
+**Returns:** A NEW manifest with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -601,6 +601,15 @@ When both caches hit, the file is completely skipped (no read, no hash, no uploa
 | Symlink | Pass through unchanged (no upload) |
 | Deleted marker | Pass through unchanged (no upload) |
 | Directory | Pass through unchanged (no upload) |
+
+**Manifest type handling:**
+
+| Manifest Type | Behavior |
+|---------------|----------|
+| Snapshot | All file entries are hashed and uploaded |
+| Diff | Only new/modified file entries are hashed and uploaded; deleted entries pass through unchanged |
+
+The `manifestType` and `parentManifestHash` fields are preserved from the input manifest.
 
 **Error Handling:**
 

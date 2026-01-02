@@ -23,7 +23,6 @@ The pipeline uses bounded memory to prevent OOM conditions:
 
 from __future__ import annotations
 
-import os
 import time
 import threading
 import queue
