@@ -3,7 +3,6 @@
 from .base_manifest import (
     FILE_CHUNK_SIZE_BYTES,
     BaseAssetManifest,
-    BaseManifestDirectoryPath,
     BaseManifestPath,
 )
 from .hash_algorithms import HashAlgorithm, hash_data, hash_file
@@ -17,7 +16,6 @@ __all__ = [
     "ManifestModelRegistry",
     "BaseAssetManifest",
     "BaseManifestModel",
-    "BaseManifestDirectoryPath",
     "BaseManifestPath",
     "HashAlgorithm",
     "hash_data",

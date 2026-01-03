@@ -4,11 +4,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any, Type
 
-from .._canonical_json import canonical_path_comparator
+from .._canonical_json import canonical_path_comparator, manifest_to_canonical_json_string
 from ..base_manifest import BaseAssetManifest, BaseManifestPath
 from ..hash_algorithms import HashAlgorithm
 from ..manifest_model import BaseManifestModel
@@ -24,7 +23,6 @@ DEFAULT_HASH_ALG: HashAlgorithm = HashAlgorithm.XXH128
 class ManifestPath(BaseManifestPath):
     """
     Extension for version v2023-03-03 of the asset manifest.
-    Always passes validation since it only uses hash (not chunkhashes/symlinks).
     """
 
     manifest_version = ManifestVersion.v2023_03_03
@@ -32,54 +30,23 @@ class ManifestPath(BaseManifestPath):
     def __init__(self, *, path: str, hash: str, size: int, mtime: int) -> None:
         super().__init__(path=path, hash=hash, size=size, mtime=mtime)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to v2023-03-03 format dict (only path, hash, size, mtime).
-
-        Raises ManifestDecodeValidationError if any v2025_12_04-specific fields are set.
-        """
-        # Validate that v2025_12_04-specific fields are not set
-        if self.runnable:
-            raise ManifestDecodeValidationError(
-                f"v2023-03-03 format does not support 'runnable' field (path: {self.path})"
-            )
-        if self.chunkhashes is not None:
-            raise ManifestDecodeValidationError(
-                f"v2023-03-03 format does not support 'chunkhashes' field (path: {self.path})"
-            )
-        if self.symlink_target is not None:
-            raise ManifestDecodeValidationError(
-                f"v2023-03-03 format does not support 'symlink_target' field (path: {self.path})"
-            )
-        if self.deleted:
-            raise ManifestDecodeValidationError(
-                f"v2023-03-03 format does not support 'deleted' field (path: {self.path})"
-            )
-
-        return {
-            "hash": self.hash,
-            "mtime": self.mtime,
-            "path": self.path,
-            "size": self.size,
-        }
-
 
 @dataclass
 class AssetManifest(BaseAssetManifest):
     """Version v2023-03-03 of the asset manifest"""
 
+    totalSize: int  # pyline: disable=invalid-name
+
     def __init__(
-        self,
-        *,
-        hash_alg: HashAlgorithm,
-        paths: list[BaseManifestPath] | list[ManifestPath],
-        total_size: int,
+        self, *, hash_alg: HashAlgorithm, paths: list[BaseManifestPath], total_size: int
     ) -> None:
         if hash_alg not in SUPPORTED_HASH_ALGS:
             raise ManifestDecodeValidationError(
                 f"Unsupported hashing algorithm: {hash_alg}. Must be one of: {[e.value for e in SUPPORTED_HASH_ALGS]}"
             )
 
-        super().__init__(hash_alg=hash_alg, paths=paths, total_size=total_size)
+        super().__init__(hash_alg=hash_alg, paths=paths)
+        self.totalSize = total_size
         self.manifestVersion = ManifestVersion.v2023_03_03
 
     @classmethod
@@ -113,17 +80,10 @@ class AssetManifest(BaseAssetManifest):
 
     def encode(self) -> str:
         """
-        Return a canonicalized JSON string of the manifest.
-        Only includes v2023-03-03 fields: hashAlg, manifestVersion, paths, totalSize.
+        Return a canonicalized JSON string of the manifest
         """
         self.paths.sort(key=canonical_path_comparator)
-        manifest_dict = {
-            "hashAlg": self.hashAlg.value,
-            "manifestVersion": self.manifestVersion.value,
-            "paths": [p.to_dict() for p in self.paths],
-            "totalSize": self.totalSize,
-        }
-        return json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return manifest_to_canonical_json_string(manifest=self)
 
 
 class ManifestModel(BaseManifestModel):

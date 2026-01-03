@@ -76,9 +76,7 @@ def decode_v2025(manifest_str: str) -> Manifest:
     try:
         hash_alg = HashAlgorithm(data["hashAlg"])
     except ValueError:
-        raise ManifestDecodeValidationError(
-            f"Unsupported hash algorithm: {data['hashAlg']}"
-        )
+        raise ManifestDecodeValidationError(f"Unsupported hash algorithm: {data['hashAlg']}")
 
     # Build directory index for $N/ expansion
     raw_dirs = data.get("dirs", [])

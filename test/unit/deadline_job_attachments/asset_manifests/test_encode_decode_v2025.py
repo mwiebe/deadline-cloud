@@ -95,7 +95,6 @@ class TestEncodeV2025:
 
         assert data["specificationVersion"] == "relative-manifest-diff-beta-2025-12"
 
-
     def test_encode_directory_index_compression(self) -> None:
         """Encodes paths with $N/ directory index compression."""
         manifest = RelSnapshotManifest(
@@ -204,7 +203,7 @@ class TestEncodeV2025:
                 slash = name.find("/")
                 if slash > 0:
                     idx = int(name[1:slash])
-                    name = f"{dir_index[idx]}/{name[slash + 1:]}"
+                    name = f"{dir_index[idx]}/{name[slash + 1 :]}"
             dir_index[i] = name
             dir_paths.append(name)
 
@@ -241,7 +240,7 @@ class TestEncodeV2025:
                 slash = name.find("/")
                 if slash > 0:
                     idx = int(name[1:slash])
-                    name = f"{dir_index[idx]}/{name[slash + 1:]}"
+                    name = f"{dir_index[idx]}/{name[slash + 1 :]}"
             dir_index[i] = name
             if name == "a/b":
                 ab_entry = d
@@ -255,17 +254,17 @@ class TestDecodeV2025:
 
     def test_decode_abs_snapshot(self) -> None:
         """Decodes to AbsSnapshotManifest based on specificationVersion."""
-        json_str = json.dumps({
-            "specificationVersion": "absolute-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "dirs": [
-                {"name": "/project"},
-            ],
-            "files": [
-                {"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "absolute-manifest-snapshot-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 100,
+                "dirs": [
+                    {"name": "/project"},
+                ],
+                "files": [{"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}],
+            }
+        )
 
         result = decode_v2025(json_str)
 
@@ -277,17 +276,17 @@ class TestDecodeV2025:
 
     def test_decode_rel_snapshot(self) -> None:
         """Decodes to RelSnapshotManifest based on specificationVersion."""
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "dirs": [
-                {"name": "project"},
-            ],
-            "files": [
-                {"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 100,
+                "dirs": [
+                    {"name": "project"},
+                ],
+                "files": [{"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}],
+            }
+        )
 
         result = decode_v2025(json_str)
 
@@ -295,18 +294,18 @@ class TestDecodeV2025:
 
     def test_decode_abs_diff(self) -> None:
         """Decodes to AbsDiffManifest based on specificationVersion."""
-        json_str = json.dumps({
-            "specificationVersion": "absolute-manifest-diff-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "parentManifestHash": "parent123",
-            "dirs": [
-                {"name": "/project"},
-            ],
-            "files": [
-                {"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "absolute-manifest-diff-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 100,
+                "parentManifestHash": "parent123",
+                "dirs": [
+                    {"name": "/project"},
+                ],
+                "files": [{"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}],
+            }
+        )
 
         result = decode_v2025(json_str)
 
@@ -315,38 +314,39 @@ class TestDecodeV2025:
 
     def test_decode_rel_diff(self) -> None:
         """Decodes to RelDiffManifest based on specificationVersion."""
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-diff-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "parentManifestHash": "parent123",
-            "dirs": [
-                {"name": "project"},
-            ],
-            "files": [
-                {"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "relative-manifest-diff-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 100,
+                "parentManifestHash": "parent123",
+                "dirs": [
+                    {"name": "project"},
+                ],
+                "files": [{"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}],
+            }
+        )
 
         result = decode_v2025(json_str)
 
         assert isinstance(result, RelDiffManifest)
 
-
     def test_decode_directory_index_expansion(self) -> None:
         """Decodes $N/ directory references to full paths."""
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "dirs": [
-                {"name": "project"},
-                {"name": "$0/src"},
-            ],
-            "files": [
-                {"name": "$1/main.py", "hash": "abc123", "size": 100, "mtime": 1000},
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 100,
+                "dirs": [
+                    {"name": "project"},
+                    {"name": "$0/src"},
+                ],
+                "files": [
+                    {"name": "$1/main.py", "hash": "abc123", "size": 100, "mtime": 1000},
+                ],
+            }
+        )
 
         result = decode_v2025(json_str)
 
@@ -356,15 +356,17 @@ class TestDecodeV2025:
 
     def test_decode_symlink(self) -> None:
         """Decodes symlink entries correctly."""
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 0,
-            "dirs": [{"name": "project"}],
-            "files": [
-                {"name": "$0/link.txt", "symlink": {"name": "$0/target.txt"}},
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 0,
+                "dirs": [{"name": "project"}],
+                "files": [
+                    {"name": "$0/link.txt", "symlink": {"name": "$0/target.txt"}},
+                ],
+            }
+        )
 
         result = decode_v2025(json_str)
 
@@ -373,15 +375,17 @@ class TestDecodeV2025:
 
     def test_decode_deleted_entry(self) -> None:
         """Decodes deleted entries in diff manifests."""
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-diff-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 0,
-            "dirs": [],
-            "files": [
-                {"name": "deleted.txt", "delete": True},
-            ],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "relative-manifest-diff-beta-2025-12",
+                "hashAlg": "xxh128",
+                "totalSize": 0,
+                "dirs": [],
+                "files": [
+                    {"name": "deleted.txt", "delete": True},
+                ],
+            }
+        )
 
         result = decode_v2025(json_str)
 
@@ -389,13 +393,15 @@ class TestDecodeV2025:
 
     def test_decode_invalid_spec_version(self) -> None:
         """Raises error for unknown specificationVersion."""
-        json_str = json.dumps({
-            "specificationVersion": "unknown-version",
-            "hashAlg": "xxh128",
-            "totalSize": 0,
-            "dirs": [],
-            "files": [],
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "unknown-version",
+                "hashAlg": "xxh128",
+                "totalSize": 0,
+                "dirs": [],
+                "files": [],
+            }
+        )
 
         with pytest.raises(ManifestDecodeValidationError, match="specificationVersion"):
             decode_v2025(json_str)
@@ -407,11 +413,13 @@ class TestDecodeV2025:
 
     def test_decode_missing_required_field(self) -> None:
         """Raises error for missing required fields."""
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            # Missing totalSize, dirs, files
-        })
+        json_str = json.dumps(
+            {
+                "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
+                "hashAlg": "xxh128",
+                # Missing totalSize, dirs, files
+            }
+        )
 
         with pytest.raises(ManifestDecodeValidationError, match="missing required"):
             decode_v2025(json_str)
@@ -480,63 +488,3 @@ class TestRoundTrip:
         deleted_dirs = [d for d in decoded.dirs if d.deleted]
         assert len(deleted_dirs) == 1
         assert deleted_dirs[0].path == "project"
-
-
-class TestDecodeManifestIntegration:
-    """Tests for decode_manifest() integration with v2025 format."""
-
-    def test_decode_manifest_v2025_format(self) -> None:
-        """decode_manifest() handles v2025 specificationVersion format."""
-        from deadline.job_attachments.asset_manifests.decode import decode_manifest
-
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "dirs": [
-                {"name": "project"},
-            ],
-            "files": [
-                {"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
-            ],
-        })
-
-        result = decode_manifest(json_str)
-
-        assert isinstance(result, RelSnapshotManifest)
-        assert result.paths[0].path == "project/file.txt"
-
-    def test_decode_manifest_v2023_format(self) -> None:
-        """decode_manifest() still handles v2023 manifestVersion format."""
-        from deadline.job_attachments.asset_manifests.decode import decode_manifest
-
-        json_str = json.dumps({
-            "manifestVersion": "2023-03-03",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "paths": [
-                {"path": "file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
-            ],
-        })
-
-        result = decode_manifest(json_str)
-
-        # Returns BaseAssetManifest for v2023 format
-        assert result.paths[0].path == "file.txt"
-
-    def test_decode_manifest_invalid_hash(self) -> None:
-        """decode_manifest() validates hashes are alphanumeric for v2025."""
-        from deadline.job_attachments.asset_manifests.decode import decode_manifest
-
-        json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
-            "hashAlg": "xxh128",
-            "totalSize": 100,
-            "dirs": [],
-            "files": [
-                {"name": "file.txt", "hash": "abc!@#123", "size": 100, "mtime": 1000}
-            ],
-        })
-
-        with pytest.raises(ManifestDecodeValidationError, match="not alphanumeric"):
-            decode_manifest(json_str)

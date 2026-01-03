@@ -104,9 +104,7 @@ def _get_specification_version(manifest: Manifest) -> str:
     elif isinstance(manifest, RelDiffManifest):
         return SPEC_REL_DIFF
     else:
-        raise ManifestDecodeValidationError(
-            f"Unknown manifest type: {type(manifest).__name__}"
-        )
+        raise ManifestDecodeValidationError(f"Unknown manifest type: {type(manifest).__name__}")
 
 
 def _sort_and_dedupe_dirs(dirs: List[ManifestDirectoryPath]) -> List[ManifestDirectoryPath]:
@@ -193,9 +191,7 @@ def _encode_dirs(
     return result
 
 
-def _encode_files(
-    files: List[ManifestFilePath], dir_index: Dict[str, int]
-) -> List[Dict[str, Any]]:
+def _encode_files(files: List[ManifestFilePath], dir_index: Dict[str, int]) -> List[Dict[str, Any]]:
     """Encode files with $N/ compression."""
     result: List[Dict[str, Any]] = []
 
@@ -244,7 +240,7 @@ def _encode_path_with_dir_index(path: str, dir_index: Dict[str, int]) -> str:
         return path
 
     dir_path = path[:last_slash]
-    name = path[last_slash + 1:]
+    name = path[last_slash + 1 :]
 
     if dir_path in dir_index:
         return f"${dir_index[dir_path]}/{name}"
