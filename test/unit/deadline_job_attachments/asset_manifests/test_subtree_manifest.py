@@ -146,7 +146,7 @@ class TestSubtreeManifestRelative:
         result = subtree_manifest(manifest, "assets/textures")
 
         assert isinstance(result, RelSnapshotManifest)
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         assert file_paths == {"wood.png", "metal.png"}
 
     def test_directories_rebased(self) -> None:
@@ -177,8 +177,8 @@ class TestSubtreeManifestRelative:
 
         result = subtree_manifest(manifest, "assets/textures")
 
-        assert len(result.paths) == 1
-        entry = result.paths[0]
+        assert len(result.files) == 1
+        entry = result.files[0]
         assert entry.path == "wood.png"
         assert entry.hash == "hash1"
         assert entry.size == 100
@@ -210,8 +210,8 @@ class TestSubtreeManifestRelative:
 
         result = subtree_manifest(manifest, "a/b/c")
 
-        assert len(result.paths) == 2
-        paths = {p.path for p in result.paths}
+        assert len(result.files) == 2
+        paths = {p.path for p in result.files}
         assert paths == {"d/file.txt", "other.txt"}
 
     def test_empty_result(self) -> None:
@@ -224,7 +224,7 @@ class TestSubtreeManifestRelative:
 
         result = subtree_manifest(manifest, "assets/textures")
 
-        assert len(result.paths) == 0
+        assert len(result.files) == 0
         assert result.totalSize == 0
 
     def test_preserves_runnable_flag(self) -> None:
@@ -244,7 +244,7 @@ class TestSubtreeManifestRelative:
 
         result = subtree_manifest(manifest, "scripts/bin")
 
-        assert result.paths[0].runnable is True
+        assert result.files[0].runnable is True
 
     def test_preserves_chunkhashes(self) -> None:
         """Chunkhashes are preserved for large files."""
@@ -262,7 +262,7 @@ class TestSubtreeManifestRelative:
 
         result = subtree_manifest(manifest, "data/large")
 
-        assert result.paths[0].chunkhashes == ["c1", "c2"]
+        assert result.files[0].chunkhashes == ["c1", "c2"]
 
 
 class TestSubtreeManifestDiff:
@@ -304,9 +304,9 @@ class TestSubtreeManifestDiff:
         result = subtree_manifest(manifest, "assets/textures")
 
         assert isinstance(result, RelDiffManifest)
-        assert len(result.paths) == 1
-        assert result.paths[0].path == "old.png"
-        assert result.paths[0].deleted is True
+        assert len(result.files) == 1
+        assert result.files[0].path == "old.png"
+        assert result.files[0].deleted is True
 
     def test_discards_parent_manifest_hash(self) -> None:
         """Parent manifest hash is discarded for diff manifests (subtree changes the root)."""
@@ -361,7 +361,7 @@ class TestSubtreeManifestSymlinks:
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
-        paths_by_name = {p.path: p for p in result.paths}
+        paths_by_name = {p.path: p for p in result.files}
         assert "current" in paths_by_name
         # After rebasing, target should be relative to new root
         assert paths_by_name["current"].symlink_target == "wood.png"
@@ -386,7 +386,7 @@ class TestSubtreeManifestSymlinks:
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
-        paths_by_name = {p.path: p for p in result.paths}
+        paths_by_name = {p.path: p for p in result.files}
         # "current" should be collapsed to a file with latest.png's content
         assert "current" in paths_by_name
         assert paths_by_name["current"].symlink_target is None
@@ -406,7 +406,7 @@ class TestSubtreeManifestSymlinks:
 
         result = subtree_manifest(manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE)
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         assert "current" not in paths
         assert "wood.png" in paths
 
@@ -425,7 +425,7 @@ class TestSubtreeManifestSymlinks:
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE
         )
 
-        paths_by_name = {p.path: p for p in result.paths}
+        paths_by_name = {p.path: p for p in result.files}
         # "current" should be collapsed even though it's within subtree
         assert "current" in paths_by_name
         assert paths_by_name["current"].symlink_target is None
@@ -450,7 +450,7 @@ class TestSubtreeManifestSymlinks:
             print_function_callback=messages.append,
         )
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         assert "broken" not in paths
         assert any("Warning" in msg and "broken" in msg for msg in messages)
 
@@ -604,10 +604,10 @@ class TestSubtreeManifestAbsolutePaths:
 
         # Output should be RelSnapshotManifest with relative paths
         assert isinstance(result, RelSnapshotManifest)
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         assert file_paths == {"wood.png", "metal.png"}
         # Verify paths are relative (don't start with / or drive letter)
-        for entry in result.paths:
+        for entry in result.files:
             assert not entry.path.startswith("/")
             assert not (len(entry.path) >= 2 and entry.path[1] == ":")
 
@@ -630,7 +630,7 @@ class TestSubtreeManifestAbsolutePaths:
             result = subtree_manifest(manifest, "/")
 
             # All files should be included with paths relative to "/"
-            file_paths = {p.path for p in result.paths}
+            file_paths = {p.path for p in result.files}
             assert file_paths == {"home/user/file.txt", "var/data/other.txt"}
 
             # Directories should also be rebased
@@ -685,7 +685,7 @@ class TestSubtreeManifestDirectorySymlinks:
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         # The symlink "link" should be expanded to include the directory contents
         assert "link/a.png" in paths
         assert "link/b.png" in paths
@@ -707,7 +707,7 @@ class TestSubtreeManifestDirectorySymlinks:
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         # The symlink "link" should be expanded to include the directory contents
         assert "link/a.png" in paths
         assert "link/b.png" in paths
@@ -740,7 +740,7 @@ class TestSubtreeManifestDirectorySymlinks:
             manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
         )
 
-        paths_by_name = {p.path: p for p in result.paths}
+        paths_by_name = {p.path: p for p in result.files}
 
         # Regular file should be collapsed normally
         assert "link/regular.png" in paths_by_name
@@ -813,7 +813,7 @@ class TestPathSeparatorHandling:
             # On Windows, user might pass "assets\\textures" which should work
             result = subtree_manifest(manifest, "assets\\textures")
 
-            paths = {p.path for p in result.paths}
+            paths = {p.path for p in result.files}
             assert "wood.png" in paths
 
 
@@ -874,7 +874,7 @@ class TestSubtreeManifestUNCPaths:
 
         result = subtree_manifest(manifest, "//server/share/assets/textures")
 
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         assert file_paths == {"wood.png", "metal.png"}
 
     @patch.object(os, "name", "nt")
@@ -895,7 +895,7 @@ class TestSubtreeManifestUNCPaths:
         # This should complete without hanging
         result = subtree_manifest(manifest, "//server/share/a/b/c")
 
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         assert file_paths == {"d/e/f/file.txt"}
 
     @patch.object(os, "name", "nt")
@@ -927,6 +927,6 @@ class TestSubtreeManifestUNCPaths:
 
         result = subtree_manifest(manifest, "//server1/share/assets")
 
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         # Only files from server1 should be included
         assert file_paths == {"file1.txt", "file2.txt"}

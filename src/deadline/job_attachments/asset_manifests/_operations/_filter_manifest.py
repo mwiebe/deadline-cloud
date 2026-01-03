@@ -159,7 +159,7 @@ def filter_manifest(
     total_size = 0
 
     # Filter file entries
-    for entry in manifest.paths:
+    for entry in manifest.files:
         if entry_filter(entry):
             # Create a new entry (don't mutate original)
             filtered_paths.append(
@@ -193,7 +193,7 @@ def filter_manifest(
     return manifest_type(
         hash_alg=manifest.hashAlg,
         dirs=filtered_dirs,
-        paths=filtered_paths,
+        files=filtered_paths,
         total_size=total_size,
         parent_manifest_hash=manifest.parentManifestHash,
     )

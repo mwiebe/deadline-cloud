@@ -143,7 +143,7 @@ class TestHashUploadManifest:
         )
 
         assert isinstance(result, AbsSnapshotManifest)
-        assert len(result.paths) == 0
+        assert len(result.files) == 0
         assert result.totalSize == 0
         # No objects should be uploaded
         assert len(self._get_s3_objects()) == 0
@@ -178,16 +178,16 @@ class TestHashUploadManifest:
         )
 
         assert isinstance(result, AbsSnapshotManifest)
-        assert len(result.paths) == 1
-        assert result.paths[0].hash != ""  # Hash should be filled in
-        assert result.paths[0].path == abs_path
+        assert len(result.files) == 1
+        assert result.files[0].hash != ""  # Hash should be filled in
+        assert result.files[0].path == abs_path
 
         # Verify the file was uploaded to S3
         s3_objects = self._get_s3_objects()
         assert len(s3_objects) == 1
 
         # Verify the S3 key format is correct (hash.algorithm)
-        expected_key = f"{TEST_KEY_PREFIX}/{result.paths[0].hash}.xxh128"
+        expected_key = f"{TEST_KEY_PREFIX}/{result.files[0].hash}.xxh128"
         assert expected_key in s3_objects
 
         # Verify the uploaded content matches the original file
@@ -220,7 +220,7 @@ class TestHashUploadManifest:
 
         assert isinstance(result, AbsSnapshotManifest)
         # Filter to file entries only
-        file_entries = [p for p in result.paths if p.symlink_target is None and not p.deleted]
+        file_entries = [p for p in result.files if p.symlink_target is None and not p.deleted]
         assert len(file_entries) == 3
 
         # All files should have hashes
@@ -254,7 +254,7 @@ class TestHashUploadManifest:
         )
 
         # Filter to file entries
-        file_entries = [p for p in result.paths if p.symlink_target is None]
+        file_entries = [p for p in result.files if p.symlink_target is None]
         assert len(file_entries) == 2
 
         # Both files should have the same hash
@@ -304,7 +304,7 @@ class TestHashUploadManifest:
                 cache_key, HashAlgorithm.XXH128, range_start=0, range_end=file_size
             )
             assert cached_entry is not None
-            assert cached_entry.file_hash == result.paths[0].hash
+            assert cached_entry.file_hash == result.files[0].hash
 
     def test_hash_upload_with_s3_check_cache(self, tmp_path: Path) -> None:
         """Test that S3 check cache prevents re-uploading existing files."""
@@ -349,7 +349,7 @@ class TestHashUploadManifest:
             )
 
         # Both results should have the same hash
-        assert result1.paths[0].hash == result2.paths[0].hash
+        assert result1.files[0].hash == result2.files[0].hash
 
     def test_hash_matches_direct_hash(self, tmp_path: Path) -> None:
         """Test that computed hash matches direct hash_file() result."""
@@ -380,7 +380,7 @@ class TestHashUploadManifest:
 
         # Compute hash directly
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
-        assert result.paths[0].hash == expected_hash
+        assert result.files[0].hash == expected_hash
 
     def test_preserves_metadata(self, tmp_path: Path) -> None:
         """Test that file metadata is preserved in the result manifest."""
@@ -411,9 +411,9 @@ class TestHashUploadManifest:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
-        assert result.paths[0].size == original_size
-        assert result.paths[0].mtime == original_mtime
-        assert result.paths[0].path == abs_path
+        assert result.files[0].size == original_size
+        assert result.files[0].mtime == original_mtime
+        assert result.files[0].path == abs_path
 
     def test_symlinks_pass_through_unchanged(self, tmp_path: Path) -> None:
         """Test that symlinks are passed through without uploading."""
@@ -436,8 +436,8 @@ class TestHashUploadManifest:
         )
 
         # Find symlink and file entries
-        symlink_entries = [p for p in result.paths if p.symlink_target is not None]
-        file_entries = [p for p in result.paths if p.symlink_target is None]
+        symlink_entries = [p for p in result.files if p.symlink_target is not None]
+        file_entries = [p for p in result.files if p.symlink_target is None]
 
         assert len(symlink_entries) == 1
         assert len(file_entries) == 1
@@ -497,9 +497,9 @@ class TestHashUploadManifest:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
-        assert len(result.paths) == 1
-        assert result.paths[0].deleted is True
-        assert result.paths[0].hash is None
+        assert len(result.files) == 1
+        assert result.files[0].deleted is True
+        assert result.files[0].hash is None
 
         # No uploads for deleted entries
         s3_objects = self._get_s3_objects()
@@ -527,10 +527,10 @@ class TestHashUploadManifest:
         )
 
         # Find the file entry
-        file_entries = [p for p in result.paths if p.symlink_target is None]
+        file_entries = [p for p in result.files if p.symlink_target is None]
         assert len(file_entries) == 1
         # Runnable flag should be preserved from collected manifest
-        collected_file = [p for p in collected.paths if p.symlink_target is None][0]
+        collected_file = [p for p in collected.files if p.symlink_target is None][0]
         assert file_entries[0].runnable == collected_file.runnable
 
     @pytest.mark.parametrize("runnable", [True, False])
@@ -564,9 +564,9 @@ class TestHashUploadManifest:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
-        assert len(result.paths) == 1
-        assert result.paths[0].runnable is runnable
-        assert result.paths[0].hash != ""
+        assert len(result.files) == 1
+        assert result.files[0].runnable is runnable
+        assert result.files[0].hash != ""
 
     def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
         """Test that AbsSnapshotManifest input returns AbsSnapshotManifest."""
@@ -677,4 +677,4 @@ class TestHashUploadInputValidation:
             s3_bucket=TEST_BUCKET,
             s3_key_prefix=TEST_KEY_PREFIX,
         )
-        assert result.paths[0].hash != ""
+        assert result.files[0].hash != ""

@@ -77,7 +77,7 @@ class TestComputeDiffManifestAbsSnapshot:
         diff = compute_diff_manifest(parent, current)
 
         assert diff.manifestType == ManifestType.DIFF
-        assert len(diff.paths) == 0
+        assert len(diff.files) == 0
         assert len(diff.dirs) == 0
 
     def test_new_file_detected(self) -> None:
@@ -94,7 +94,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        new_entry = next((p for p in diff.paths if p.path == "/new.txt"), None)
+        new_entry = next((p for p in diff.files if p.path == "/new.txt"), None)
         assert new_entry is not None
         assert new_entry.hash == "hash2"
         assert not new_entry.deleted
@@ -110,9 +110,9 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/file.txt"
-        assert diff.paths[0].hash == "hash2"
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/file.txt"
+        assert diff.files[0].hash == "hash2"
 
     def test_same_hash_different_mtime_is_modified(self) -> None:
         """Same hash but different mtime IS considered modified."""
@@ -125,9 +125,9 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/file.txt"
-        assert diff.paths[0].mtime == 2000
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/file.txt"
+        assert diff.files[0].mtime == 2000
 
     def test_same_hash_different_size_is_modified(self) -> None:
         """Same hash but different size IS considered modified."""
@@ -140,9 +140,9 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/file.txt"
-        assert diff.paths[0].size == 200
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/file.txt"
+        assert diff.files[0].size == 200
 
     def test_deleted_file_has_marker(self) -> None:
         """Deleted file has deleted=True marker in diff."""
@@ -158,7 +158,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        deleted_entry = next((p for p in diff.paths if p.path == "/delete.txt"), None)
+        deleted_entry = next((p for p in diff.files if p.path == "/delete.txt"), None)
         assert deleted_entry is not None
         assert deleted_entry.deleted is True
 
@@ -179,7 +179,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        paths = {p.path for p in diff.paths}
+        paths = {p.path for p in diff.files}
         assert "/unchanged.txt" not in paths
         assert "/changed.txt" in paths
 
@@ -242,9 +242,9 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/link.txt"
-        assert diff.paths[0].symlink_target == "/new_target.txt"
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/link.txt"
+        assert diff.files[0].symlink_target == "/new_target.txt"
 
     def test_new_symlink_included(self) -> None:
         """New symlink is included in diff."""
@@ -253,8 +253,8 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].symlink_target == "/target.txt"
+        assert len(diff.files) == 1
+        assert diff.files[0].symlink_target == "/target.txt"
 
     def test_deleted_symlink_has_marker(self) -> None:
         """Deleted symlink has deleted=True marker."""
@@ -263,9 +263,9 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/link.txt"
-        assert diff.paths[0].deleted is True
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/link.txt"
+        assert diff.files[0].deleted is True
 
     def test_preserves_runnable_flag(self) -> None:
         """Runnable flag is preserved for changed files."""
@@ -276,7 +276,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert diff.paths[0].runnable is True
+        assert diff.files[0].runnable is True
 
     def test_preserves_chunkhashes(self) -> None:
         """Chunkhashes are preserved for large files."""
@@ -294,7 +294,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert diff.paths[0].chunkhashes == ["chunk1", "chunk2"]
+        assert diff.files[0].chunkhashes == ["chunk1", "chunk2"]
 
     def test_chunked_file_modification_detected(self) -> None:
         """Modified chunked file (different chunkhashes) is detected."""
@@ -321,8 +321,8 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].chunkhashes == ["chunk1", "chunk3"]
+        assert len(diff.files) == 1
+        assert diff.files[0].chunkhashes == ["chunk1", "chunk3"]
 
     def test_total_size_calculated(self) -> None:
         """Total size is sum of non-deleted, non-symlink entries."""
@@ -399,7 +399,7 @@ class TestComputeDiffManifestRelSnapshot:
         diff = compute_diff_manifest(parent, current)
 
         assert diff.manifestType == ManifestType.DIFF
-        assert len(diff.paths) == 0
+        assert len(diff.files) == 0
         assert len(diff.dirs) == 0
 
     def test_new_file_detected(self) -> None:
@@ -416,7 +416,7 @@ class TestComputeDiffManifestRelSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        new_entry = next((p for p in diff.paths if p.path == "new.txt"), None)
+        new_entry = next((p for p in diff.files if p.path == "new.txt"), None)
         assert new_entry is not None
         assert new_entry.hash == "hash2"
 
@@ -434,7 +434,7 @@ class TestComputeDiffManifestRelSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        deleted_entry = next((p for p in diff.paths if p.path == "delete.txt"), None)
+        deleted_entry = next((p for p in diff.files if p.path == "delete.txt"), None)
         assert deleted_entry is not None
         assert deleted_entry.deleted is True
 
@@ -524,12 +524,12 @@ class TestComputeDiffWithFilter:
         diff = compute_diff_manifest(filtered_parent, filtered_current)
 
         # Should only have new.blend as added, no deletions
-        paths = {p.path for p in diff.paths}
+        paths = {p.path for p in diff.files}
         assert "/new.blend" in paths
         assert "/texture.png" not in paths
 
         # Verify no deletion markers
-        deleted = [p for p in diff.paths if p.deleted]
+        deleted = [p for p in diff.files if p.deleted]
         assert len(deleted) == 0
 
 
@@ -563,7 +563,7 @@ class TestIgnoreHashesMode:
         diff = compute_diff_manifest(parent, current, ignore_hashes=True)
 
         # Different hash but same metadata = not modified when ignore_hashes=True
-        assert len(diff.paths) == 0
+        assert len(diff.files) == 0
 
     def test_different_mtime_is_modified_with_ignore_hashes(self) -> None:
         """Different mtime is still detected when ignore_hashes=True."""
@@ -576,8 +576,8 @@ class TestIgnoreHashesMode:
 
         diff = compute_diff_manifest(parent, current, ignore_hashes=True)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/file.txt"
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/file.txt"
 
     def test_different_size_is_modified_with_ignore_hashes(self) -> None:
         """Different size is still detected when ignore_hashes=True."""
@@ -590,8 +590,8 @@ class TestIgnoreHashesMode:
 
         diff = compute_diff_manifest(parent, current, ignore_hashes=True)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].path == "/file.txt"
+        assert len(diff.files) == 1
+        assert diff.files[0].path == "/file.txt"
 
 
 class TestPreserveRunnableMode:
@@ -623,8 +623,8 @@ class TestPreserveRunnableMode:
 
         diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].runnable is True  # Preserved from parent
+        assert len(diff.files) == 1
+        assert diff.files[0].runnable is True  # Preserved from parent
 
     def test_preserve_runnable_does_not_affect_new_files(self) -> None:
         """preserve_runnable doesn't affect new files (no parent entry)."""
@@ -635,8 +635,8 @@ class TestPreserveRunnableMode:
 
         diff = compute_diff_manifest(parent, current, preserve_runnable=True)
 
-        assert len(diff.paths) == 1
-        assert diff.paths[0].runnable is True  # From current (no parent)
+        assert len(diff.files) == 1
+        assert diff.files[0].runnable is True  # From current (no parent)
 
 
 class TestEntriesDiffer:
@@ -916,7 +916,7 @@ class TestDirectoryDeletionSemantics:
         diff = compute_diff_manifest(parent, current)
 
         # Should have deletion markers for both files and the directory
-        deleted_files = {p.path for p in diff.paths if p.deleted}
+        deleted_files = {p.path for p in diff.files if p.deleted}
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
 
         assert "/deleted_dir/file1.txt" in deleted_files

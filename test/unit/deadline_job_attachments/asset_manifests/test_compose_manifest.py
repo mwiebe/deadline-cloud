@@ -383,7 +383,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         assert paths == {"existing.txt", "new.txt"}
         assert result.manifestType == ManifestType.SNAPSHOT
 
@@ -396,10 +396,10 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        assert len(result.paths) == 1
-        assert result.paths[0].hash == "h2"
-        assert result.paths[0].size == 200
-        assert result.paths[0].mtime == 2000
+        assert len(result.files) == 1
+        assert result.files[0].hash == "h2"
+        assert result.files[0].size == 200
+        assert result.files[0].mtime == 2000
 
     def test_diff_deletes_file(self) -> None:
         """Diff deletes a file from the snapshot."""
@@ -413,9 +413,9 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         assert paths == {"keep.txt"}
-        assert all(not p.deleted for p in result.paths)
+        assert all(not p.deleted for p in result.files)
 
     def test_diff_deletes_empty_directory(self) -> None:
         """Diff deletes an empty directory."""
@@ -443,7 +443,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff1, diff2])
 
-        assert result.paths[0].hash == "v3"
+        assert result.files[0].hash == "v3"
 
     def test_add_then_delete_removes_file(self) -> None:
         """File added then deleted is not in result."""
@@ -453,7 +453,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff1, diff2])
 
-        assert len(result.paths) == 0
+        assert len(result.files) == 0
 
     def test_delete_then_add_restores_file(self) -> None:
         """File deleted then added is in result."""
@@ -465,8 +465,8 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff1, diff2])
 
-        assert len(result.paths) == 1
-        assert result.paths[0].hash == "v2"
+        assert len(result.files) == 1
+        assert result.files[0].hash == "v2"
 
     def test_symlink_handling(self) -> None:
         """Symlinks are handled correctly."""
@@ -475,7 +475,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        assert result.paths[0].symlink_target == "new_target.txt"
+        assert result.files[0].symlink_target == "new_target.txt"
 
     def test_runnable_flag_preserved(self) -> None:
         """Runnable flag is preserved in composition."""
@@ -488,7 +488,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        assert result.paths[0].runnable is True
+        assert result.files[0].runnable is True
 
     def test_chunkhashes_preserved(self) -> None:
         """Chunkhashes are preserved for large files."""
@@ -506,7 +506,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        assert result.paths[0].chunkhashes == ["c1", "c2", "c3"]
+        assert result.files[0].chunkhashes == ["c1", "c2", "c3"]
 
     def test_total_size_excludes_symlinks(self) -> None:
         """Total size excludes symlinks."""
@@ -590,7 +590,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
 
         result = compose_manifests([snapshot, diff])
 
-        paths = {p.path for p in result.paths}
+        paths = {p.path for p in result.files}
         assert paths == {"/project/existing.txt", "/project/new.txt"}
 
     def test_returns_abs_snapshot_manifest(self) -> None:
@@ -673,7 +673,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1, diff2])
 
-        paths = {p.path for p in result.paths if not p.deleted}
+        paths = {p.path for p in result.files if not p.deleted}
         assert paths == {"file1.txt", "file2.txt"}
 
     def test_later_modification_overrides_earlier(self) -> None:
@@ -683,7 +683,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1, diff2])
 
-        file_entry = next(p for p in result.paths if p.path == "file.txt")
+        file_entry = next(p for p in result.files if p.path == "file.txt")
         assert file_entry.hash == "v2"
 
     def test_deletion_marker_preserved(self) -> None:
@@ -692,7 +692,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1])
 
-        assert result.paths[0].deleted is True
+        assert result.files[0].deleted is True
 
     def test_add_then_delete_preserves_deletion(self) -> None:
         """File added then deleted still has deletion marker."""
@@ -701,7 +701,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1, diff2])
 
-        file_entry = next(p for p in result.paths if p.path == "file.txt")
+        file_entry = next(p for p in result.files if p.path == "file.txt")
         assert file_entry.deleted is True
 
     def test_delete_then_add_clears_deletion(self) -> None:
@@ -711,7 +711,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1, diff2])
 
-        file_entry = next(p for p in result.paths if p.path == "file.txt")
+        file_entry = next(p for p in result.files if p.path == "file.txt")
         assert file_entry.deleted is False
         assert file_entry.hash == "h1"
 
@@ -743,7 +743,7 @@ class TestComposeManifestsDiffs:
         dir_entry = next((d for d in result.dirs if d.path == "dir" and not d.deleted), None)
         assert dir_entry is not None
 
-        file_entry = next(p for p in result.paths if p.path == "dir/newfile.txt")
+        file_entry = next(p for p in result.files if p.path == "dir/newfile.txt")
         assert file_entry.deleted is False
 
     def test_nested_directory_deletion_reconciliation(self) -> None:
@@ -828,7 +828,7 @@ class TestComposeManifestsDiffsAbsolute:
 
         result = compose_manifests([diff1, diff2])
 
-        paths = {p.path for p in result.paths if not p.deleted}
+        paths = {p.path for p in result.files if not p.deleted}
         assert paths == {"/project/file1.txt", "/project/file2.txt"}
 
     def test_returns_abs_diff_manifest(self) -> None:

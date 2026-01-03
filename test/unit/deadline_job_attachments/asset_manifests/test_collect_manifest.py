@@ -41,7 +41,7 @@ class TestCollectManifest:
         )
 
         # Path should be absolute (POSIX format)
-        assert manifest.paths[0].path == tmp_path.as_posix() + "/file.txt"
+        assert manifest.files[0].path == tmp_path.as_posix() + "/file.txt"
 
     def test_nested_absolute_paths(self, tmp_path: Path) -> None:
         """Nested files have full absolute paths."""
@@ -56,7 +56,7 @@ class TestCollectManifest:
         )
 
         # Find the file entry (not directory)
-        file_entries = [p for p in manifest.paths if "nested.txt" in p.path]
+        file_entries = [p for p in manifest.files if "nested.txt" in p.path]
         assert len(file_entries) == 1
         assert file_entries[0].path == (subdir / "nested.txt").as_posix()
 
@@ -72,7 +72,7 @@ class TestCollectManifest:
         )
 
         # Check file path is absolute
-        file_entry = [p for p in manifest.paths if "file.txt" in p.path][0]
+        file_entry = [p for p in manifest.files if "file.txt" in p.path][0]
         assert file_entry.path == (subdir / "file.txt").as_posix()
         # Check dir paths are absolute (includes root and subdir)
         dir_paths = {d.path for d in manifest.dirs}
@@ -94,7 +94,7 @@ class TestCollectManifest:
         )
 
         # Find the symlink entry
-        link_entry = [p for p in manifest.paths if "link.txt" in p.path][0]
+        link_entry = [p for p in manifest.files if "link.txt" in p.path][0]
         assert link_entry.path == link.as_posix()
         # symlink_target should also be absolute with collect_manifest and PRESERVE
         assert link_entry.symlink_target == target.resolve().as_posix()
@@ -108,7 +108,7 @@ class TestCollectManifest:
             [],
         )
 
-        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        file_entries = [p for p in manifest.files if "file.txt" in p.path]
         assert file_entries[0].path == (tmp_path / "file.txt").as_posix()
 
 
@@ -135,7 +135,7 @@ class TestCollectManifestSymlinkChains:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
         # Each symlink should point to its immediate target (absolute), not the final target
         assert paths_by_name[link1.as_posix()].symlink_target == target.as_posix()
         assert paths_by_name[link2.as_posix()].symlink_target == link1.as_posix()
@@ -156,8 +156,8 @@ class TestCollectManifestSymlinkChains:
         )
 
         # Both entries should exist
-        assert len(manifest.paths) == 2
-        link_entry = [p for p in manifest.paths if "link.txt" in p.path][0]
+        assert len(manifest.files) == 2
+        link_entry = [p for p in manifest.files if "link.txt" in p.path][0]
         assert link_entry.symlink_target == target.as_posix()
 
     def test_preserve_keeps_all_symlinks_in_chain(self, tmp_path: Path) -> None:
@@ -183,7 +183,7 @@ class TestCollectManifestSymlinkChains:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # All entries should exist
         assert target.as_posix() in paths_by_name
@@ -237,7 +237,7 @@ class TestCollectManifestSymlinkChains:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # Escaping symlink should be preserved with absolute target
         assert link.as_posix() in paths_by_name
@@ -306,7 +306,7 @@ class TestCollectManifestOptionalFilenames:
             optional_filenames=[file2],
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert file1.as_posix() in paths
         assert file2.as_posix() in paths
 
@@ -322,7 +322,7 @@ class TestCollectManifestOptionalFilenames:
             optional_filenames=[missing],
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert file1.as_posix() in paths
         assert missing.as_posix() not in paths
 
@@ -345,7 +345,7 @@ class TestCollectManifestSymlinkPolicies:
 
         # Both target and link should be collected as files
         assert isinstance(manifest, AbsSnapshotManifest)
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert target.as_posix() in paths
         assert link.as_posix() in paths
 
@@ -364,7 +364,7 @@ class TestCollectManifestSymlinkPolicies:
 
         # Only target should be collected, not the symlink
         assert isinstance(manifest, AbsSnapshotManifest)
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert target.as_posix() in paths
         assert link.as_posix() not in paths
 
@@ -386,11 +386,11 @@ class TestCollectManifestSymlinkPolicies:
         )
 
         assert isinstance(manifest, AbsSnapshotManifest)
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
 
         # Symlink should be preserved
         assert link.as_posix() in paths
-        link_entry = [p for p in manifest.paths if p.path == link.as_posix()][0]
+        link_entry = [p for p in manifest.files if p.path == link.as_posix()][0]
         assert link_entry.symlink_target == outside.as_posix()
 
         # Target should also be collected (transitive)
@@ -447,7 +447,7 @@ class TestCollectManifestDirectoryHandling:
             [],
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert (dir1 / "file1.txt").as_posix() in paths
         assert (dir2 / "file2.txt").as_posix() in paths
 
@@ -466,7 +466,7 @@ class TestCollectManifestMetadata:
             [],
         )
 
-        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        file_entries = [p for p in manifest.files if "file.txt" in p.path]
         assert file_entries[0].size == len(content)
 
     def test_mtime_captured(self, tmp_path: Path) -> None:
@@ -481,7 +481,7 @@ class TestCollectManifestMetadata:
             [],
         )
 
-        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        file_entries = [p for p in manifest.files if "file.txt" in p.path]
         assert file_entries[0].mtime == expected_mtime
 
     def test_hash_is_empty_string(self, tmp_path: Path) -> None:
@@ -494,7 +494,7 @@ class TestCollectManifestMetadata:
             [],
         )
 
-        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        file_entries = [p for p in manifest.files if "file.txt" in p.path]
         assert file_entries[0].hash == ""
 
     @pytest.mark.skipif(os.name == "nt", reason="Execute bit not meaningful on Windows")
@@ -509,7 +509,7 @@ class TestCollectManifestMetadata:
             [],
         )
 
-        file_entries = [p for p in manifest.paths if "script.sh" in p.path]
+        file_entries = [p for p in manifest.files if "script.sh" in p.path]
         assert file_entries[0].runnable is True
 
     def test_total_size_calculated(self, tmp_path: Path) -> None:
@@ -545,7 +545,7 @@ class TestCollectManifestFilenamesParameter:
             [file1, file2],
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert file1.as_posix() in paths
         assert file2.as_posix() in paths
         assert file3.as_posix() not in paths
@@ -564,7 +564,7 @@ class TestCollectManifestFilenamesParameter:
             [extra_file],
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert (subdir / "in_dir.txt").as_posix() in paths
         assert extra_file.as_posix() in paths
 
@@ -589,7 +589,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # Both should exist
         assert target.as_posix() in paths_by_name
@@ -622,7 +622,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # Link should be collapsed (no symlink_target)
         assert link.as_posix() in paths_by_name
@@ -658,7 +658,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         dir_paths = {d.path for d in manifest.dirs}
 
         # The symlink dir should be collapsed - its contents appear under link_dir path
@@ -700,7 +700,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # Internal file should exist
         assert internal.as_posix() in paths_by_name
@@ -739,7 +739,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # Symlink should be preserved (target dir1 is in collected set)
         assert link_to_dir1.as_posix() in paths_by_name
@@ -775,7 +775,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # link1 points to link2 which IS in collected set -> preserved as symlink
         assert link1.as_posix() in paths_by_name
@@ -798,7 +798,7 @@ class TestCollectManifestCollapseEscaping:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths = {p.path for p in manifest.paths}
+        paths = {p.path for p in manifest.files}
         assert (tmp_path / "file.txt").as_posix() in paths
         assert (subdir / "nested.txt").as_posix() in paths
 
@@ -842,7 +842,7 @@ class TestCollectManifestCollapseEscapingChains:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # All three should exist
         assert target_file.as_posix() in paths_by_name
@@ -882,7 +882,7 @@ class TestCollectManifestCollapseEscapingChains:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # Both symlinks should be preserved (targets are IN)
         assert link1.as_posix() in paths_by_name
@@ -918,7 +918,7 @@ class TestCollectManifestCollapseEscapingChains:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # link1 points to OUT -> collapsed (no symlink_target)
         assert link1.as_posix() in paths_by_name
@@ -959,7 +959,7 @@ class TestCollectManifestCollapseEscapingChains:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
         dir_paths = {d.path for d in manifest.dirs}
 
         # link1 points to OUT dir -> collapsed (contents inlined)
@@ -998,7 +998,7 @@ class TestCollectManifestCollapseEscapingChains:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
 
         # target_file is IN -> collected normally
         assert target_file.as_posix() in paths_by_name
@@ -1043,7 +1043,7 @@ class TestCollectManifestCollapseEscapingChains:
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         )
 
-        paths_by_name = {p.path: p for p in manifest.paths}
+        paths_by_name = {p.path: p for p in manifest.files}
         dir_paths = {d.path for d in manifest.dirs}
 
         # subdir is IN -> collected normally

@@ -250,7 +250,7 @@ class TestPartitionManifestRelative:
         assert len(result) == 1
         root, subtree = result[0]
         assert root == "assets"
-        assert len(subtree.paths) == 3
+        assert len(subtree.files) == 3
 
     def test_explicit_roots(self) -> None:
         """Explicit roots partition correctly."""
@@ -269,13 +269,13 @@ class TestPartitionManifestRelative:
 
         # Check first partition
         _, textures_manifest = result[0]
-        assert len(textures_manifest.paths) == 1
-        assert textures_manifest.paths[0].path == "wood.png"
+        assert len(textures_manifest.files) == 1
+        assert textures_manifest.files[0].path == "wood.png"
 
         # Check second partition
         _, models_manifest = result[1]
-        assert len(models_manifest.paths) == 1
-        assert models_manifest.paths[0].path == "chair.blend"
+        assert len(models_manifest.files) == 1
+        assert models_manifest.files[0].path == "chair.blend"
 
     def test_empty_partition_for_explicit_root(self) -> None:
         """Empty partition returned for explicit root with no entries."""
@@ -293,7 +293,7 @@ class TestPartitionManifestRelative:
 
         # Second partition should be empty
         _, models_manifest = result[1]
-        assert len(models_manifest.paths) == 0
+        assert len(models_manifest.files) == 0
 
 
 class TestPartitionManifestV2025:
@@ -339,7 +339,7 @@ class TestPartitionManifestV2025:
         assert len(result) == 1
         root, subtree = result[0]
         assert root == "project"
-        assert len(subtree.paths) == 3
+        assert len(subtree.files) == 3
 
     def test_preserves_directories(self) -> None:
         """Directories are preserved in partitions."""
@@ -376,7 +376,7 @@ class TestPartitionManifestV2025:
 
         assert len(result) == 1
         _, subtree = result[0]
-        link_entry = next((p for p in subtree.paths if p.path == "src/link"), None)
+        link_entry = next((p for p in subtree.files if p.path == "src/link"), None)
         assert link_entry is not None
         assert link_entry.symlink_target == "src/main.py"
 
@@ -473,7 +473,7 @@ class TestPartitionManifestAutoRoots:
         root, subtree = result[0]
         assert root == "."
         # Manifest should be returned as-is for "." root
-        assert len(subtree.paths) == 2
+        assert len(subtree.files) == 2
 
 
 class TestPartitionManifestReferencedPaths:
@@ -677,7 +677,7 @@ class TestPartitionManifestSymlinks:
         assert project_partition is not None
 
         # The symlink should be collapsed
-        link_entry = next((p for p in project_partition.paths if p.path == "src/link"), None)
+        link_entry = next((p for p in project_partition.files if p.path == "src/link"), None)
         assert link_entry is not None
         assert link_entry.symlink_target is None
         assert link_entry.hash == "h2"
@@ -699,7 +699,7 @@ class TestPartitionManifestSymlinks:
         )
 
         _, project_manifest = result[0]
-        paths = {p.path for p in project_manifest.paths}
+        paths = {p.path for p in project_manifest.files}
         assert "src/link" not in paths
         assert "src/main.py" in paths
 

@@ -182,8 +182,8 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "/project/model.blend"
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "/project/model.blend"
         assert filtered.totalSize == 100
 
     def test_filter_with_exclude_pattern(self) -> None:
@@ -199,8 +199,8 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter(exclude=["/backup/*"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 2
-        paths = {p.path for p in filtered.paths}
+        assert len(filtered.files) == 2
+        paths = {p.path for p in filtered.files}
         assert paths == {"/src/main.py", "/src/utils.py"}
         assert filtered.totalSize == 150
 
@@ -217,8 +217,8 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"], exclude=["/backup/*"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "/project/model.blend"
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "/project/model.blend"
 
     def test_filter_empty_patterns_returns_all(self) -> None:
         """Empty patterns return all entries."""
@@ -232,7 +232,7 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 2
+        assert len(filtered.files) == 2
 
     def test_filter_no_matches_returns_empty(self) -> None:
         """No matches returns empty manifest."""
@@ -246,7 +246,7 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 0
+        assert len(filtered.files) == 0
         assert filtered.totalSize == 0
 
     def test_filter_preserves_hash_algorithm(self) -> None:
@@ -269,7 +269,7 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        entry = filtered.paths[0]
+        entry = filtered.files[0]
         assert entry.path == "/test.txt"
         assert entry.hash == "abc123"
         assert entry.size == 42
@@ -283,12 +283,12 @@ class TestFilterManifestAbsSnapshot:
                 {"path": "/remove.txt", "hash": "hash2", "size": 20, "mtime": 2000},
             ]
         )
-        original_count = len(manifest.paths)
+        original_count = len(manifest.files)
 
         filter_obj = IncludeExcludePathsFilter(include=["/keep.txt"])
         filter_manifest(manifest, filter_obj)
 
-        assert len(manifest.paths) == original_count
+        assert len(manifest.files) == original_count
 
     def test_returns_abs_snapshot_manifest(self) -> None:
         """Filtering AbsSnapshotManifest returns AbsSnapshotManifest."""
@@ -335,8 +335,8 @@ class TestFilterManifestRelSnapshot:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "model.blend"
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "model.blend"
 
     def test_filter_directories(self) -> None:
         """Directories are filtered by pattern."""
@@ -367,9 +367,9 @@ class TestFilterManifestRelSnapshot:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "link.blend"
-        assert filtered.paths[0].symlink_target == "target.blend"
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "link.blend"
+        assert filtered.files[0].symlink_target == "target.blend"
 
     def test_filter_preserves_runnable(self) -> None:
         """Filtered entries preserve runnable flag."""
@@ -380,7 +380,7 @@ class TestFilterManifestRelSnapshot:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert filtered.paths[0].runnable is True
+        assert filtered.files[0].runnable is True
 
     def test_filter_preserves_chunkhashes(self) -> None:
         """Filtered entries preserve chunkhashes for large files."""
@@ -398,7 +398,7 @@ class TestFilterManifestRelSnapshot:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert filtered.paths[0].chunkhashes == ["chunk1", "chunk2"]
+        assert filtered.files[0].chunkhashes == ["chunk1", "chunk2"]
 
     def test_filter_recalculates_total_size(self) -> None:
         """Total size is recalculated for filtered entries."""
@@ -477,9 +477,9 @@ class TestFilterManifestAbsDiff:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "/keep.blend"
-        assert filtered.paths[0].deleted is True
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "/keep.blend"
+        assert filtered.files[0].deleted is True
 
     def test_filter_preserves_parent_hash(self) -> None:
         """Filtered manifest preserves parent manifest hash."""
@@ -557,9 +557,9 @@ class TestFilterManifestRelDiff:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "keep.blend"
-        assert filtered.paths[0].deleted is True
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "keep.blend"
+        assert filtered.files[0].deleted is True
 
     def test_returns_rel_diff_manifest(self) -> None:
         """Filtering RelDiffManifest returns RelDiffManifest."""
@@ -623,11 +623,11 @@ class TestFilterManifestDiffScenarios:
         filtered_current = filter_manifest(current, filter_obj)
 
         # Parent should only have model.blend
-        parent_paths = {p.path for p in filtered_parent.paths}
+        parent_paths = {p.path for p in filtered_parent.files}
         assert parent_paths == {"/model.blend"}
 
         # Current should have model.blend and new.blend
-        current_paths = {p.path for p in filtered_current.paths}
+        current_paths = {p.path for p in filtered_current.files}
         assert current_paths == {"/model.blend", "/new.blend"}
 
     def test_filter_directories_for_diff(self) -> None:
@@ -686,7 +686,7 @@ class TestCustomFilterCallables:
 
         filtered = filter_manifest(manifest, size_filter)
 
-        paths = {p.path for p in filtered.paths}
+        paths = {p.path for p in filtered.files}
         assert paths == {"/medium.txt", "/large.txt"}
 
     def test_filter_by_extension_case_insensitive(self) -> None:
@@ -707,7 +707,7 @@ class TestCustomFilterCallables:
 
         filtered = filter_manifest(manifest, blend_filter)
 
-        paths = {p.path for p in filtered.paths}
+        paths = {p.path for p in filtered.files}
         assert paths == {"/model.BLEND", "/scene.blend"}
 
     def test_filter_exclude_runnable(self) -> None:
@@ -729,8 +729,8 @@ class TestCustomFilterCallables:
 
         filtered = filter_manifest(manifest, non_executable_filter)
 
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "/data.txt"
+        assert len(filtered.files) == 1
+        assert filtered.files[0].path == "/data.txt"
 
     def test_always_true_filter(self) -> None:
         """Filter that accepts everything."""
@@ -746,7 +746,7 @@ class TestCustomFilterCallables:
 
         filtered = filter_manifest(manifest, accept_all)
 
-        assert len(filtered.paths) == 1
+        assert len(filtered.files) == 1
         assert len(filtered.dirs) == 1
 
     def test_always_false_filter(self) -> None:
@@ -763,6 +763,6 @@ class TestCustomFilterCallables:
 
         filtered = filter_manifest(manifest, reject_all)
 
-        assert len(filtered.paths) == 0
+        assert len(filtered.files) == 0
         assert len(filtered.dirs) == 0
         assert filtered.totalSize == 0

@@ -215,8 +215,8 @@ def _compute_diff_manifest(
         is_absolute: Whether the manifests use absolute paths
     """
     # Build path lookups for files
-    parent_file_paths: Dict[str, ManifestFilePath] = {p.path: p for p in parent.paths}
-    current_file_paths: Dict[str, ManifestFilePath] = {p.path: p for p in current.paths}
+    parent_file_paths: Dict[str, ManifestFilePath] = {p.path: p for p in parent.files}
+    current_file_paths: Dict[str, ManifestFilePath] = {p.path: p for p in current.files}
 
     # Build path sets for directories
     parent_dir_paths: Set[str] = {d.path for d in parent.dirs}

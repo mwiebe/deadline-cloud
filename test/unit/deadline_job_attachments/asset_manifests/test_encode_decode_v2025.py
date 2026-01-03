@@ -271,8 +271,8 @@ class TestDecodeV2025:
         assert isinstance(result, AbsSnapshotManifest)
         assert result.hashAlg == HashAlgorithm.XXH128
         assert result.totalSize == 100
-        assert len(result.paths) == 1
-        assert result.paths[0].path == "/project/file.txt"
+        assert len(result.files) == 1
+        assert result.files[0].path == "/project/file.txt"
 
     def test_decode_rel_snapshot(self) -> None:
         """Decodes to RelSnapshotManifest based on specificationVersion."""
@@ -352,7 +352,7 @@ class TestDecodeV2025:
 
         assert result.dirs[0].path == "project"
         assert result.dirs[1].path == "project/src"
-        assert result.paths[0].path == "project/src/main.py"
+        assert result.files[0].path == "project/src/main.py"
 
     def test_decode_symlink(self) -> None:
         """Decodes symlink entries correctly."""
@@ -370,8 +370,8 @@ class TestDecodeV2025:
 
         result = decode_v2025(json_str)
 
-        assert result.paths[0].path == "project/link.txt"
-        assert result.paths[0].symlink_target == "project/target.txt"
+        assert result.files[0].path == "project/link.txt"
+        assert result.files[0].symlink_target == "project/target.txt"
 
     def test_decode_deleted_entry(self) -> None:
         """Decodes deleted entries in diff manifests."""
@@ -389,7 +389,7 @@ class TestDecodeV2025:
 
         result = decode_v2025(json_str)
 
-        assert result.paths[0].deleted is True
+        assert result.files[0].deleted is True
 
     def test_decode_invalid_spec_version(self) -> None:
         """Raises error for unknown specificationVersion."""
@@ -452,11 +452,11 @@ class TestRoundTrip:
         assert decoded.hashAlg == original.hashAlg
         assert decoded.totalSize == original.totalSize
         assert len(decoded.dirs) == len(original.dirs)
-        assert len(decoded.paths) == len(original.paths)
+        assert len(decoded.files) == len(original.files)
 
         # Check file paths are preserved
-        original_paths = {p.path for p in original.paths}
-        decoded_paths = {p.path for p in decoded.paths}
+        original_paths = {p.path for p in original.files}
+        decoded_paths = {p.path for p in decoded.files}
         assert original_paths == decoded_paths
 
     def test_roundtrip_rel_diff_with_deletions(self) -> None:
@@ -481,7 +481,7 @@ class TestRoundTrip:
         assert decoded.parentManifestHash == "parent123"
 
         # Check deleted entries
-        deleted_files = [p for p in decoded.paths if p.deleted]
+        deleted_files = [p for p in decoded.files if p.deleted]
         assert len(deleted_files) == 1
         assert deleted_files[0].path == "project/deleted.txt"
 

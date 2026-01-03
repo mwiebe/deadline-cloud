@@ -262,7 +262,7 @@ class AbsManifestMixin:
         """Validate that all paths in the manifest are absolute."""
         manifest: Manifest = self  # type: ignore[assignment]
 
-        for entry in manifest.paths:
+        for entry in manifest.files:
             if not _is_absolute_path(entry.path):
                 raise ManifestDecodeValidationError(
                     f"AbsManifest requires absolute paths. Found relative path: '{entry.path}'"
@@ -287,7 +287,7 @@ class RelManifestMixin:
         """Validate that all paths in the manifest are relative."""
         manifest: Manifest = self  # type: ignore[assignment]
 
-        for entry in manifest.paths:
+        for entry in manifest.files:
             if _is_absolute_path(entry.path):
                 raise ManifestDecodeValidationError(
                     f"RelManifest requires relative paths. Found absolute path: '{entry.path}'"
@@ -318,7 +318,7 @@ class SnapshotManifestMixin:
             )
 
         # Snapshots should not have deleted entries
-        for entry in manifest.paths:
+        for entry in manifest.files:
             if entry.deleted:
                 raise ManifestDecodeValidationError(
                     f"Snapshot manifest cannot have deleted entries. Found: '{entry.path}'"
@@ -359,7 +359,7 @@ class Manifest:
 
     Fields:
         hashAlg: Hashing algorithm used for file content hashes.
-        paths: List of file entries.
+        files: List of file entries.
         totalSize: Total size of all files in the manifest (in bytes).
         manifestType: Whether this is a snapshot or diff manifest.
         dirs: List of directory entries.
@@ -367,7 +367,7 @@ class Manifest:
     """
 
     hashAlg: HashAlgorithm
-    paths: List[ManifestFilePath]
+    files: List[ManifestFilePath]
     totalSize: int
     manifestType: ManifestType
     dirs: List[ManifestDirectoryPath]
@@ -377,7 +377,7 @@ class Manifest:
         self,
         *,
         hash_alg: HashAlgorithm,
-        paths: List[ManifestFilePath],
+        files: List[ManifestFilePath],
         total_size: int = 0,
         manifest_type: ManifestType = ManifestType.SNAPSHOT,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
@@ -387,7 +387,7 @@ class Manifest:
         self.manifestType = manifest_type
         self.totalSize = total_size
         self.dirs = dirs if dirs is not None else []
-        self.paths = paths if paths is not None else []
+        self.files = files if files is not None else []
         self.parentManifestHash = parent_manifest_hash
 
     def validate(self) -> None:
@@ -423,7 +423,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            paths=paths,
+            files=paths,
             total_size=total_size,
             manifest_type=ManifestType.SNAPSHOT,
             dirs=dirs,
@@ -450,7 +450,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            paths=paths,
+            files=paths,
             total_size=total_size,
             manifest_type=ManifestType.DIFF,
             dirs=dirs,
@@ -477,7 +477,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            paths=paths,
+            files=paths,
             total_size=total_size,
             manifest_type=ManifestType.SNAPSHOT,
             dirs=dirs,
@@ -504,7 +504,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            paths=paths,
+            files=paths,
             total_size=total_size,
             manifest_type=ManifestType.DIFF,
             dirs=dirs,

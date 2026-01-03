@@ -80,7 +80,7 @@ def join_manifest(
         )
 
     # Process files and symlinks
-    for entry in manifest.paths:
+    for entry in manifest.files:
         joined_path = _join_path(prefix, entry.path)
 
         # Handle symlink targets

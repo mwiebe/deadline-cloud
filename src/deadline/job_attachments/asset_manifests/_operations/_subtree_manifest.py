@@ -141,7 +141,7 @@ def _validate_path_style_consistency(manifest: Manifest, subtree: str) -> None:
     # Check first file path to determine manifest style
     manifest_is_absolute: Optional[bool] = None
 
-    for entry in manifest.paths:
+    for entry in manifest.files:
         manifest_is_absolute = _is_absolute_path(entry.path)
         break
 
@@ -213,11 +213,11 @@ def _subtree_manifest(
     - Deleted markers: rebased if within subtree
     """
     # Build lookup tables for collapse operations
-    file_lookup: Dict[str, ManifestFilePath] = {e.path: e for e in manifest.paths}
+    file_lookup: Dict[str, ManifestFilePath] = {e.path: e for e in manifest.files}
 
     # Build dir_lookup from explicit dirs AND implicit parent directories of files
     dir_lookup: Set[str] = {d.path for d in manifest.dirs}
-    for entry in manifest.paths:
+    for entry in manifest.files:
         # Add all parent directories of this file
         parent = posixpath.dirname(entry.path)
         seen_parents: Set[str] = set()  # Prevent infinite loops with UNC paths
@@ -252,7 +252,7 @@ def _subtree_manifest(
         )
 
     # Process files and symlinks
-    for entry in manifest.paths:
+    for entry in manifest.files:
         if not _is_within_subtree(entry.path, subtree):
             continue
 

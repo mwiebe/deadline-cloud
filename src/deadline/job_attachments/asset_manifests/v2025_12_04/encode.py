@@ -55,12 +55,12 @@ def encode_v2025(manifest: Manifest) -> str:
 
     # Validate symlink targets for relative manifests
     if isinstance(manifest, (RelSnapshotManifest, RelDiffManifest)):
-        for f in manifest.paths:
+        for f in manifest.files:
             if f.symlink_target is not None:
                 f._validate_symlink_target_relative()
 
     # Collect all directories needed for encoding (explicit + inferred from paths)
-    all_dirs = _collect_all_directories(manifest.dirs, manifest.paths)
+    all_dirs = _collect_all_directories(manifest.dirs, manifest.files)
 
     # Sort and deduplicate directories
     sorted_dirs = _sort_and_dedupe_dirs(all_dirs)
@@ -72,7 +72,7 @@ def encode_v2025(manifest: Manifest) -> str:
     dirs_json = _encode_dirs(sorted_dirs, dir_index)
 
     # Sort and deduplicate files
-    sorted_files = _sort_and_dedupe_files(manifest.paths)
+    sorted_files = _sort_and_dedupe_files(manifest.files)
 
     # Encode files
     files_json = _encode_files(sorted_files, dir_index)

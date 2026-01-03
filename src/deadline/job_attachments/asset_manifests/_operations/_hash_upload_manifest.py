@@ -67,7 +67,7 @@ _SHUTDOWN_SENTINEL = object()
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
     """Validate that all paths in the manifest are absolute."""
-    for entry in manifest.paths:
+    for entry in manifest.files:
         if not _is_absolute_path(entry.path):
             raise ValueError(
                 f"HASH_UPLOAD operation requires absolute paths. "
@@ -513,7 +513,7 @@ def hash_upload_manifest(
     symlink_entries: List[Tuple[int, ManifestFilePath]] = []
     deleted_entries: List[Tuple[int, ManifestFilePath]] = []
 
-    for idx, entry in enumerate(manifest.paths):
+    for idx, entry in enumerate(manifest.files):
         if entry.symlink_target is not None:
             symlink_entries.append((idx, entry))
         elif entry.deleted:

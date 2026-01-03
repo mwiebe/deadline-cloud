@@ -147,19 +147,19 @@ def partition_manifest(
             if is_snapshot:
                 rel_manifest: RelManifest = RelSnapshotManifest(
                     hash_alg=manifest.hashAlg,
-                    paths=list(manifest.paths),
+                    paths=list(manifest.files),
                     total_size=manifest.totalSize,
                     dirs=list(manifest.dirs),
                 )
             else:
                 rel_manifest = RelDiffManifest(
                     hash_alg=manifest.hashAlg,
-                    paths=list(manifest.paths),
+                    paths=list(manifest.files),
                     total_size=manifest.totalSize,
                     dirs=list(manifest.dirs),
                 )
             result.append((root, rel_manifest))
-            print_function_callback(f"Partitioned root '{root}' with {len(manifest.paths)} entries")
+            print_function_callback(f"Partitioned root '{root}' with {len(manifest.files)} entries")
         else:
             # Use subtree_manifest to extract the subtree (returns empty manifest if no entries)
             subtree = subtree_manifest(
@@ -169,7 +169,7 @@ def partition_manifest(
                 print_function_callback=print_function_callback,
             )
             result.append((root, subtree))
-            print_function_callback(f"Partitioned root '{root}' with {len(subtree.paths)} entries")
+            print_function_callback(f"Partitioned root '{root}' with {len(subtree.files)} entries")
 
     return result
 
@@ -252,7 +252,7 @@ def _collect_all_dirs(manifest: Manifest) -> Set[str]:
     """
     dirs: Set[str] = set()
 
-    for entry in manifest.paths:
+    for entry in manifest.files:
         # For files/symlinks, take the parent directory
         parent = posixpath.dirname(entry.path)
         if parent:

@@ -95,7 +95,7 @@ def decode_v2025(manifest_str: str) -> Manifest:
     # Create manifest instance
     return manifest_class(
         hash_alg=hash_alg,
-        paths=files,
+        files=files,
         total_size=total_size,
         dirs=dirs,
         parent_manifest_hash=parent_hash,

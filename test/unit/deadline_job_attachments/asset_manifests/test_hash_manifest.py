@@ -59,15 +59,15 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        assert collected.paths[0].hash == ""
+        assert collected.files[0].hash == ""
 
         # Hash the manifest
         hashed = hash_manifest(collected)
 
-        assert len(hashed.paths) == 1
-        assert hashed.paths[0].hash is not None
-        assert hashed.paths[0].hash != ""
-        assert len(hashed.paths[0].hash) == 32  # XXH128 produces 32 hex chars
+        assert len(hashed.files) == 1
+        assert hashed.files[0].hash is not None
+        assert hashed.files[0].hash != ""
+        assert len(hashed.files[0].hash) == 32  # XXH128 produces 32 hex chars
 
     def test_hash_matches_direct_hash(self, tmp_path: Path) -> None:
         """Hash matches direct hash_file() result."""
@@ -82,7 +82,7 @@ class TestHashManifestBasic:
         hashed = hash_manifest(collected)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
-        assert hashed.paths[0].hash == expected_hash
+        assert hashed.files[0].hash == expected_hash
 
     def test_hash_multiple_files(self, tmp_path: Path) -> None:
         """Hashes multiple files."""
@@ -96,8 +96,8 @@ class TestHashManifestBasic:
         )
         hashed = hash_manifest(collected)
 
-        assert len(hashed.paths) == 2
-        for entry in hashed.paths:
+        assert len(hashed.files) == 2
+        for entry in hashed.files:
             assert entry.hash is not None
             assert entry.hash != ""
             assert len(entry.hash) == 32
@@ -114,9 +114,9 @@ class TestHashManifestBasic:
         )
         hashed = hash_manifest(collected)
 
-        assert hashed.paths[0].size == collected.paths[0].size
-        assert hashed.paths[0].mtime == collected.paths[0].mtime
-        assert hashed.paths[0].path == collected.paths[0].path
+        assert hashed.files[0].size == collected.files[0].size
+        assert hashed.files[0].mtime == collected.files[0].mtime
+        assert hashed.files[0].path == collected.files[0].path
 
     def test_total_size_calculated(self, tmp_path: Path) -> None:
         """Total size is sum of all file sizes."""
@@ -159,7 +159,7 @@ class TestHashManifestBasic:
         )
         hashed = hash_manifest(collected)
 
-        assert hashed.paths[0].runnable == collected.paths[0].runnable
+        assert hashed.files[0].runnable == collected.files[0].runnable
 
     def test_symlinks_pass_through_unchanged(self, tmp_path: Path) -> None:
         """Symlinks are not hashed, just passed through."""
@@ -179,12 +179,12 @@ class TestHashManifestBasic:
         # Find the symlink entry (paths are absolute)
         link_path = str(link).replace("\\", "/")
         target_path = str(target).replace("\\", "/")
-        symlink_entry = next(p for p in hashed.paths if p.path == link_path)
+        symlink_entry = next(p for p in hashed.files if p.path == link_path)
         assert symlink_entry.symlink_target is not None
         assert symlink_entry.hash is None
 
         # Target file should be hashed
-        target_entry = next(p for p in hashed.paths if p.path == target_path)
+        target_entry = next(p for p in hashed.files if p.path == target_path)
         assert target_entry.hash is not None
         assert target_entry.symlink_target is None
 
@@ -240,18 +240,18 @@ class TestHashManifestWithCache:
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         # Cache key is the resolved path
-        cache_key = str(Path(collected.paths[0].path).resolve())
+        cache_key = str(Path(collected.files[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
             hashed = hash_manifest(collected, hash_cache=hash_cache)
 
             # Verify hash was computed
-            assert hashed.paths[0].hash != ""
+            assert hashed.files[0].hash != ""
 
             # Verify hash was cached (using resolved path as cache key)
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
-            assert cached_entry.file_hash == hashed.paths[0].hash
+            assert cached_entry.file_hash == hashed.files[0].hash
 
     def test_cache_hit_uses_cached_hash(self, tmp_path: Path) -> None:
         """On cache hit, cached hash is used without recomputing."""
@@ -266,9 +266,9 @@ class TestHashManifestWithCache:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        mtime_str = str(collected.paths[0].mtime)
+        mtime_str = str(collected.files[0].mtime)
         # Cache key is the resolved path
-        cache_key = str(Path(collected.paths[0].path).resolve())
+        cache_key = str(Path(collected.files[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with a fake hash (using resolved path as key)
@@ -285,7 +285,7 @@ class TestHashManifestWithCache:
             hashed = hash_manifest(collected, hash_cache=hash_cache)
 
             # Should use cached hash, not compute new one
-            assert hashed.paths[0].hash == fake_hash
+            assert hashed.files[0].hash == fake_hash
 
     def test_cache_miss_on_mtime_change(self, tmp_path: Path) -> None:
         """Cache miss when mtime doesn't match."""
@@ -301,7 +301,7 @@ class TestHashManifestWithCache:
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         # Cache key is the resolved path
-        cache_key = str(Path(collected.paths[0].path).resolve())
+        cache_key = str(Path(collected.files[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with old mtime
@@ -318,7 +318,7 @@ class TestHashManifestWithCache:
             hashed = hash_manifest(collected, hash_cache=hash_cache)
 
             # Should compute new hash since mtime doesn't match
-            assert hashed.paths[0].hash != fake_hash
+            assert hashed.files[0].hash != fake_hash
 
     def test_force_rehash_ignores_cache(self, tmp_path: Path) -> None:
         """Force rehash ignores cache and recomputes."""
@@ -333,9 +333,9 @@ class TestHashManifestWithCache:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        mtime_str = str(collected.paths[0].mtime)
+        mtime_str = str(collected.files[0].mtime)
         # Cache key is the resolved path
-        cache_key = str(Path(collected.paths[0].path).resolve())
+        cache_key = str(Path(collected.files[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
             # Pre-populate cache with a fake hash
@@ -352,11 +352,11 @@ class TestHashManifestWithCache:
             hashed = hash_manifest(collected, hash_cache=hash_cache, force_rehash=True)
 
             # Should compute new hash despite cache hit
-            assert hashed.paths[0].hash != fake_hash
+            assert hashed.files[0].hash != fake_hash
 
             # Cache should be updated with new hash
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
-            assert cached_entry.file_hash == hashed.paths[0].hash
+            assert cached_entry.file_hash == hashed.files[0].hash
 
     def test_no_cache_always_computes(self, tmp_path: Path) -> None:
         """Without cache, hash is always computed."""
@@ -371,7 +371,7 @@ class TestHashManifestWithCache:
         hashed = hash_manifest(collected, hash_cache=None)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
-        assert hashed.paths[0].hash == expected_hash
+        assert hashed.files[0].hash == expected_hash
 
 
 class TestHashFileChunked:
@@ -573,8 +573,8 @@ class TestLargeFileChunking:
 
             hashed = hash_manifest(manifest)
 
-            assert hashed.paths[0].chunkhashes == ["hash1", "hash2"]
-            assert hashed.paths[0].hash is None
+            assert hashed.files[0].chunkhashes == ["hash1", "hash2"]
+            assert hashed.files[0].hash is None
             mock_chunk.assert_called_once()
 
     def test_small_file_uses_single_hash(self, tmp_path: Path) -> None:
@@ -589,8 +589,8 @@ class TestLargeFileChunking:
         )
         hashed = hash_manifest(collected)
 
-        assert hashed.paths[0].hash is not None
-        assert hashed.paths[0].chunkhashes is None
+        assert hashed.files[0].hash is not None
+        assert hashed.files[0].chunkhashes is None
 
 
 class TestInputValidation:
@@ -612,7 +612,7 @@ class TestInputValidation:
             total_size=100,
         )
         # Manually override path to relative (bypassing validation)
-        manifest.paths[0].path = "relative/path/file.txt"
+        manifest.files[0].path = "relative/path/file.txt"
 
         with pytest.raises(ValueError, match="requires absolute paths"):
             hash_manifest(manifest)
@@ -630,7 +630,7 @@ class TestInputValidation:
 
         # Should not raise
         hashed = hash_manifest(collected)
-        assert hashed.paths[0].hash != ""
+        assert hashed.files[0].hash != ""
 
     def test_large_file_rejects_non_none_hash(self, tmp_path: Path) -> None:
         """Large file with hash set (not None) raises ValueError."""
@@ -654,7 +654,7 @@ class TestInputValidation:
             total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
         # Manually set hash (invalid for large file)
-        manifest.paths[0].hash = "somehash"
+        manifest.files[0].hash = "somehash"
 
         with pytest.raises(ValueError, match="should have hash=None"):
             hash_manifest(manifest)
@@ -681,7 +681,7 @@ class TestInputValidation:
             total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
         # Manually set wrong chunk count (bypassing validation)
-        manifest.paths[0].chunkhashes = ["a"]  # Should be 2 chunks
+        manifest.files[0].chunkhashes = ["a"]  # Should be 2 chunks
 
         with pytest.raises(ValueError, match="should have 2 chunkhashes"):
             hash_manifest(manifest)
@@ -708,7 +708,7 @@ class TestInputValidation:
             total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
         # Manually set to None (invalid)
-        manifest.paths[0].chunkhashes = None
+        manifest.files[0].chunkhashes = None
 
         with pytest.raises(ValueError, match="should have 2 chunkhashes"):
             hash_manifest(manifest)
@@ -742,8 +742,8 @@ class TestInputValidation:
 
             hashed = hash_manifest(manifest)
 
-            assert hashed.paths[0].chunkhashes is not None
-            assert len(hashed.paths[0].chunkhashes) == 3
+            assert hashed.files[0].chunkhashes is not None
+            assert len(hashed.files[0].chunkhashes) == 3
 
     def test_small_file_rejects_non_string_hash(self, tmp_path: Path) -> None:
         """Small file with hash=None raises ValueError."""
@@ -756,7 +756,7 @@ class TestInputValidation:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         # Manually set hash to None (invalid for small file)
-        collected.paths[0].hash = None
+        collected.files[0].hash = None
 
         with pytest.raises(ValueError, match="should have hash as a string"):
             hash_manifest(collected)
@@ -772,7 +772,7 @@ class TestInputValidation:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         # Manually set chunkhashes (invalid for small file)
-        collected.paths[0].chunkhashes = ["a", "b"]
+        collected.files[0].chunkhashes = ["a", "b"]
 
         with pytest.raises(ValueError, match="should have chunkhashes=None"):
             hash_manifest(collected)
@@ -788,14 +788,14 @@ class TestInputValidation:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         # Default from collect_manifest should be valid
-        assert isinstance(collected.paths[0].hash, str)
-        assert collected.paths[0].chunkhashes is None
+        assert isinstance(collected.files[0].hash, str)
+        assert collected.files[0].chunkhashes is None
 
         hashed = hash_manifest(collected)
 
-        assert isinstance(hashed.paths[0].hash, str)
-        assert len(hashed.paths[0].hash) > 0
-        assert hashed.paths[0].chunkhashes is None
+        assert isinstance(hashed.files[0].hash, str)
+        assert len(hashed.files[0].hash) > 0
+        assert hashed.files[0].chunkhashes is None
 
 
 class TestGetOrComputeHash:
@@ -921,9 +921,9 @@ class TestHashDiffManifest:
         hashed = hash_manifest(diff_manifest)
 
         # Verify hash was computed
-        assert hashed.paths[0].hash is not None
-        assert hashed.paths[0].hash != ""
-        assert len(hashed.paths[0].hash) == 32
+        assert hashed.files[0].hash is not None
+        assert hashed.files[0].hash != ""
+        assert len(hashed.files[0].hash) == 32
         # Verify manifest type is preserved
         assert isinstance(hashed, AbsDiffManifest)
         # Verify parent hash is preserved
@@ -948,9 +948,9 @@ class TestHashDiffManifest:
         hashed = hash_manifest(diff_manifest)
 
         # Verify deleted entry is preserved
-        assert len(hashed.paths) == 1
-        assert hashed.paths[0].deleted is True
-        assert hashed.paths[0].path == "/some/deleted/file.txt"
+        assert len(hashed.files) == 1
+        assert hashed.files[0].deleted is True
+        assert hashed.files[0].path == "/some/deleted/file.txt"
         # Verify manifest type is preserved
         assert isinstance(hashed, AbsDiffManifest)
 
@@ -1037,20 +1037,20 @@ class TestHashDiffManifest:
         assert deleted_dir.deleted is True
 
         # Verify files
-        assert len(hashed.paths) == 3
+        assert len(hashed.files) == 3
 
         # New file should be hashed
-        new_entry = next(p for p in hashed.paths if p.path == new_path)
+        new_entry = next(p for p in hashed.files if p.path == new_path)
         assert new_entry.hash != ""
         assert new_entry.deleted is False
 
         # Modified file should be hashed
-        mod_entry = next(p for p in hashed.paths if p.path == mod_path)
+        mod_entry = next(p for p in hashed.files if p.path == mod_path)
         assert mod_entry.hash != ""
         assert mod_entry.deleted is False
 
         # Deleted file should be unchanged
-        del_entry = next(p for p in hashed.paths if p.path == "/old/deleted.txt")
+        del_entry = next(p for p in hashed.files if p.path == "/old/deleted.txt")
         assert del_entry.deleted is True
 
     def test_diff_manifest_with_symlinks(self, tmp_path: Path) -> None:
@@ -1072,9 +1072,9 @@ class TestHashDiffManifest:
         hashed = hash_manifest(diff_manifest)
 
         # Verify symlink is preserved with absolute target
-        assert len(hashed.paths) == 1
-        assert hashed.paths[0].symlink_target == "/some/absolute/target.txt"
-        assert hashed.paths[0].hash is None
+        assert len(hashed.files) == 1
+        assert hashed.files[0].symlink_target == "/some/absolute/target.txt"
+        assert hashed.files[0].hash is None
         # Verify manifest type is preserved
         assert isinstance(hashed, AbsDiffManifest)
 

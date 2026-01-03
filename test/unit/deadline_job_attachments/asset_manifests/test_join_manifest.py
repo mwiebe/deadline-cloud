@@ -167,7 +167,7 @@ class TestJoinManifestRelSnapshot:
 
         result = join_manifest(manifest, "assets/textures")
 
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         assert file_paths == {"assets/textures/wood.png", "assets/textures/metal.png"}
 
         dir_paths = {d.path for d in result.dirs}
@@ -184,7 +184,7 @@ class TestJoinManifestRelSnapshot:
 
         result = join_manifest(manifest, "assets/textures")
 
-        paths_by_name = {p.path: p for p in result.paths}
+        paths_by_name = {p.path: p for p in result.files}
 
         # File path is prefixed
         assert "assets/textures/wood.png" in paths_by_name
@@ -201,8 +201,8 @@ class TestJoinManifestRelSnapshot:
 
         result = join_manifest(manifest, "prefix")
 
-        assert len(result.paths) == 1
-        entry = result.paths[0]
+        assert len(result.files) == 1
+        entry = result.files[0]
         assert entry.path == "prefix/wood.png"
         assert entry.hash == "hash1"
         assert entry.size == 100
@@ -231,7 +231,7 @@ class TestJoinManifestRelSnapshot:
 
         result = join_manifest(manifest, "prefix")
 
-        assert result.paths[0].runnable is True
+        assert result.files[0].runnable is True
 
     def test_preserves_chunkhashes(self) -> None:
         """Chunkhashes are preserved for large files."""
@@ -248,7 +248,7 @@ class TestJoinManifestRelSnapshot:
 
         result = join_manifest(manifest, "prefix")
 
-        assert result.paths[0].chunkhashes == ["c1", "c2"]
+        assert result.files[0].chunkhashes == ["c1", "c2"]
 
     def test_returns_rel_snapshot_manifest(self) -> None:
         """Joining RelSnapshotManifest returns RelSnapshotManifest."""
@@ -275,7 +275,7 @@ class TestJoinManifestAbsSnapshot:
 
         result = join_manifest(manifest, "/projects/scene")
 
-        file_paths = {p.path for p in result.paths}
+        file_paths = {p.path for p in result.files}
         assert file_paths == {"/projects/scene/old/wood.png"}
 
         dir_paths = {d.path for d in result.dirs}
@@ -297,7 +297,7 @@ class TestJoinManifestAbsSnapshot:
 
         result = join_manifest(manifest, "/projects/scene")
 
-        paths_by_name = {p.path: p for p in result.paths}
+        paths_by_name = {p.path: p for p in result.files}
         assert (
             paths_by_name["/projects/scene/data/current"].symlink_target
             == "/projects/scene/data/wood.png"
@@ -331,8 +331,8 @@ class TestJoinManifestDiff:
 
         result = join_manifest(manifest, "prefix")
 
-        assert result.paths[0].path == "prefix/old.txt"
-        assert result.paths[0].deleted is True
+        assert result.files[0].path == "prefix/old.txt"
+        assert result.files[0].deleted is True
 
         assert result.dirs[0].path == "prefix/old_dir"
         assert result.dirs[0].deleted is True
@@ -410,7 +410,7 @@ class TestJoinManifestWindowsPaths:
 
         result = join_manifest(manifest, "C:/projects/scene")
 
-        assert result.paths[0].path == "C:/projects/scene/wood.png"
+        assert result.files[0].path == "C:/projects/scene/wood.png"
 
     def test_windows_backslash_prefix_normalized(self) -> None:
         """Windows backslash prefix is normalized to forward slashes."""
@@ -424,7 +424,7 @@ class TestJoinManifestWindowsPaths:
         result = join_manifest(manifest, "C:\\projects\\scene")
 
         # Backslashes should be converted to forward slashes
-        assert result.paths[0].path == "C:/projects/scene/wood.png"
+        assert result.files[0].path == "C:/projects/scene/wood.png"
 
 
 class TestPathSeparatorHandling:

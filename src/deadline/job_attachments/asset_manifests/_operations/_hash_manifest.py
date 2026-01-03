@@ -92,7 +92,7 @@ def hash_manifest(
     hashed_paths: List[ManifestFilePath] = []
     total_size = 0
 
-    for entry in manifest.paths:
+    for entry in manifest.files:
         # Symlinks don't need hashing - pass through unchanged
         if entry.symlink_target is not None:
             hashed_paths.append(
@@ -217,7 +217,7 @@ def hash_manifest(
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
     """Validate that all paths in the manifest are absolute."""
-    for entry in manifest.paths:
+    for entry in manifest.files:
         if not _is_absolute_path(entry.path):
             raise ValueError(
                 f"HASH operation requires absolute paths. "

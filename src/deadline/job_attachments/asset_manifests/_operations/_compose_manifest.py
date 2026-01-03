@@ -370,7 +370,7 @@ def _compose_snapshot_diffs(
     # Build trie from base snapshot
     root = _ManifestTrieNode()
 
-    for entry in first.paths:
+    for entry in first.files:
         components = _split_path(entry.path)
         node = root.insert_path(components)
         node.file_entry = entry
@@ -386,7 +386,7 @@ def _compose_snapshot_diffs(
     # Apply each diff in order
     for diff_index, diff_manifest in enumerate(manifests[1:], start=1):
         # Apply file deletions first
-        for entry in diff_manifest.paths:
+        for entry in diff_manifest.files:
             components = _split_path(entry.path)
             if entry.deleted:
                 # Delete the file node
@@ -403,7 +403,7 @@ def _compose_snapshot_diffs(
                 print_function_callback(f"Diff {diff_index}: deleted empty dir {dir_entry.path}")
 
         # Apply file additions/modifications
-        for entry in diff_manifest.paths:
+        for entry in diff_manifest.files:
             components = _split_path(entry.path)
             if not entry.deleted:
                 # Add or update entry
@@ -444,7 +444,7 @@ def _compose_snapshot_diffs(
     return type(first)(
         hash_alg=first.hashAlg,
         dirs=result_dirs,
-        paths=result_paths,
+        files=result_paths,
         total_size=total_size,
     )
 
@@ -487,7 +487,7 @@ def _compose_diffs(
     # Apply each diff in order
     for diff_index, diff_manifest in enumerate(manifests):
         # Apply file deletions first
-        for entry in diff_manifest.paths:
+        for entry in diff_manifest.files:
             components = _split_path(entry.path)
             if entry.deleted:
                 # Mark as deleted
@@ -503,7 +503,7 @@ def _compose_diffs(
                 print_function_callback(f"Diff {diff_index}: deleted empty dir {dir_entry.path}")
 
         # Apply file additions/modifications
-        for entry in diff_manifest.paths:
+        for entry in diff_manifest.files:
             components = _split_path(entry.path)
             if not entry.deleted:
                 # Add or update - clear deleted flag and set file entry
@@ -567,7 +567,7 @@ def _compose_diffs(
     return type(first)(
         hash_alg=first.hashAlg,
         dirs=result_dirs,
-        paths=result_paths,
+        files=result_paths,
         total_size=total_size,
         parent_manifest_hash=first.parentManifestHash,
     )
