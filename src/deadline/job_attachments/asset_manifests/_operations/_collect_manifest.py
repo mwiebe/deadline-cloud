@@ -396,7 +396,7 @@ def _collect_manifest_impl(
     return AbsSnapshotManifest(
         hash_alg=HashAlgorithm.XXH128,
         dirs=dir_entries,
-        paths=file_entries,
+        files=file_entries,
         total_size=total_size,
     )
 

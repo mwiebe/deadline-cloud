@@ -24,11 +24,14 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from ..manifest import (
+    AbsDiffManifest,
+    AbsSnapshotManifest,
     Manifest,
     ManifestDirectoryPath,
     ManifestFilePath,
+    RelDiffManifest,
+    RelSnapshotManifest,
 )
-from ..versions import ManifestType
 
 
 @dataclass
@@ -330,7 +333,7 @@ def compose_manifests(
 
     # Determine composition type based on first manifest
     first = manifests[0]
-    if first.manifestType == ManifestType.SNAPSHOT:
+    if isinstance(first, (AbsSnapshotManifest, RelSnapshotManifest)):
         return _compose_snapshot_diffs(manifests, print_function_callback)
     else:
         return _compose_diffs(manifests, print_function_callback)
@@ -353,18 +356,18 @@ def _compose_snapshot_diffs(
     first = manifests[0]
 
     # Validate first manifest is a snapshot
-    if first.manifestType != ManifestType.SNAPSHOT:
+    if not isinstance(first, (AbsSnapshotManifest, RelSnapshotManifest)):
         raise ValueError(
             f"First manifest must be a SNAPSHOT for snapshot+diffs composition, "
-            f"got {first.manifestType}."
+            f"got {type(first).__name__}."
         )
 
     # Validate remaining manifests are diffs
     for i, manifest in enumerate(manifests[1:], start=1):
-        if manifest.manifestType != ManifestType.DIFF:
+        if not isinstance(manifest, (AbsDiffManifest, RelDiffManifest)):
             raise ValueError(
                 f"Manifest {i} must be a DIFF for snapshot+diffs composition, "
-                f"got {manifest.manifestType}"
+                f"got {type(manifest).__name__}"
             )
 
     # Build trie from base snapshot
@@ -474,9 +477,9 @@ def _compose_diffs(
     """
     # Validate all manifests are diffs
     for i, manifest in enumerate(manifests):
-        if manifest.manifestType != ManifestType.DIFF:
+        if not isinstance(manifest, (AbsDiffManifest, RelDiffManifest)):
             raise ValueError(
-                f"Manifest {i} must be a DIFF for diff composition, got {manifest.manifestType}"
+                f"Manifest {i} must be a DIFF for diff composition, got {type(manifest).__name__}"
             )
 
     first = manifests[0]

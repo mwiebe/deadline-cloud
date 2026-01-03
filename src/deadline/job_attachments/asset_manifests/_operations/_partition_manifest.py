@@ -147,14 +147,14 @@ def partition_manifest(
             if is_snapshot:
                 rel_manifest: RelManifest = RelSnapshotManifest(
                     hash_alg=manifest.hashAlg,
-                    paths=list(manifest.files),
+                    files=list(manifest.files),
                     total_size=manifest.totalSize,
                     dirs=list(manifest.dirs),
                 )
             else:
                 rel_manifest = RelDiffManifest(
                     hash_alg=manifest.hashAlg,
-                    paths=list(manifest.files),
+                    files=list(manifest.files),
                     total_size=manifest.totalSize,
                     dirs=list(manifest.dirs),
                 )

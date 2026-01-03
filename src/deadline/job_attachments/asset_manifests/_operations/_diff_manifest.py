@@ -143,8 +143,7 @@ def compute_diff_manifest(
                           Default is False.
 
     Returns:
-        A diff manifest with:
-        - manifestType=DIFF
+        A diff manifest (AbsDiffManifest or RelDiffManifest) with:
         - parentManifestHash if provided
         - New/modified entries with full content
         - Deleted entries with deleted=True markers
@@ -185,8 +184,7 @@ def _compute_diff_manifest(
     """
     Compute diff between two snapshot manifests.
 
-    Creates a diff manifest with:
-    - manifestType=DIFF
+    Creates a diff manifest (AbsDiffManifest or RelDiffManifest) with:
     - parentManifestHash (if provided)
     - New/modified entries with full content
     - Deleted entries with deleted=True markers
@@ -325,7 +323,7 @@ def _compute_diff_manifest(
     return output_type(
         hash_alg=parent.hashAlg,
         dirs=dir_entries,
-        paths=file_entries,
+        files=file_entries,
         total_size=total_size,
         parent_manifest_hash=parent_manifest_hash,
     )

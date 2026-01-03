@@ -209,7 +209,7 @@ def hash_manifest(
     return manifest_type(
         hash_alg=manifest.hashAlg,
         dirs=dir_entries,
-        paths=hashed_paths,
+        files=hashed_paths,
         total_size=total_size,
         parent_manifest_hash=manifest.parentManifestHash,
     )

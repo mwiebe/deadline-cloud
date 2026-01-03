@@ -543,7 +543,7 @@ Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
 | Snapshot | All file entries are hashed |
 | Diff | Only new/modified file entries are hashed; deleted entries pass through unchanged |
 
-The `manifestType` and `parentManifestHash` fields are preserved from the input manifest.
+The `parentManifestHash` field is preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsDiffManifest`, `RelSnapshotManifest`).
 
 **Helper functions:**
 
@@ -765,7 +765,7 @@ When both caches hit, the file is completely skipped (no read, no hash, no uploa
 | Snapshot | All file entries are hashed and uploaded |
 | Diff | Only new/modified file entries are hashed and uploaded; deleted entries pass through unchanged |
 
-The `manifestType` and `parentManifestHash` fields are preserved from the input manifest.
+The `parentManifestHash` field is preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsDiffManifest`, `RelSnapshotManifest`).
 
 **Error Handling:**
 
@@ -962,7 +962,7 @@ def compute_diff_manifest(
 | New entries | ✓ | ✓ |
 | Modified entries | ✓ | ✓ |
 | Deleted entries | Not tracked | ✓ (deleted=True markers) |
-| manifestType | SNAPSHOT | DIFF |
+| Manifest class | AbsSnapshotManifest/RelSnapshotManifest | AbsDiffManifest/RelDiffManifest |
 | parentManifestHash | N/A | ✓ (if provided) |
 
 **Entry comparison logic (`_entries_differ()`):**
@@ -1018,14 +1018,14 @@ diff = compute_diff_manifest(
 new_files = [p for p in diff.paths if p.path not in {e.path for e in parent.paths}]
 deleted = [p for p in diff.paths if p.deleted]
 print(f"New: {len(new_files)}, Deleted: {len(deleted)}")
-print(f"Diff manifest type: {diff.manifestType}")  # DIFF for v2025
+print(f"Diff manifest type: {type(diff).__name__}")  # AbsDiffManifest or RelDiffManifest
 print(f"Parent hash: {diff.parentManifestHash[:16]}...")
 ```
 
 Output:
 ```
 New: 3, Deleted: 1
-Diff manifest type: ManifestType.DIFF
+Diff manifest type: RelDiffManifest
 Parent hash: f8e9d0c1b2a34567...
 ```
 

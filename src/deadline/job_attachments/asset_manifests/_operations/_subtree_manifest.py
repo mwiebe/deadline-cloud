@@ -302,14 +302,14 @@ def _subtree_manifest(
         return RelSnapshotManifest(
             hash_alg=manifest.hashAlg,
             dirs=result_dirs,
-            paths=result_paths,
+            files=result_paths,
             total_size=total_size,
         )
     else:
         return RelDiffManifest(
             hash_alg=manifest.hashAlg,
             dirs=result_dirs,
-            paths=result_paths,
+            files=result_paths,
             total_size=total_size,
         )
 

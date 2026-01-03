@@ -124,7 +124,7 @@ class TestSubtreeManifestRelative:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -284,7 +284,7 @@ class TestSubtreeManifestDiff:
         return RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash="parent123",
         )
@@ -342,7 +342,7 @@ class TestSubtreeManifestSymlinks:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -469,7 +469,7 @@ class TestSubtreeManifestValidation:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=0,
         )
 
@@ -484,7 +484,7 @@ class TestSubtreeManifestValidation:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=0,
         )
 
@@ -567,7 +567,7 @@ class TestSubtreeManifestAbsolutePaths:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -660,7 +660,7 @@ class TestSubtreeManifestDirectorySymlinks:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -773,7 +773,7 @@ class TestPathSeparatorHandling:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -836,7 +836,7 @@ class TestSubtreeManifestUNCPaths:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 

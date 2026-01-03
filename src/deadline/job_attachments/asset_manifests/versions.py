@@ -20,19 +20,6 @@ class ManifestVersion(str, Enum):
     v2023_03_03 = "2023-03-03"
 
 
-class ManifestType(str, Enum):
-    """
-    Enumerant of manifest types.
-
-    Types:
-      SNAPSHOT - A full directory tree representation.
-      DIFF - A set of changes relative to a parent snapshot manifest.
-    """
-
-    SNAPSHOT = "snapshot"
-    DIFF = "diff"
-
-
 class SymlinkPolicy(str, Enum):
     """
     Policy for handling symlinks during manifest collection.

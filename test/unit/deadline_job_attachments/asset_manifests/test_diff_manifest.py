@@ -32,7 +32,6 @@ from deadline.job_attachments.asset_manifests._operations._diff_manifest import 
 from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
     IncludeExcludePathsFilter,
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestType
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.manifest import (
     ManifestFilePath,
@@ -61,7 +60,7 @@ class TestComputeDiffManifestAbsSnapshot:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -76,7 +75,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert diff.manifestType == ManifestType.DIFF
+        assert isinstance(diff, AbsDiffManifest)
         assert len(diff.files) == 0
         assert len(diff.dirs) == 0
 
@@ -363,7 +362,6 @@ class TestComputeDiffManifestAbsSnapshot:
         diff = compute_diff_manifest(parent, current)
 
         assert isinstance(diff, AbsDiffManifest)
-        assert diff.manifestType == ManifestType.DIFF
 
 
 class TestComputeDiffManifestRelSnapshot:
@@ -383,7 +381,7 @@ class TestComputeDiffManifestRelSnapshot:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -398,7 +396,7 @@ class TestComputeDiffManifestRelSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert diff.manifestType == ManifestType.DIFF
+        assert isinstance(diff, RelDiffManifest)
         assert len(diff.files) == 0
         assert len(diff.dirs) == 0
 
@@ -448,7 +446,6 @@ class TestComputeDiffManifestRelSnapshot:
         diff = compute_diff_manifest(parent, current)
 
         assert isinstance(diff, RelDiffManifest)
-        assert diff.manifestType == ManifestType.DIFF
 
 
 class TestComputeDiffManifestValidation:
@@ -459,13 +456,13 @@ class TestComputeDiffManifestValidation:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
         current = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -497,7 +494,7 @@ class TestComputeDiffWithFilter:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/model.blend", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="/texture.png", hash="h2", size=200, mtime=2000),
             ],
@@ -506,7 +503,7 @@ class TestComputeDiffWithFilter:
         current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/model.blend", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="/new.blend", hash="h3", size=150, mtime=3000),
             ],
@@ -547,7 +544,7 @@ class TestIgnoreHashesMode:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -608,7 +605,7 @@ class TestPreserveRunnableMode:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -797,13 +794,13 @@ class TestProgressCallback:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
         current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="/new.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="/new.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
 
@@ -817,13 +814,13 @@ class TestProgressCallback:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="/file.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="/file.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="/file.txt", hash="h2", size=10, mtime=2000)],
+            files=[ManifestFilePath(path="/file.txt", hash="h2", size=10, mtime=2000)],
             total_size=10,
         )
 
@@ -837,13 +834,13 @@ class TestProgressCallback:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="/deleted.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="/deleted.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -857,13 +854,13 @@ class TestProgressCallback:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="/old_dir")],
-            paths=[],
+            files=[],
             total_size=0,
         )
         current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -894,7 +891,7 @@ class TestDirectoryDeletionSemantics:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 

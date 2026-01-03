@@ -27,7 +27,6 @@ from deadline.job_attachments.asset_manifests._operations._join_manifest import 
     _get_output_manifest_type,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.versions import ManifestType
 from deadline.job_attachments.asset_manifests.manifest import (
     ManifestFilePath,
     ManifestDirectoryPath,
@@ -94,7 +93,7 @@ class TestHelperFunctions:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "prefix")
@@ -105,7 +104,7 @@ class TestHelperFunctions:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "/prefix")
@@ -116,7 +115,7 @@ class TestHelperFunctions:
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "prefix")
@@ -127,7 +126,7 @@ class TestHelperFunctions:
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "/prefix")
@@ -151,7 +150,7 @@ class TestJoinManifestRelSnapshot:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -269,7 +268,7 @@ class TestJoinManifestAbsSnapshot:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="old/sub")],
-            paths=[ManifestFilePath(path="old/wood.png", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="old/wood.png", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -288,7 +287,7 @@ class TestJoinManifestAbsSnapshot:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="data/wood.png", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="data/current", symlink_target="data/wood.png"),
             ],
@@ -308,7 +307,7 @@ class TestJoinManifestAbsSnapshot:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
 
@@ -325,7 +324,7 @@ class TestJoinManifestDiff:
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="old_dir", deleted=True)],
-            paths=[ManifestFilePath(path="old.txt", deleted=True)],
+            files=[ManifestFilePath(path="old.txt", deleted=True)],
             total_size=0,
         )
 
@@ -342,7 +341,7 @@ class TestJoinManifestDiff:
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
             parent_manifest_hash="parent_hash_123",
         )
@@ -356,28 +355,26 @@ class TestJoinManifestDiff:
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
 
         result = join_manifest(manifest, "prefix")
 
         assert isinstance(result, RelDiffManifest)
-        assert result.manifestType == ManifestType.DIFF
 
     def test_returns_abs_diff_manifest_with_abs_prefix(self) -> None:
         """Joining RelDiffManifest with absolute prefix returns AbsDiffManifest."""
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
 
         result = join_manifest(manifest, "/prefix")
 
         assert isinstance(result, AbsDiffManifest)
-        assert result.manifestType == ManifestType.DIFF
 
 
 class TestJoinManifestValidation:
@@ -388,7 +385,7 @@ class TestJoinManifestValidation:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -404,7 +401,7 @@ class TestJoinManifestWindowsPaths:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -417,7 +414,7 @@ class TestJoinManifestWindowsPaths:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 

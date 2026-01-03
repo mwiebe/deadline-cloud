@@ -30,7 +30,7 @@ class TestEncodeV2025:
         """Encodes AbsSnapshotManifest with correct specificationVersion."""
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(path="/project/file.txt", hash="abc123", size=100, mtime=1000),
             ],
             total_size=100,
@@ -51,7 +51,7 @@ class TestEncodeV2025:
         """Encodes RelSnapshotManifest with correct specificationVersion."""
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(path="project/file.txt", hash="abc123", size=100, mtime=1000),
             ],
             total_size=100,
@@ -66,7 +66,7 @@ class TestEncodeV2025:
         """Encodes AbsDiffManifest with correct specificationVersion."""
         manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(path="/project/file.txt", hash="abc123", size=100, mtime=1000),
             ],
             total_size=100,
@@ -83,7 +83,7 @@ class TestEncodeV2025:
         """Encodes RelDiffManifest with correct specificationVersion."""
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(path="project/file.txt", hash="abc123", size=100, mtime=1000),
             ],
             total_size=100,
@@ -103,7 +103,7 @@ class TestEncodeV2025:
                 ManifestDirectoryPath(path="project"),
                 ManifestDirectoryPath(path="project/src"),
             ],
-            paths=[
+            files=[
                 ManifestFilePath(path="project/src/main.py", hash="abc123", size=100, mtime=1000),
                 ManifestFilePath(path="project/src/utils.py", hash="def456", size=200, mtime=2000),
             ],
@@ -127,7 +127,7 @@ class TestEncodeV2025:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="project")],
-            paths=[
+            files=[
                 ManifestFilePath(path="project/link.txt", symlink_target="project/target.txt"),
             ],
             total_size=0,
@@ -144,7 +144,7 @@ class TestEncodeV2025:
         """Encodes deleted entries in diff manifests."""
         manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(path="project/deleted.txt", deleted=True),
             ],
             total_size=0,
@@ -161,7 +161,7 @@ class TestEncodeV2025:
         """Encodes to canonical JSON (sorted keys, no whitespace)."""
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(path="file.txt", hash="abc", size=10, mtime=100),
             ],
             total_size=10,
@@ -182,7 +182,7 @@ class TestEncodeV2025:
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],  # No explicit directories
-            paths=[
+            files=[
                 ManifestFilePath(path="a/b/c/file1.txt", hash="abc", size=10, mtime=100),
                 ManifestFilePath(path="a/b/d/file2.txt", hash="def", size=20, mtime=200),
                 ManifestFilePath(path="x/y/file3.txt", hash="ghi", size=30, mtime=300),
@@ -221,7 +221,7 @@ class TestEncodeV2025:
             dirs=[
                 ManifestDirectoryPath(path="a/b", deleted=True),  # Explicit with deleted=True
             ],
-            paths=[
+            files=[
                 ManifestFilePath(path="a/b/c/file.txt", hash="abc", size=10, mtime=100),
             ],
             total_size=10,
@@ -436,7 +436,7 @@ class TestRoundTrip:
                 ManifestDirectoryPath(path="/project"),
                 ManifestDirectoryPath(path="/project/src"),
             ],
-            paths=[
+            files=[
                 ManifestFilePath(path="/project/src/main.py", hash="abc123", size=100, mtime=1000),
                 ManifestFilePath(
                     path="/project/src/link.py", symlink_target="/project/src/main.py"
@@ -466,7 +466,7 @@ class TestRoundTrip:
             dirs=[
                 ManifestDirectoryPath(path="project", deleted=True),
             ],
-            paths=[
+            files=[
                 ManifestFilePath(path="project/new.txt", hash="abc123", size=100, mtime=1000),
                 ManifestFilePath(path="project/deleted.txt", deleted=True),
             ],

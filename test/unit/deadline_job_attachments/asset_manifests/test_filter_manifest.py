@@ -25,7 +25,6 @@ from deadline.job_attachments.asset_manifests._operations._filter_manifest impor
     IncludeExcludePathsFilter,
     ManifestEntry,
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestType
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.manifest import (
     ManifestFilePath,
@@ -165,7 +164,7 @@ class TestFilterManifestAbsSnapshot:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -319,7 +318,7 @@ class TestFilterManifestRelSnapshot:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -460,7 +459,7 @@ class TestFilterManifestAbsDiff:
         return AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash=parent_hash,
         )
@@ -517,7 +516,6 @@ class TestFilterManifestAbsDiff:
         filtered = filter_manifest(manifest, filter_obj)
 
         assert isinstance(filtered, AbsDiffManifest)
-        assert filtered.manifestType == ManifestType.DIFF
 
 
 class TestFilterManifestRelDiff:
@@ -540,7 +538,7 @@ class TestFilterManifestRelDiff:
         return RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash=parent_hash,
         )
@@ -571,7 +569,6 @@ class TestFilterManifestRelDiff:
         filtered = filter_manifest(manifest, filter_obj)
 
         assert isinstance(filtered, RelDiffManifest)
-        assert filtered.manifestType == ManifestType.DIFF
 
 
 class TestFilterManifestDiffScenarios:
@@ -598,7 +595,7 @@ class TestFilterManifestDiffScenarios:
         parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/model.blend", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="/texture.png", hash="h2", size=200, mtime=2000),
                 ManifestFilePath(path="/notes.txt", hash="h3", size=50, mtime=3000),
@@ -609,7 +606,7 @@ class TestFilterManifestDiffScenarios:
         current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/model.blend", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="/texture.png", hash="h2", size=200, mtime=2000),
                 ManifestFilePath(path="/new.blend", hash="h4", size=150, mtime=4000),
@@ -638,7 +635,7 @@ class TestFilterManifestDiffScenarios:
                 ManifestDirectoryPath(path="/src"),
                 ManifestDirectoryPath(path="/backup"),
             ],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -648,7 +645,7 @@ class TestFilterManifestDiffScenarios:
                 ManifestDirectoryPath(path="/src"),
                 ManifestDirectoryPath(path="/new_dir"),
             ],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -671,7 +668,7 @@ class TestCustomFilterCallables:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/small.txt", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="/medium.txt", hash="h2", size=1000, mtime=2000),
                 ManifestFilePath(path="/large.txt", hash="h3", size=10000, mtime=3000),
@@ -694,7 +691,7 @@ class TestCustomFilterCallables:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/model.BLEND", hash="h1", size=100, mtime=1000),
                 ManifestFilePath(path="/scene.blend", hash="h2", size=200, mtime=2000),
                 ManifestFilePath(path="/texture.PNG", hash="h3", size=300, mtime=3000),
@@ -715,7 +712,7 @@ class TestCustomFilterCallables:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(path="/script.sh", hash="h1", size=100, mtime=1000, runnable=True),
                 ManifestFilePath(path="/data.txt", hash="h2", size=200, mtime=2000),
             ],
@@ -737,7 +734,7 @@ class TestCustomFilterCallables:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="/dir1")],
-            paths=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -754,7 +751,7 @@ class TestCustomFilterCallables:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="/dir1")],
-            paths=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 

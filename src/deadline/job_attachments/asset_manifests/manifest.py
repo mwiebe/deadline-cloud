@@ -1,5 +1,4 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-
 """
 Unified manifest classes for job attachments.
 
@@ -20,7 +19,6 @@ from dataclasses import dataclass, fields
 from typing import List, Optional, Union
 
 from .hash_algorithms import HashAlgorithm
-from .versions import ManifestType
 from ..exceptions import ManifestDecodeValidationError
 
 
@@ -312,11 +310,6 @@ class SnapshotManifestMixin:
         """Validate snapshot-specific constraints."""
         manifest: Manifest = self  # type: ignore[assignment]
 
-        if manifest.manifestType != ManifestType.SNAPSHOT:
-            raise ManifestDecodeValidationError(
-                f"SnapshotManifest must have manifestType=SNAPSHOT, got {manifest.manifestType}"
-            )
-
         # Snapshots should not have deleted entries
         for entry in manifest.files:
             if entry.deleted:
@@ -335,13 +328,8 @@ class DiffManifestMixin:
     """Mixin that validates the manifest is a valid diff."""
 
     def _validate_diff(self) -> None:
-        """Validate diff-specific constraints."""
-        manifest: Manifest = self  # type: ignore[assignment]
-
-        if manifest.manifestType != ManifestType.DIFF:
-            raise ManifestDecodeValidationError(
-                f"DiffManifest must have manifestType=DIFF, got {manifest.manifestType}"
-            )
+        """Validate diff-specific constraints (currently none beyond type)."""
+        pass
 
 
 # =============================================================================
@@ -361,7 +349,6 @@ class Manifest:
         hashAlg: Hashing algorithm used for file content hashes.
         files: List of file entries.
         totalSize: Total size of all files in the manifest (in bytes).
-        manifestType: Whether this is a snapshot or diff manifest.
         dirs: List of directory entries.
         parentManifestHash: Hash of parent snapshot for diff manifests.
     """
@@ -369,7 +356,6 @@ class Manifest:
     hashAlg: HashAlgorithm
     files: List[ManifestFilePath]
     totalSize: int
-    manifestType: ManifestType
     dirs: List[ManifestDirectoryPath]
     parentManifestHash: Optional[str]
 
@@ -379,12 +365,10 @@ class Manifest:
         hash_alg: HashAlgorithm,
         files: List[ManifestFilePath],
         total_size: int = 0,
-        manifest_type: ManifestType = ManifestType.SNAPSHOT,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ) -> None:
         self.hashAlg = hash_alg
-        self.manifestType = manifest_type
         self.totalSize = total_size
         self.dirs = dirs if dirs is not None else []
         self.files = files if files is not None else []
@@ -416,16 +400,15 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
         self,
         *,
         hash_alg: HashAlgorithm,
-        paths: List[ManifestFilePath],
+        files: List[ManifestFilePath],
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            files=paths,
+            files=files,
             total_size=total_size,
-            manifest_type=ManifestType.SNAPSHOT,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
         )
@@ -443,16 +426,15 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
         self,
         *,
         hash_alg: HashAlgorithm,
-        paths: List[ManifestFilePath],
+        files: List[ManifestFilePath],
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            files=paths,
+            files=files,
             total_size=total_size,
-            manifest_type=ManifestType.DIFF,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
         )
@@ -470,16 +452,15 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
         self,
         *,
         hash_alg: HashAlgorithm,
-        paths: List[ManifestFilePath],
+        files: List[ManifestFilePath],
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            files=paths,
+            files=files,
             total_size=total_size,
-            manifest_type=ManifestType.SNAPSHOT,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
         )
@@ -497,16 +478,15 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
         self,
         *,
         hash_alg: HashAlgorithm,
-        paths: List[ManifestFilePath],
+        files: List[ManifestFilePath],
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
-            files=paths,
+            files=files,
             total_size=total_size,
-            manifest_type=ManifestType.DIFF,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
         )

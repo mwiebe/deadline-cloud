@@ -112,7 +112,7 @@ def join_manifest(
     return output_type(
         hash_alg=manifest.hashAlg,
         dirs=result_dirs,
-        paths=result_paths,
+        files=result_paths,
         total_size=manifest.totalSize,
         parent_manifest_hash=manifest.parentManifestHash,
     )

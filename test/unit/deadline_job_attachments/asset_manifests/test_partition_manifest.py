@@ -151,7 +151,7 @@ class TestCollectAllDirs:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -171,7 +171,7 @@ class TestCollectAllDirs:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -231,7 +231,7 @@ class TestPartitionManifestRelative:
         total_size = sum(s for _, _, s, _ in paths)
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=entries,
+            files=entries,
             total_size=total_size,
         )
 
@@ -315,7 +315,7 @@ class TestPartitionManifestV2025:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -400,7 +400,7 @@ class TestPartitionManifestAutoRoots:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -495,7 +495,7 @@ class TestPartitionManifestReferencedPaths:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -552,7 +552,7 @@ class TestPartitionManifestValidation:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=0,
         )
 
@@ -647,7 +647,7 @@ class TestPartitionManifestSymlinks:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -723,7 +723,7 @@ class TestPartitionManifestOrdering:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -787,7 +787,7 @@ class TestPartitionManifestAdditionalRoots:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -807,7 +807,7 @@ class TestPartitionManifestAdditionalRoots:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 

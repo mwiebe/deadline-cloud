@@ -25,7 +25,6 @@ from deadline.job_attachments.asset_manifests._operations._compose_manifest impo
     _ManifestTrieNode,
     _split_path,
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestType
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.manifest import (
     ManifestFilePath,
@@ -274,7 +273,7 @@ class TestComposeManifestsValidation:
         """Single manifest is returned unchanged."""
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -287,13 +286,13 @@ class TestComposeManifestsValidation:
         snapshot1 = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
         snapshot2 = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -305,13 +304,13 @@ class TestComposeManifestsValidation:
         diff1 = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
         snapshot = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -338,7 +337,7 @@ class TestComposeManifestsSnapshotDiffs:
         return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -359,7 +358,7 @@ class TestComposeManifestsSnapshotDiffs:
         return RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash=parent_hash,
         )
@@ -385,7 +384,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         paths = {p.path for p in result.files}
         assert paths == {"existing.txt", "new.txt"}
-        assert result.manifestType == ManifestType.SNAPSHOT
+        assert isinstance(result, RelSnapshotManifest)
 
     def test_diff_modifies_existing_file(self) -> None:
         """Diff modifies an existing file."""
@@ -531,7 +530,6 @@ class TestComposeManifestsSnapshotDiffs:
         result = compose_manifests([snapshot, diff])
 
         assert isinstance(result, RelSnapshotManifest)
-        assert result.manifestType == ManifestType.SNAPSHOT
 
 
 class TestComposeManifestsSnapshotDiffsAbsolute:
@@ -553,7 +551,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
         return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
         )
 
@@ -574,7 +572,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
         return AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash=parent_hash,
         )
@@ -603,7 +601,6 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
         result = compose_manifests([snapshot, diff])
 
         assert isinstance(result, AbsSnapshotManifest)
-        assert result.manifestType == ManifestType.SNAPSHOT
 
 
 class TestComposeManifestsDiffs:
@@ -626,7 +623,7 @@ class TestComposeManifestsDiffs:
         return RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash=parent_hash,
         )
@@ -649,7 +646,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1, diff2])
 
-        assert result.manifestType == ManifestType.DIFF
+        assert isinstance(result, RelDiffManifest)
 
     def test_parent_hash_from_first_diff(self) -> None:
         """parentManifestHash comes from the first diff."""
@@ -789,7 +786,6 @@ class TestComposeManifestsDiffs:
         result = compose_manifests([diff1, diff2])
 
         assert isinstance(result, RelDiffManifest)
-        assert result.manifestType == ManifestType.DIFF
 
 
 class TestComposeManifestsDiffsAbsolute:
@@ -812,7 +808,7 @@ class TestComposeManifestsDiffsAbsolute:
         return AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
-            paths=file_entries,
+            files=file_entries,
             total_size=total_size,
             parent_manifest_hash=parent_hash,
         )
@@ -843,7 +839,6 @@ class TestComposeManifestsDiffsAbsolute:
         result = compose_manifests([diff1, diff2])
 
         assert isinstance(result, AbsDiffManifest)
-        assert result.manifestType == ManifestType.DIFF
 
 
 class TestComposeManifestsProgressCallback:
@@ -854,13 +849,13 @@ class TestComposeManifestsProgressCallback:
         snapshot = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[],
+            files=[],
             total_size=0,
         )
         diff = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="new.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="new.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -874,13 +869,13 @@ class TestComposeManifestsProgressCallback:
         snapshot = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
+            files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
         diff = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath(path="file.txt", deleted=True)],
+            files=[ManifestFilePath(path="file.txt", deleted=True)],
             total_size=0,
         )
 

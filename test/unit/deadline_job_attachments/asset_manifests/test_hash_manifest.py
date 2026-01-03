@@ -554,7 +554,7 @@ class TestLargeFileChunking:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     chunkhashes=["", ""],  # Placeholder for 2 chunks
@@ -601,7 +601,7 @@ class TestInputValidation:
         # Create a manifest with relative paths manually
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path="/absolute/path/file.txt",  # Start with absolute
                     hash="",
@@ -643,7 +643,7 @@ class TestInputValidation:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     chunkhashes=["a", "b"],  # Correct count for 2 chunks
@@ -670,7 +670,7 @@ class TestInputValidation:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     chunkhashes=["a", "b"],  # Correct count for 2 chunks
@@ -697,7 +697,7 @@ class TestInputValidation:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     chunkhashes=["", ""],  # Valid initially
@@ -724,7 +724,7 @@ class TestInputValidation:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     chunkhashes=["", "", ""],  # Correct count for 3 chunks
@@ -906,7 +906,7 @@ class TestHashDiffManifest:
         diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",  # Empty hash to be filled
@@ -935,7 +935,7 @@ class TestHashDiffManifest:
         diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path="/some/deleted/file.txt",
                     deleted=True,
@@ -965,7 +965,7 @@ class TestHashDiffManifest:
                     deleted=True,
                 )
             ],
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -998,7 +998,7 @@ class TestHashDiffManifest:
                 ManifestDirectoryPath(path="/new/dir", deleted=False),
                 ManifestDirectoryPath(path="/deleted/dir", deleted=True),
             ],
-            paths=[
+            files=[
                 # New file
                 ManifestFilePath(
                     path=new_path,
@@ -1060,7 +1060,7 @@ class TestHashDiffManifest:
         diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path="/some/new/link.txt",
                     symlink_target="/some/absolute/target.txt",
@@ -1107,7 +1107,7 @@ class TestHashDiffManifest:
         diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -1138,7 +1138,7 @@ class TestManifestTypePreservation:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -1163,7 +1163,7 @@ class TestManifestTypePreservation:
         manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",

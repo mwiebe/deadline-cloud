@@ -132,7 +132,7 @@ class TestHashUploadManifest:
         """Test hashing and uploading an empty manifest."""
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[],
+            files=[],
             total_size=0,
         )
 
@@ -160,7 +160,7 @@ class TestHashUploadManifest:
 
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",  # Empty hash to be filled
@@ -278,7 +278,7 @@ class TestHashUploadManifest:
 
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -319,7 +319,7 @@ class TestHashUploadManifest:
 
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -361,7 +361,7 @@ class TestHashUploadManifest:
 
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -394,7 +394,7 @@ class TestHashUploadManifest:
 
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -482,7 +482,7 @@ class TestHashUploadManifest:
         manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path="/some/deleted/file.txt",
                     deleted=True,
@@ -546,7 +546,7 @@ class TestHashUploadManifest:
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -598,7 +598,7 @@ class TestHashUploadManifest:
         manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
@@ -632,7 +632,7 @@ class TestHashUploadInputValidation:
         """Test that manifest with relative paths raises ValueError."""
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path="relative/path/file.txt",  # Relative path
                     hash="",
@@ -660,7 +660,7 @@ class TestHashUploadInputValidation:
 
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=[
+            files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash="",
