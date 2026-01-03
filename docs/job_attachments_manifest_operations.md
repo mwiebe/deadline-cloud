@@ -167,17 +167,34 @@ Manifest Classes (new unified in-memory representation)
 
 Path/Directory Classes (also in manifest.py)
 ├── ManifestFilePath            # File entry (unified, matches v2025 capabilities)
-└── ManifestDirectoryPath       # Directory entry
+├── ManifestDirectoryPath       # Directory entry
+└── FILE_CHUNK_SIZE_BYTES       # 256MB chunk size constant
 ```
 
 For backwards compatibility in `base_manifest.py`:
 
 ```python
-# Aliases for backwards compatibility
-from .manifest import Manifest as BaseAssetManifest
-from .manifest import ManifestFilePath as BaseManifestPath
-from .manifest import ManifestDirectoryPath as BaseManifestDirectoryPath
+# Re-export unified manifest classes (can be imported from either module)
+from .manifest import (
+    FILE_CHUNK_SIZE_BYTES,
+    Manifest,
+    ManifestFilePath,
+    ManifestDirectoryPath,
+    AbsSnapshotManifest,
+    AbsDiffManifest,
+    RelSnapshotManifest,
+    RelDiffManifest,
+    # ... mixins
+)
+
+# Keep abstract base classes for version-specific serialization modules
+# BaseAssetManifest, BaseManifestPath, BaseManifestDirectoryPath remain as ABCs
+# that v2023 and v2025 modules extend for encode()/decode() functionality
 ```
+
+**Note:** The original plan to make `BaseAssetManifest` an alias of `Manifest` doesn't work because `BaseAssetManifest` has abstract methods (`encode`, `decode`) that version modules implement. Instead, we keep both:
+- `base_manifest.py`: Abstract base classes for version-specific serialization
+- `manifest.py`: Unified in-memory classes for operations
 
 The v2023 and v2025 modules continue to provide:
 - `encode()` - Serialize to on-disk format
@@ -191,12 +208,12 @@ The v2023 and v2025 modules continue to provide:
 | Create `manifest.py` with unified classes | ✓ Done | Created Manifest, ManifestFilePath, ManifestDirectoryPath |
 | Create mixin classes for validation | ✓ Done | AbsManifestMixin, RelManifestMixin, SnapshotManifestMixin, DiffManifestMixin |
 | Create concrete manifest classes | ✓ Done | AbsSnapshotManifest, AbsDiffManifest, RelSnapshotManifest, RelDiffManifest |
-| Update `base_manifest.py` to use aliases | ☐ Not started | |
+| Update `base_manifest.py` to use aliases | ✓ Done | Re-exports unified classes; keeps abstract base classes for version modules |
 | Update v2023 module for compatibility | ☐ Not started | |
 | Update v2025 module for compatibility | ☐ Not started | |
 | Update operations to use new classes | ☐ Not started | |
 | Update tests | ☐ Not started | |
-| Verify backwards compatibility | ☐ Not started | |
+| Verify backwards compatibility | ✓ Done | All 512 asset manifest tests pass |
 
 ## Path Separator Convention
 

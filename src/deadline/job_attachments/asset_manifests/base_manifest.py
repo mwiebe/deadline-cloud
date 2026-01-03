@@ -15,6 +15,42 @@ from .hash_algorithms import HashAlgorithm
 from .versions import ManifestType, ManifestVersion
 from ..exceptions import ManifestDecodeValidationError
 
+# Re-export unified manifest classes for operations that don't need serialization
+from .manifest import (
+    FILE_CHUNK_SIZE_BYTES,
+    Manifest,
+    ManifestFilePath,
+    ManifestDirectoryPath,
+    AbsSnapshotManifest,
+    AbsDiffManifest,
+    RelSnapshotManifest,
+    RelDiffManifest,
+    AbsManifestMixin,
+    RelManifestMixin,
+    SnapshotManifestMixin,
+    DiffManifestMixin,
+)
+
+__all__ = [
+    # Abstract base classes for version-specific serialization
+    "BaseAssetManifest",
+    "BaseManifestPath",
+    "BaseManifestDirectoryPath",
+    "FILE_CHUNK_SIZE_BYTES",
+    # Unified manifest classes (re-exported from manifest.py)
+    "Manifest",
+    "ManifestFilePath",
+    "ManifestDirectoryPath",
+    "AbsSnapshotManifest",
+    "AbsDiffManifest",
+    "RelSnapshotManifest",
+    "RelDiffManifest",
+    "AbsManifestMixin",
+    "RelManifestMixin",
+    "SnapshotManifestMixin",
+    "DiffManifestMixin",
+]
+
 
 def _normalize_path_in_manifest(path: str) -> str:
     """
@@ -54,10 +90,6 @@ class BaseManifestDirectoryPath(ABC):
         if not isinstance(other, BaseManifestDirectoryPath):
             return NotImplemented
         return fields(self) == fields(other)
-
-
-# 256MB chunk size for large files (256 * 2^20 bytes)
-FILE_CHUNK_SIZE_BYTES = 256 * 1024 * 1024
 
 
 @dataclass
