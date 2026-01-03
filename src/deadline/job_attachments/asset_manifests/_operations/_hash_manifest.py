@@ -8,14 +8,18 @@ This module implements the HASH operation from the composable manifest operation
     HASH: AbsManifest (with hash="") → AbsManifest (with hashes filled in)
 
 Where AbsManifest can be either:
-    - AbsSnapshot: A full directory tree snapshot with absolute paths
-    - AbsDiff: A diff manifest with absolute paths (contains new/modified/deleted entries)
+    - AbsSnapshotManifest: A full directory tree snapshot with absolute paths
+    - AbsDiffManifest: A diff manifest with absolute paths (contains new/modified/deleted entries)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
 - Hash cache integration - only hash files with cache misses
 - Deferred hashing - collect structure first, hash only what's needed
 - Force rehash option - recalculate all hashes when needed
+
+All composable operations use v2025 structure and semantics internally. Support for
+v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
+deletions, and other v2025-only features.
 """
 
 from __future__ import annotations
@@ -23,38 +27,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
-from ..base_manifest import BaseAssetManifest, FILE_CHUNK_SIZE_BYTES
-from ..hash_algorithms import HashAlgorithm, hash_file
-from ..versions import ManifestVersion
-from ..v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
+from ..manifest import (
+    FILE_CHUNK_SIZE_BYTES,
+    AbsManifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    _is_absolute_path,
 )
-from ..v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
+from ..hash_algorithms import hash_file
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
 
-def _is_absolute_path(path: str) -> bool:
-    """Check if a path string represents an absolute path."""
-    # POSIX absolute paths start with /
-    # Windows absolute paths start with drive letter (e.g., C:/) or UNC (//server)
-    return (
-        path.startswith("/")
-        or (len(path) >= 3 and path[1] == ":" and path[2] == "/")
-        or path.startswith("//")
-    )
-
-
 def hash_manifest(
-    manifest: BaseAssetManifest,
+    manifest: AbsManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> AbsManifest:
     """
     Fill in hashes for a manifest structure with absolute paths.
 
@@ -63,15 +52,15 @@ def hash_manifest(
 
     Args:
         manifest: Manifest with absolute paths and empty hashes. Can be either:
-            - A snapshot manifest (from collect_manifest)
-            - A diff manifest (from compute_diff_manifest with ignore_hashes=True)
+            - AbsSnapshotManifest (from collect_manifest)
+            - AbsDiffManifest (from compute_diff_manifest with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
         print_function_callback: Progress callback
 
     Returns:
-        A NEW manifest with all hashes filled in. The manifest type (snapshot/diff)
-        and parentManifestHash are preserved from the input.
+        A NEW manifest of the same type with all hashes filled in. The manifest type
+        (snapshot/diff) and parentManifestHash are preserved from the input.
 
     Raises:
         ValueError: If the manifest contains relative paths (paths must be absolute)
@@ -94,126 +83,20 @@ def hash_manifest(
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
         - Deleted entries are unchanged (they mark deletions, no hash needed)
-        - For v2025 large files (>256MB): computes chunkhashes
+        - For large files (>256MB): computes chunkhashes
         - Returns a NEW manifest (does not mutate input)
     """
     # Validate that manifest has absolute paths
     _validate_absolute_paths(manifest)
 
-    if manifest.manifestVersion == ManifestVersion.v2023_03_03:
-        if not isinstance(manifest, AssetManifest2023):
-            raise TypeError(
-                f"Expected AssetManifest2023 for version {manifest.manifestVersion}, "
-                f"got {type(manifest).__name__}"
-            )
-        return _hash_manifest_v2023(manifest, hash_cache, force_rehash, print_function_callback)
-    elif manifest.manifestVersion == ManifestVersion.v2025_12_04_beta:
-        if not isinstance(manifest, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {manifest.manifestVersion}, "
-                f"got {type(manifest).__name__}"
-            )
-        return _hash_manifest_v2025(manifest, hash_cache, force_rehash, print_function_callback)
-    else:
-        raise ValueError(f"Unsupported manifest version: {manifest.manifestVersion}")
-
-
-def _validate_absolute_paths(manifest: BaseAssetManifest) -> None:
-    """Validate that all paths in the manifest are absolute."""
-    for entry in manifest.paths:
-        if not _is_absolute_path(entry.path):
-            raise ValueError(
-                f"HASH operation requires absolute paths. "
-                f"Found relative path: '{entry.path}'. "
-                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
-            )
-
-    # Also check directory paths for v2025
-    if hasattr(manifest, "dirs"):
-        for d in manifest.dirs:
-            if not _is_absolute_path(d.path):
-                raise ValueError(
-                    f"HASH operation requires absolute paths. "
-                    f"Found relative directory path: '{d.path}'. "
-                    f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
-                )
-
-
-def _hash_manifest_v2023(
-    manifest: AssetManifest2023,
-    hash_cache: Optional[HashCache],
-    force_rehash: bool,
-    print_function_callback: Callable[[Any], None],
-) -> AssetManifest2023:
-    """
-    Fill in hashes for a v2023-03-03 manifest.
-
-    v2023 format only supports regular files with single hashes.
-    """
-    hashed_paths: List[ManifestPath2023] = []
-    total_size = 0
-
-    for entry in manifest.paths:
-        abs_path = Path(entry.path)
-        # Use resolved path as cache key for consistency
-        cache_key = str(abs_path.resolve())
-
-        # Get hash (from cache or compute)
-        file_hash = _get_or_compute_hash(
-            file_path=abs_path,
-            cache_key=cache_key,
-            mtime=entry.mtime,
-            hash_alg=manifest.hashAlg,
-            hash_cache=hash_cache,
-            force_rehash=force_rehash,
-        )
-
-        hashed_paths.append(
-            ManifestPath2023(
-                path=entry.path,
-                hash=file_hash,
-                size=entry.size,
-                mtime=entry.mtime,
-            )
-        )
-        total_size += entry.size
-        print_function_callback(f"Hashed: {entry.path}")
-
-    return AssetManifest2023(
-        hash_alg=manifest.hashAlg,
-        paths=hashed_paths,
-        total_size=total_size,
-    )
-
-
-def _hash_manifest_v2025(
-    manifest: AssetManifest2025,
-    hash_cache: Optional[HashCache],
-    force_rehash: bool,
-    print_function_callback: Callable[[Any], None],
-) -> AssetManifest2025:
-    """
-    Fill in hashes for a v2025-12-04-beta manifest.
-
-    Handles:
-    - Regular files: single hash or chunkhashes (>256MB)
-    - Symlinks: unchanged (no hash needed)
-    - Directories: unchanged (no hash needed)
-
-    Input validation for file entries (non-symlink, non-deleted):
-    - For small files (<=256MB): hash should be a string (empty from collect),
-      chunkhashes should be None
-    - For large files (>256MB): hash should be None, chunkhashes should be a list
-      of strings with length == ceil(size / 256MB)
-    """
-    hashed_paths: List[ManifestFilePath2025] = []
+    hashed_paths: List[ManifestFilePath] = []
     total_size = 0
 
     for entry in manifest.paths:
         # Symlinks don't need hashing - pass through unchanged
         if entry.symlink_target is not None:
             hashed_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=entry.path,
                     symlink_target=entry.symlink_target,
                 )
@@ -224,7 +107,7 @@ def _hash_manifest_v2025(
         # Deleted entries don't need hashing - pass through unchanged
         if entry.deleted:
             hashed_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=entry.path,
                     deleted=True,
                 )
@@ -264,12 +147,12 @@ def _hash_manifest_v2025(
             )
 
             hashed_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=entry.path,
                     chunkhashes=chunk_hashes,
                     size=entry.size,
                     mtime=entry.mtime,
-                    runnable=getattr(entry, "runnable", False),
+                    runnable=entry.runnable,
                 )
             )
             print_function_callback(f"Hashed (chunked, {len(chunk_hashes)} chunks): {entry.path}")
@@ -298,12 +181,12 @@ def _hash_manifest_v2025(
             )
 
             hashed_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=entry.path,
                     hash=file_hash,
                     size=entry.size,
                     mtime=entry.mtime,
-                    runnable=getattr(entry, "runnable", False),
+                    runnable=entry.runnable,
                 )
             )
             print_function_callback(f"Hashed: {entry.path}")
@@ -312,23 +195,46 @@ def _hash_manifest_v2025(
             total_size += entry.size
 
     # Copy directory entries unchanged
-    dir_entries: List[ManifestDirectoryPath2025] = []
+    dir_entries: List[ManifestDirectoryPath] = []
     for d in manifest.dirs:
         dir_entries.append(
-            ManifestDirectoryPath2025(
+            ManifestDirectoryPath(
                 path=d.path,
                 deleted=d.deleted,
             )
         )
 
-    return AssetManifest2025(
+    # Return the same manifest type as input
+    manifest_type = type(manifest)
+    return manifest_type(
         hash_alg=manifest.hashAlg,
         dirs=dir_entries,
         paths=hashed_paths,
         total_size=total_size,
-        manifest_type=manifest.manifestType,
         parent_manifest_hash=manifest.parentManifestHash,
     )
+
+
+def _validate_absolute_paths(manifest: AbsManifest) -> None:
+    """Validate that all paths in the manifest are absolute."""
+    for entry in manifest.paths:
+        if not _is_absolute_path(entry.path):
+            raise ValueError(
+                f"HASH operation requires absolute paths. "
+                f"Found relative path: '{entry.path}'. "
+                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+            )
+
+    for d in manifest.dirs:
+        if not _is_absolute_path(d.path):
+            raise ValueError(
+                f"HASH operation requires absolute paths. "
+                f"Found relative directory path: '{d.path}'. "
+                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+            )
+
+
+from ..hash_algorithms import HashAlgorithm
 
 
 def _get_or_compute_hash(

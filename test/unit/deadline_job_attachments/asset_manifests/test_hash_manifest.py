@@ -4,14 +4,14 @@
 Tests for hash_manifest and related functions.
 
 These tests cover:
-- Basic file hashing for both v2023 and v2025 formats
+- Basic file hashing
 - Hash cache integration (cache hits, cache misses, cache updates)
 - Force rehash behavior
-- Large file chunking (v2025 only)
-- Symlink handling (v2025 only - symlinks pass through without hashing)
-- Directory handling (v2025 only - directories pass through unchanged)
-- Version-specific behavior differences
+- Large file chunking
+- Symlink handling (symlinks pass through without hashing)
+- Directory handling (directories pass through unchanged)
 - Validation that input manifest has absolute paths
+- Diff manifest handling (deleted entries pass through)
 """
 
 import os
@@ -29,22 +29,24 @@ from deadline.job_attachments.asset_manifests._operations._hash_manifest import 
     _hash_file_chunked,
 )
 from deadline.job_attachments.asset_manifests.versions import (
-    ManifestType,
-    ManifestVersion,
     SymlinkPolicy,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import (
     HashAlgorithm,
     hash_file,
 )
-from deadline.job_attachments.asset_manifests.base_manifest import (
+from deadline.job_attachments.asset_manifests.manifest import (
     FILE_CHUNK_SIZE_BYTES,
+    AbsDiffManifest,
+    AbsSnapshotManifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache, HashCacheEntry
 
 
-class TestHashManifestV2023:
-    """Tests for v2023-03-03 manifest hashing."""
+class TestHashManifestBasic:
+    """Tests for basic manifest hashing."""
 
     def test_hash_single_file(self, tmp_path: Path) -> None:
         """Hashes a single file correctly."""
@@ -55,7 +57,6 @@ class TestHashManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         assert collected.paths[0].hash == ""
@@ -75,7 +76,6 @@ class TestHashManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         hashed = hash_manifest(collected)
@@ -91,7 +91,6 @@ class TestHashManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         hashed = hash_manifest(collected)
@@ -109,7 +108,6 @@ class TestHashManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         hashed = hash_manifest(collected)
@@ -126,26 +124,11 @@ class TestHashManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         hashed = hash_manifest(collected)
 
         assert hashed.totalSize == 8
-
-    def test_manifest_version_preserved(self, tmp_path: Path) -> None:
-        """Manifest version is preserved."""
-        (tmp_path / "test.txt").write_text("test")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2023_03_03,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
-        )
-        hashed = hash_manifest(collected)
-
-        assert hashed.manifestVersion == ManifestVersion.v2023_03_03
 
     def test_hash_algorithm_preserved(self, tmp_path: Path) -> None:
         """Hash algorithm is preserved."""
@@ -154,35 +137,11 @@ class TestHashManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         hashed = hash_manifest(collected)
 
         assert hashed.hashAlg == HashAlgorithm.XXH128
-
-
-class TestHashManifestV2025:
-    """Tests for v2025-12-04-beta manifest hashing."""
-
-    def test_hash_single_file(self, tmp_path: Path) -> None:
-        """Hashes a single file correctly."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("hello world")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-        assert collected.paths[0].hash == ""
-
-        hashed = hash_manifest(collected)
-
-        assert len(hashed.paths) == 1
-        assert hashed.paths[0].hash != ""
-        assert len(hashed.paths[0].hash) == 32
 
     def test_preserves_runnable_flag(self, tmp_path: Path) -> None:
         """Preserves runnable flag from collected manifest."""
@@ -194,7 +153,6 @@ class TestHashManifestV2025:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         hashed = hash_manifest(collected)
@@ -212,7 +170,6 @@ class TestHashManifestV2025:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         hashed = hash_manifest(collected)
@@ -238,7 +195,6 @@ class TestHashManifestV2025:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         hashed = hash_manifest(collected)
@@ -251,19 +207,18 @@ class TestHashManifestV2025:
         assert len(subdir_entries) == 1
         assert subdir_entries[0].deleted is False
 
-    def test_manifest_type_preserved(self, tmp_path: Path) -> None:
-        """Manifest type is preserved."""
+    def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
+        """Hashing AbsSnapshotManifest returns AbsSnapshotManifest."""
         (tmp_path / "test.txt").write_text("test")
 
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         hashed = hash_manifest(collected)
 
-        assert hashed.manifestType == ManifestType.SNAPSHOT
+        assert isinstance(hashed, AbsSnapshotManifest)
 
 
 class TestHashManifestWithCache:
@@ -280,7 +235,6 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         # Cache key is the resolved path
@@ -308,7 +262,6 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         mtime_str = str(collected.paths[0].mtime)
@@ -343,7 +296,6 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         # Cache key is the resolved path
@@ -377,7 +329,6 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         mtime_str = str(collected.paths[0].mtime)
@@ -413,7 +364,6 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
         hashed = hash_manifest(collected, hash_cache=None)
@@ -587,26 +537,31 @@ class TestHashFileChunked:
 
 
 class TestLargeFileChunking:
-    """Tests for large file chunking in v2025 format."""
+    """Tests for large file chunking."""
 
     def test_large_file_uses_chunkhashes(self, tmp_path: Path) -> None:
         """Files larger than 256MB use chunkhashes instead of hash."""
         # We can't create a real 256MB+ file in tests, so we mock the size
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
 
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-
-        # Manually set size to trigger chunking and set up valid input
+        # Create manifest with large file size manually
         # For size = FILE_CHUNK_SIZE_BYTES + 1000, we need 2 chunks
-        collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
-        collected.paths[0].hash = None  # Large files have hash=None
-        collected.paths[0].chunkhashes = ["", ""]  # Placeholder for 2 chunks
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    chunkhashes=["", ""],  # Placeholder for 2 chunks
+                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
+        )
 
         # Mock _hash_file_chunked to avoid creating huge file
         with patch(
@@ -614,7 +569,7 @@ class TestLargeFileChunking:
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
-            hashed = hash_manifest(collected)
+            hashed = hash_manifest(manifest)
 
             assert hashed.paths[0].chunkhashes == ["hash1", "hash2"]
             assert hashed.paths[0].hash is None
@@ -628,7 +583,6 @@ class TestLargeFileChunking:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         hashed = hash_manifest(collected)
@@ -642,17 +596,12 @@ class TestInputValidation:
 
     def test_rejects_relative_paths(self, tmp_path: Path) -> None:
         """Manifest with relative paths raises ValueError."""
-        from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-            AssetManifest as AssetManifest2023,
-            ManifestPath as ManifestPath2023,
-        )
-
         # Create a manifest with relative paths manually
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
-                    path="relative/path/file.txt",  # Relative path
+                ManifestFilePath(
+                    path="/absolute/path/file.txt",  # Start with absolute
                     hash="",
                     size=100,
                     mtime=12345,
@@ -660,6 +609,8 @@ class TestInputValidation:
             ],
             total_size=100,
         )
+        # Manually override path to relative (bypassing validation)
+        manifest.paths[0].path = "relative/path/file.txt"
 
         with pytest.raises(ValueError, match="requires absolute paths"):
             hash_manifest(manifest)
@@ -672,7 +623,6 @@ class TestInputValidation:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
@@ -684,80 +634,111 @@ class TestInputValidation:
         """Large file with hash set (not None) raises ValueError."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
 
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
+        # Create manifest with large file that has hash set (invalid)
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    chunkhashes=["a", "b"],  # Correct count for 2 chunks
+                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
-        # Set size to trigger large file path, but set hash (should be None)
-        collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
-        collected.paths[0].hash = "somehash"
-        collected.paths[0].chunkhashes = ["a", "b"]  # Correct count for 2 chunks
+        # Manually set hash (invalid for large file)
+        manifest.paths[0].hash = "somehash"
 
         with pytest.raises(ValueError, match="should have hash=None"):
-            hash_manifest(collected)
+            hash_manifest(manifest)
 
     def test_large_file_rejects_wrong_chunk_count(self, tmp_path: Path) -> None:
         """Large file with wrong chunkhashes count raises ValueError."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
 
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
+        # Create manifest with valid chunk count first
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    chunkhashes=["a", "b"],  # Correct count for 2 chunks
+                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
-        # Set size to require 2 chunks
-        collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
-        collected.paths[0].hash = None
-        collected.paths[0].chunkhashes = ["a"]  # Should be 2 chunks
+        # Manually set wrong chunk count (bypassing validation)
+        manifest.paths[0].chunkhashes = ["a"]  # Should be 2 chunks
 
         with pytest.raises(ValueError, match="should have 2 chunkhashes"):
-            hash_manifest(collected)
+            hash_manifest(manifest)
 
     def test_large_file_rejects_none_chunkhashes(self, tmp_path: Path) -> None:
         """Large file with chunkhashes=None raises ValueError."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
 
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
+        # Create manifest - need to bypass validation
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    chunkhashes=["", ""],  # Valid initially
+                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
-        collected.paths[0].size = FILE_CHUNK_SIZE_BYTES + 1000
-        collected.paths[0].hash = None
-        collected.paths[0].chunkhashes = None
+        # Manually set to None (invalid)
+        manifest.paths[0].chunkhashes = None
 
         with pytest.raises(ValueError, match="should have 2 chunkhashes"):
-            hash_manifest(collected)
+            hash_manifest(manifest)
 
     def test_large_file_valid_input_passes(self, tmp_path: Path) -> None:
         """Large file with valid input (hash=None, correct chunkhashes count) passes."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
 
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
+        # Create manifest with valid large file
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    chunkhashes=["", "", ""],  # Correct count for 3 chunks
+                    size=FILE_CHUNK_SIZE_BYTES * 2 + 1000,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=FILE_CHUNK_SIZE_BYTES * 2 + 1000,
         )
-        # Set size to require exactly 3 chunks
-        collected.paths[0].size = FILE_CHUNK_SIZE_BYTES * 2 + 1000
-        collected.paths[0].hash = None
-        collected.paths[0].chunkhashes = ["", "", ""]  # Correct count, empty placeholders
 
         with patch(
             "deadline.job_attachments.asset_manifests._operations._hash_manifest._hash_file_chunked"
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2", "hash3"]
 
-            hashed = hash_manifest(collected)
+            hashed = hash_manifest(manifest)
 
             assert len(hashed.paths[0].chunkhashes) == 3
 
@@ -769,10 +750,10 @@ class TestInputValidation:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        collected.paths[0].hash = None  # Should be a string
+        # Manually set hash to None (invalid for small file)
+        collected.paths[0].hash = None
 
         with pytest.raises(ValueError, match="should have hash as a string"):
             hash_manifest(collected)
@@ -785,11 +766,10 @@ class TestInputValidation:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        collected.paths[0].hash = ""
-        collected.paths[0].chunkhashes = ["a", "b"]  # Should be None
+        # Manually set chunkhashes (invalid for small file)
+        collected.paths[0].chunkhashes = ["a", "b"]
 
         with pytest.raises(ValueError, match="should have chunkhashes=None"):
             hash_manifest(collected)
@@ -802,7 +782,6 @@ class TestInputValidation:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
         # Default from collect_manifest should be valid
@@ -814,54 +793,6 @@ class TestInputValidation:
         assert isinstance(hashed.paths[0].hash, str)
         assert len(hashed.paths[0].hash) > 0
         assert hashed.paths[0].chunkhashes is None
-
-
-class TestHashManifestDispatch:
-    """Tests for the main hash_manifest dispatch function."""
-
-    def test_dispatch_to_v2023(self, tmp_path: Path) -> None:
-        """Version v2023-03-03 dispatches to v2023 implementation."""
-        (tmp_path / "test.txt").write_text("test")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2023_03_03,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
-        )
-        hashed = hash_manifest(collected)
-
-        assert hashed.manifestVersion == ManifestVersion.v2023_03_03
-
-    def test_dispatch_to_v2025(self, tmp_path: Path) -> None:
-        """Version v2025-12-04-beta dispatches to v2025 implementation."""
-        (tmp_path / "test.txt").write_text("test")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-        hashed = hash_manifest(collected)
-
-        assert hashed.manifestVersion == ManifestVersion.v2025_12_04_beta
-
-    def test_unsupported_version_raises(self, tmp_path: Path) -> None:
-        """Unsupported version raises ValueError."""
-        (tmp_path / "test.txt").write_text("test")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2023_03_03,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
-        )
-        # Manually change version to unsupported
-        collected.manifestVersion = ManifestVersion.UNDEFINED
-
-        with pytest.raises(ValueError, match="Unsupported manifest version"):
-            hash_manifest(collected)
 
 
 class TestGetOrComputeHash:
@@ -927,7 +858,6 @@ class TestProgressCallback:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
@@ -948,7 +878,6 @@ class TestProgressCallback:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -959,72 +888,11 @@ class TestProgressCallback:
         assert "Symlink" in symlink_msg or "no hash" in symlink_msg
 
 
-class TestVersionDifferences:
-    """Tests comparing behavior differences between v2023 and v2025."""
-
-    def test_v2023_no_runnable_v2025_has_runnable(self, tmp_path: Path) -> None:
-        """v2023 doesn't preserve runnable, v2025 does."""
-        test_file = tmp_path / "script.sh"
-        test_file.write_text("#!/bin/bash")
-        if os.name != "nt":
-            test_file.chmod(0o755)
-
-        collected_v2023 = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2023_03_03,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
-        )
-        collected_v2025 = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-
-        hashed_v2023 = hash_manifest(collected_v2023)
-        hashed_v2025 = hash_manifest(collected_v2025)
-
-        # v2023 doesn't track runnable
-        assert hashed_v2023.paths[0].runnable is False
-        # v2025 preserves runnable from collection
-        if os.name != "nt":
-            assert hashed_v2025.paths[0].runnable is True
-
-    def test_both_versions_produce_same_hash(self, tmp_path: Path) -> None:
-        """Both versions produce the same hash for the same file."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("identical content")
-
-        collected_v2023 = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2023_03_03,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
-        )
-        collected_v2025 = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-
-        hashed_v2023 = hash_manifest(collected_v2023)
-        hashed_v2025 = hash_manifest(collected_v2025)
-
-        assert hashed_v2023.paths[0].hash == hashed_v2025.paths[0].hash
-
-
 class TestHashDiffManifest:
-    """Tests for hashing diff manifests (v2025 only)."""
+    """Tests for hashing diff manifests."""
 
     def test_diff_manifest_hashes_new_files(self, tmp_path: Path) -> None:
         """Diff manifest with new files gets hashes computed."""
-        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-            AssetManifest as AssetManifest2025,
-            ManifestFilePath as ManifestFilePath2025,
-        )
-
         # Create a test file
         test_file = tmp_path / "new_file.txt"
         test_file.write_text("new content")
@@ -1032,11 +900,11 @@ class TestHashDiffManifest:
         abs_path = str(test_file).replace("\\", "/")
 
         # Create a diff manifest with a new file (hash="")
-        diff_manifest = AssetManifest2025(
+        diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",  # Empty hash to be filled
                     size=int(file_stat.st_size),
@@ -1044,7 +912,6 @@ class TestHashDiffManifest:
                 )
             ],
             total_size=int(file_stat.st_size),
-            manifest_type=ManifestType.DIFF,
             parent_manifest_hash="parent123",
         )
 
@@ -1054,29 +921,23 @@ class TestHashDiffManifest:
         assert hashed.paths[0].hash != ""
         assert len(hashed.paths[0].hash) == 32
         # Verify manifest type is preserved
-        assert hashed.manifestType == ManifestType.DIFF
+        assert isinstance(hashed, AbsDiffManifest)
         # Verify parent hash is preserved
         assert hashed.parentManifestHash == "parent123"
 
     def test_diff_manifest_preserves_deleted_entries(self, tmp_path: Path) -> None:
         """Diff manifest deleted entries are passed through unchanged."""
-        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-            AssetManifest as AssetManifest2025,
-            ManifestFilePath as ManifestFilePath2025,
-        )
-
         # Create a diff manifest with a deleted file entry
-        diff_manifest = AssetManifest2025(
+        diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path="/some/deleted/file.txt",
                     deleted=True,
                 )
             ],
             total_size=0,
-            manifest_type=ManifestType.DIFF,
             parent_manifest_hash="parent456",
         )
 
@@ -1087,27 +948,21 @@ class TestHashDiffManifest:
         assert hashed.paths[0].deleted is True
         assert hashed.paths[0].path == "/some/deleted/file.txt"
         # Verify manifest type is preserved
-        assert hashed.manifestType == ManifestType.DIFF
+        assert isinstance(hashed, AbsDiffManifest)
 
     def test_diff_manifest_preserves_deleted_directories(self, tmp_path: Path) -> None:
         """Diff manifest deleted directory entries are passed through unchanged."""
-        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-            AssetManifest as AssetManifest2025,
-            ManifestDirectoryPath as ManifestDirectoryPath2025,
-        )
-
         # Create a diff manifest with a deleted directory entry
-        diff_manifest = AssetManifest2025(
+        diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
-                ManifestDirectoryPath2025(
+                ManifestDirectoryPath(
                     path="/some/deleted/dir",
                     deleted=True,
                 )
             ],
             paths=[],
             total_size=0,
-            manifest_type=ManifestType.DIFF,
         )
 
         hashed = hash_manifest(diff_manifest)
@@ -1117,16 +972,10 @@ class TestHashDiffManifest:
         assert hashed.dirs[0].deleted is True
         assert hashed.dirs[0].path == "/some/deleted/dir"
         # Verify manifest type is preserved
-        assert hashed.manifestType == ManifestType.DIFF
+        assert isinstance(hashed, AbsDiffManifest)
 
     def test_diff_manifest_mixed_entries(self, tmp_path: Path) -> None:
         """Diff manifest with new, modified, and deleted entries."""
-        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-            AssetManifest as AssetManifest2025,
-            ManifestFilePath as ManifestFilePath2025,
-            ManifestDirectoryPath as ManifestDirectoryPath2025,
-        )
-
         # Create test files
         new_file = tmp_path / "new.txt"
         new_file.write_text("new content")
@@ -1139,42 +988,41 @@ class TestHashDiffManifest:
         mod_path = str(modified_file).replace("\\", "/")
 
         # Create a diff manifest with mixed entries
-        diff_manifest = AssetManifest2025(
+        diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
-                ManifestDirectoryPath2025(path="/new/dir", deleted=False),
-                ManifestDirectoryPath2025(path="/deleted/dir", deleted=True),
+                ManifestDirectoryPath(path="/new/dir", deleted=False),
+                ManifestDirectoryPath(path="/deleted/dir", deleted=True),
             ],
             paths=[
                 # New file
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=new_path,
                     hash="",
                     size=int(new_stat.st_size),
                     mtime=int(new_stat.st_mtime_ns // 1000),
                 ),
                 # Modified file
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=mod_path,
                     hash="",
                     size=int(mod_stat.st_size),
                     mtime=int(mod_stat.st_mtime_ns // 1000),
                 ),
                 # Deleted file
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path="/old/deleted.txt",
                     deleted=True,
                 ),
             ],
             total_size=int(new_stat.st_size) + int(mod_stat.st_size),
-            manifest_type=ManifestType.DIFF,
             parent_manifest_hash="parent789",
         )
 
         hashed = hash_manifest(diff_manifest)
 
         # Verify manifest type preserved
-        assert hashed.manifestType == ManifestType.DIFF
+        assert isinstance(hashed, AbsDiffManifest)
         assert hashed.parentManifestHash == "parent789"
 
         # Verify directories
@@ -1203,24 +1051,18 @@ class TestHashDiffManifest:
 
     def test_diff_manifest_with_symlinks(self, tmp_path: Path) -> None:
         """Diff manifest with symlink entries passes them through unchanged."""
-        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-            AssetManifest as AssetManifest2025,
-            ManifestFilePath as ManifestFilePath2025,
-        )
-
         # Create a diff manifest with a symlink entry
         # Note: In absolute-path manifests, symlink targets must also be absolute
-        diff_manifest = AssetManifest2025(
+        diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path="/some/new/link.txt",
                     symlink_target="/some/absolute/target.txt",
                 )
             ],
             total_size=0,
-            manifest_type=ManifestType.DIFF,
         )
 
         hashed = hash_manifest(diff_manifest)
@@ -1230,7 +1072,7 @@ class TestHashDiffManifest:
         assert hashed.paths[0].symlink_target == "/some/absolute/target.txt"
         assert hashed.paths[0].hash is None
         # Verify manifest type is preserved
-        assert hashed.manifestType == ManifestType.DIFF
+        assert isinstance(hashed, AbsDiffManifest)
 
     def test_snapshot_manifest_type_preserved(self, tmp_path: Path) -> None:
         """Snapshot manifest type is preserved after hashing."""
@@ -1240,35 +1082,29 @@ class TestHashDiffManifest:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
-        # collect_manifest creates SNAPSHOT type
-        assert collected.manifestType == ManifestType.SNAPSHOT
+        # collect_manifest creates AbsSnapshotManifest
+        assert isinstance(collected, AbsSnapshotManifest)
 
         hashed = hash_manifest(collected)
 
         # Verify snapshot type is preserved
-        assert hashed.manifestType == ManifestType.SNAPSHOT
+        assert isinstance(hashed, AbsSnapshotManifest)
 
     def test_diff_manifest_parent_hash_none_preserved(self, tmp_path: Path) -> None:
         """Diff manifest with no parent hash preserves None."""
-        from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-            AssetManifest as AssetManifest2025,
-            ManifestFilePath as ManifestFilePath2025,
-        )
-
         test_file = tmp_path / "file.txt"
         test_file.write_text("content")
         file_stat = test_file.stat()
         abs_path = str(test_file).replace("\\", "/")
 
-        diff_manifest = AssetManifest2025(
+        diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
                     size=int(file_stat.st_size),
@@ -1276,11 +1112,66 @@ class TestHashDiffManifest:
                 )
             ],
             total_size=int(file_stat.st_size),
-            manifest_type=ManifestType.DIFF,
             parent_manifest_hash=None,  # No parent hash
         )
 
         hashed = hash_manifest(diff_manifest)
 
-        assert hashed.manifestType == ManifestType.DIFF
+        assert isinstance(hashed, AbsDiffManifest)
         assert hashed.parentManifestHash is None
+
+
+class TestManifestTypePreservation:
+    """Tests verifying that manifest types are preserved through hashing."""
+
+    def test_abs_snapshot_returns_abs_snapshot(self, tmp_path: Path) -> None:
+        """AbsSnapshotManifest input returns AbsSnapshotManifest output."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash="",
+                    size=stat_info.st_size,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=stat_info.st_size,
+        )
+
+        hashed = hash_manifest(manifest)
+
+        assert isinstance(hashed, AbsSnapshotManifest)
+
+    def test_abs_diff_returns_abs_diff(self, tmp_path: Path) -> None:
+        """AbsDiffManifest input returns AbsDiffManifest output."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        abs_path = str(test_file).replace("\\", "/")
+        stat_info = test_file.stat()
+
+        manifest = AbsDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash="",
+                    size=stat_info.st_size,
+                    mtime=int(stat_info.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=stat_info.st_size,
+            parent_manifest_hash="parent123",
+        )
+
+        hashed = hash_manifest(manifest)
+
+        assert isinstance(hashed, AbsDiffManifest)
+        assert hashed.parentManifestHash == "parent123"
