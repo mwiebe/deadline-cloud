@@ -25,6 +25,8 @@ Auto-Root Determination:
 - When roots is None/empty on POSIX: single root (longest common path prefix)
 - When roots is None/empty on Windows: one root per drive letter or UNC root
 - When roots provided: additional roots auto-determined for remaining entries
+
+All composable operations use unified manifest classes from manifest.py internally.
 """
 
 from __future__ import annotations
@@ -33,19 +35,26 @@ import os
 import posixpath
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ..base_manifest import BaseAssetManifest
+from ..manifest import (
+    AbsDiffManifest,
+    AbsSnapshotManifest,
+    Manifest,
+    RelDiffManifest,
+    RelManifest,
+    RelSnapshotManifest,
+)
 from ..versions import SymlinkPolicy
 from ._subtree_manifest import subtree_manifest
 
 
 def partition_manifest(
-    manifest: BaseAssetManifest,
+    manifest: Manifest,
     roots: Optional[List[str]] = None,
     *,
     referenced_paths: Optional[List[str]] = None,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> List[Tuple[str, BaseAssetManifest]]:
+) -> List[Tuple[str, RelManifest]]:
     """
     Partition a manifest into multiple (root, RelSnapshot) pairs.
 
@@ -61,9 +70,9 @@ def partition_manifest(
         print_function_callback: Progress callback for status messages
 
     Returns:
-        A list of (root, RelSnapshot) tuples where:
+        A list of (root, RelManifest) tuples where:
         - Each root is a path string
-        - Each RelSnapshot is a manifest with paths relative to that root
+        - Each RelManifest is a manifest with paths relative to that root
         - Explicit roots appear first (in order), then auto-determined roots (sorted)
 
     Raises:
@@ -92,29 +101,28 @@ def partition_manifest(
     # Validate no root is a subpath of another
     _validate_roots_no_overlap(roots)
 
-    # Determine manifest path style from first entry
-    manifest_is_absolute = _get_manifest_path_style(manifest)
+    # Determine manifest path style from manifest type
+    manifest_is_absolute = isinstance(manifest, (AbsSnapshotManifest, AbsDiffManifest))
 
     # Validate root path styles match manifest
-    if manifest_is_absolute is not None:
-        for root in roots:
-            root_is_absolute = _is_absolute_path(root)
-            if root_is_absolute != manifest_is_absolute:
-                style = "absolute" if manifest_is_absolute else "relative"
-                root_style = "absolute" if root_is_absolute else "relative"
-                raise ValueError(
-                    f"Root path '{root}' is {root_style} but manifest uses {style} paths. "
-                    f"All roots must match the manifest path style."
-                )
-        for ref_path in referenced_paths:
-            ref_is_absolute = _is_absolute_path(ref_path)
-            if ref_is_absolute != manifest_is_absolute:
-                style = "absolute" if manifest_is_absolute else "relative"
-                ref_style = "absolute" if ref_is_absolute else "relative"
-                raise ValueError(
-                    f"Referenced path '{ref_path}' is {ref_style} but manifest uses {style} paths. "
-                    f"All referenced_paths must match the manifest path style."
-                )
+    for root in roots:
+        root_is_absolute = _is_absolute_path(root)
+        if root_is_absolute != manifest_is_absolute:
+            style = "absolute" if manifest_is_absolute else "relative"
+            root_style = "absolute" if root_is_absolute else "relative"
+            raise ValueError(
+                f"Root path '{root}' is {root_style} but manifest uses {style} paths. "
+                f"All roots must match the manifest path style."
+            )
+    for ref_path in referenced_paths:
+        ref_is_absolute = _is_absolute_path(ref_path)
+        if ref_is_absolute != manifest_is_absolute:
+            style = "absolute" if manifest_is_absolute else "relative"
+            ref_style = "absolute" if ref_is_absolute else "relative"
+            raise ValueError(
+                f"Referenced path '{ref_path}' is {ref_style} but manifest uses {style} paths. "
+                f"All referenced_paths must match the manifest path style."
+            )
 
     # Collect all directories from manifest (for root determination)
     all_dirs = _collect_all_dirs(manifest)
@@ -129,13 +137,28 @@ def partition_manifest(
     )
 
     # Build result: extract subtree for each root
-    result: List[Tuple[str, BaseAssetManifest]] = []
+    result: List[Tuple[str, RelManifest]] = []
 
     for root in all_roots:
         if root == "." or root == "":
-            # Special case: root-level relative paths - return manifest as-is
+            # Special case: root-level relative paths - convert to RelManifest
             # (subtree_manifest doesn't accept "." as a subtree path)
-            result.append((root, manifest))
+            is_snapshot = isinstance(manifest, (AbsSnapshotManifest, RelSnapshotManifest))
+            if is_snapshot:
+                rel_manifest: RelManifest = RelSnapshotManifest(
+                    hash_alg=manifest.hashAlg,
+                    paths=list(manifest.paths),
+                    total_size=manifest.totalSize,
+                    dirs=list(manifest.dirs),
+                )
+            else:
+                rel_manifest = RelDiffManifest(
+                    hash_alg=manifest.hashAlg,
+                    paths=list(manifest.paths),
+                    total_size=manifest.totalSize,
+                    dirs=list(manifest.dirs),
+                )
+            result.append((root, rel_manifest))
             print_function_callback(f"Partitioned root '{root}' with {len(manifest.paths)} entries")
         else:
             # Use subtree_manifest to extract the subtree (returns empty manifest if no entries)
@@ -185,26 +208,6 @@ def _is_absolute_path(path: str) -> bool:
     return False
 
 
-def _get_manifest_path_style(manifest: BaseAssetManifest) -> Optional[bool]:
-    """
-    Determine if manifest uses absolute or relative paths.
-
-    Returns:
-        True if absolute, False if relative, None if manifest is empty
-    """
-    # Check first file path
-    for entry in manifest.paths:
-        return _is_absolute_path(entry.path)
-
-    # If no paths, check directories (v2025+)
-    if hasattr(manifest, "dirs"):
-        for dir_entry in manifest.dirs:
-            return _is_absolute_path(dir_entry.path)
-
-    # Empty manifest
-    return None
-
-
 def _validate_roots_no_overlap(roots: List[str]) -> None:
     """
     Validate that no root is a subpath of another root.
@@ -236,7 +239,7 @@ def _is_path_under_root(path: str, root: str) -> bool:
     return path.startswith(root + "/")
 
 
-def _collect_all_dirs(manifest: BaseAssetManifest) -> Set[str]:
+def _collect_all_dirs(manifest: Manifest) -> Set[str]:
     """
     Collect all directory paths from a manifest.
 
@@ -264,9 +267,8 @@ def _collect_all_dirs(manifest: BaseAssetManifest) -> Set[str]:
                 # For relative paths like "file.txt", use "." as the root
                 dirs.add(".")
 
-    if hasattr(manifest, "dirs"):
-        for dir_entry in manifest.dirs:
-            dirs.add(dir_entry.path)
+    for dir_entry in manifest.dirs:
+        dirs.add(dir_entry.path)
 
     return dirs
 
@@ -275,7 +277,7 @@ def _determine_all_roots(
     explicit_roots: List[str],
     manifest_dirs: Set[str],
     referenced_paths: List[str],
-    manifest_is_absolute: Optional[bool],
+    manifest_is_absolute: bool,
     print_function_callback: Callable[[Any], None],
 ) -> List[str]:
     """
@@ -290,13 +292,6 @@ def _determine_all_roots(
         # No explicit roots - auto-determine all roots
         if not all_paths_for_roots:
             return []
-
-        if manifest_is_absolute is None:
-            # Determine from paths
-            if all_paths_for_roots:
-                manifest_is_absolute = _is_absolute_path(all_paths_for_roots[0])
-            else:
-                return []
 
         if manifest_is_absolute and os.name == "nt":
             # Windows: one root per drive letter or UNC root
@@ -321,7 +316,7 @@ def _determine_all_roots(
     additional_roots = _determine_additional_roots(
         remaining_paths=remaining_paths,
         explicit_roots=explicit_roots,
-        manifest_is_absolute=manifest_is_absolute if manifest_is_absolute is not None else False,
+        manifest_is_absolute=manifest_is_absolute,
         print_function_callback=print_function_callback,
     )
 

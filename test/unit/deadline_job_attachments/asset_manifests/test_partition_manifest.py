@@ -4,7 +4,7 @@
 Tests for partition_manifest and related functions.
 
 These tests cover:
-- Basic partitioning for both v2023 and v2025 formats
+- Basic partitioning using unified manifest classes
 - Auto-root determination (POSIX and Windows)
 - Explicit roots with remainder handling
 - Empty partitions for explicit roots
@@ -35,14 +35,11 @@ from deadline.job_attachments.asset_manifests.versions import (
     SymlinkPolicy,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
-)
-from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
+from deadline.job_attachments.asset_manifests.manifest import (
+    AbsSnapshotManifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    RelSnapshotManifest,
 )
 
 
@@ -138,20 +135,40 @@ class TestHelperFunctions:
 class TestCollectAllDirs:
     """Tests for _collect_all_dirs helper."""
 
-    def _create_v2025_manifest(
+    def _create_rel_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def _create_abs_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AbsSnapshotManifest:
+        """Helper to create an absolute manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -160,7 +177,7 @@ class TestCollectAllDirs:
 
     def test_collects_parent_directories(self) -> None:
         """Parent directories of files are collected."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "a/b/file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "a/b/file2.txt", "hash": "h2", "size": 100, "mtime": 1000},
@@ -174,7 +191,7 @@ class TestCollectAllDirs:
 
     def test_collects_explicit_directories(self) -> None:
         """Explicit directory entries are collected."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[],
             dirs=[{"path": "a/b"}, {"path": "a/c/d"}],
         )
@@ -185,7 +202,7 @@ class TestCollectAllDirs:
 
     def test_root_level_relative_file_adds_dot(self) -> None:
         """Root-level relative file adds '.' to dirs."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -195,7 +212,7 @@ class TestCollectAllDirs:
 
     def test_root_level_absolute_file_adds_slash(self) -> None:
         """Root-level absolute file adds '/' to dirs."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[{"path": "/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -205,14 +222,14 @@ class TestCollectAllDirs:
         assert "/" in dirs
 
 
-class TestPartitionManifestV2023:
-    """Tests for v2023-03-03 partitioning."""
+class TestPartitionManifestRelative:
+    """Tests for partitioning with relative paths."""
 
-    def _create_v2023_manifest(self, paths: List[tuple[str, str, int, int]]) -> AssetManifest2023:
-        """Helper to create a v2023 manifest."""
-        entries = [ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
+    def _create_rel_manifest(self, paths: List[tuple[str, str, int, int]]) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        entries = [ManifestFilePath(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
         total_size = sum(s for _, _, s, _ in paths)
-        return AssetManifest2023(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=entries,
             total_size=total_size,
@@ -220,7 +237,7 @@ class TestPartitionManifestV2023:
 
     def test_single_partition_relative_paths(self) -> None:
         """Single partition for relative paths with common root."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_rel_manifest(
             [
                 ("assets/textures/wood.png", "hash1", 100, 1000),
                 ("assets/textures/metal.png", "hash2", 200, 2000),
@@ -237,7 +254,7 @@ class TestPartitionManifestV2023:
 
     def test_explicit_roots(self) -> None:
         """Explicit roots partition correctly."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_rel_manifest(
             [
                 ("assets/textures/wood.png", "hash1", 100, 1000),
                 ("assets/models/chair.blend", "hash2", 200, 2000),
@@ -262,7 +279,7 @@ class TestPartitionManifestV2023:
 
     def test_empty_partition_for_explicit_root(self) -> None:
         """Empty partition returned for explicit root with no entries."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_rel_manifest(
             [
                 ("assets/textures/wood.png", "hash1", 100, 1000),
             ]
@@ -280,22 +297,22 @@ class TestPartitionManifestV2023:
 
 
 class TestPartitionManifestV2025:
-    """Tests for v2025-12-04-beta partitioning."""
+    """Tests for v2025-12-04-beta partitioning with relative paths."""
 
-    def _create_v2025_manifest(
+    def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -304,7 +321,7 @@ class TestPartitionManifestV2025:
 
     def test_single_partition_relative_paths(self) -> None:
         """Single partition for relative paths with common root."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "project/src/utils.py", "hash": "h2", "size": 200, "mtime": 2000},
@@ -326,7 +343,7 @@ class TestPartitionManifestV2025:
 
     def test_preserves_directories(self) -> None:
         """Directories are preserved in partitions."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
             ],
@@ -347,7 +364,7 @@ class TestPartitionManifestV2025:
 
     def test_preserves_symlinks_within_partition(self) -> None:
         """Symlinks within partition are preserved."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "project/src/link", "symlink_target": "project/src/main.py"},
@@ -367,20 +384,20 @@ class TestPartitionManifestV2025:
 class TestPartitionManifestAutoRoots:
     """Tests for auto-root determination."""
 
-    def _create_v2025_manifest(
+    def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
+    ) -> AbsSnapshotManifest:
         """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -389,7 +406,7 @@ class TestPartitionManifestAutoRoots:
 
     def test_posix_auto_root_longest_common_prefix(self) -> None:
         """POSIX auto-root is longest common prefix."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {
                     "path": "/projects/scene/assets/model.blend",
@@ -421,7 +438,7 @@ class TestPartitionManifestAutoRoots:
 
     def test_posix_explicit_roots_with_remainder(self) -> None:
         """POSIX explicit roots with remaining paths creates additional roots."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "/data/shared/texture.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -443,7 +460,7 @@ class TestPartitionManifestAutoRoots:
 
     def test_root_level_files_returns_dot_root(self) -> None:
         """Root-level relative files return '.' as root."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
@@ -462,20 +479,20 @@ class TestPartitionManifestAutoRoots:
 class TestPartitionManifestReferencedPaths:
     """Tests for referenced_paths handling."""
 
-    def _create_v2025_manifest(
+    def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -484,7 +501,7 @@ class TestPartitionManifestReferencedPaths:
 
     def test_referenced_paths_affects_root_determination(self) -> None:
         """referenced_paths affects auto-root determination."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
             ]
@@ -503,7 +520,7 @@ class TestPartitionManifestReferencedPaths:
 
     def test_referenced_paths_creates_additional_roots(self) -> None:
         """referenced_paths can create additional roots."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
             ]
@@ -524,15 +541,15 @@ class TestPartitionManifestReferencedPaths:
 class TestPartitionManifestValidation:
     """Tests for validation and error handling."""
 
-    def _create_v2025_manifest(
+    def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
+    ) -> AbsSnapshotManifest:
         """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
-        return AssetManifest2025(
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -541,7 +558,7 @@ class TestPartitionManifestValidation:
 
     def test_overlapping_roots_raises_error(self) -> None:
         """Overlapping roots raise ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": "a/b/c/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -555,7 +572,7 @@ class TestPartitionManifestValidation:
         else:
             abs_path = "/home/user/file.txt"
 
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": abs_path, "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -564,7 +581,7 @@ class TestPartitionManifestValidation:
 
     def test_absolute_root_with_relative_manifest_raises_error(self) -> None:
         """Absolute root with relative manifest paths raises ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": "assets/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -578,7 +595,7 @@ class TestPartitionManifestValidation:
 
     def test_preserve_policy_raises_error(self) -> None:
         """PRESERVE policy raises ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": "a/b/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -587,7 +604,7 @@ class TestPartitionManifestValidation:
 
     def test_transitive_include_targets_raises_error(self) -> None:
         """TRANSITIVE_INCLUDE_TARGETS policy raises ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": "a/b/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -598,7 +615,7 @@ class TestPartitionManifestValidation:
 
     def test_referenced_paths_style_mismatch_raises_error(self) -> None:
         """referenced_paths with wrong path style raises ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": "assets/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -614,20 +631,20 @@ class TestPartitionManifestValidation:
 class TestPartitionManifestSymlinks:
     """Tests for symlink handling in partitioning."""
 
-    def _create_v2025_manifest(
+    def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -636,7 +653,7 @@ class TestPartitionManifestSymlinks:
 
     def test_escaping_symlink_collapsed(self) -> None:
         """Escaping symlinks are collapsed with COLLAPSE_ESCAPING."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "project/src/link", "symlink_target": "shared/lib.py"},
@@ -667,7 +684,7 @@ class TestPartitionManifestSymlinks:
 
     def test_escaping_symlink_excluded(self) -> None:
         """Escaping symlinks are excluded with EXCLUDE policy."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "project/src/link", "symlink_target": "shared/lib.py"},
@@ -690,20 +707,20 @@ class TestPartitionManifestSymlinks:
 class TestPartitionManifestOrdering:
     """Tests for output ordering."""
 
-    def _create_v2025_manifest(
+    def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -712,7 +729,7 @@ class TestPartitionManifestOrdering:
 
     def test_explicit_roots_first_in_order(self) -> None:
         """Explicit roots appear first in the order provided."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "z/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "a/file.txt", "hash": "h2", "size": 100, "mtime": 1000},
@@ -727,7 +744,7 @@ class TestPartitionManifestOrdering:
 
     def test_auto_roots_sorted_alphabetically(self) -> None:
         """Auto-determined roots are sorted alphabetically."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "zebra/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "apple/file.txt", "hash": "h2", "size": 100, "mtime": 1000},
@@ -754,20 +771,40 @@ class TestPartitionManifestAdditionalRoots:
     cover all paths in the manifest, requiring additional roots to be determined.
     """
 
-    def _create_v2025_manifest(
+    def _create_abs_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> AbsSnapshotManifest:
+        """Helper to create an absolute manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+        )
+
+    def _create_rel_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> RelSnapshotManifest:
+        """Helper to create a relative manifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -776,7 +813,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_windows_explicit_root_with_remainder_same_drive(self) -> None:
         """Windows: explicit root with remainder on same drive finds deepest common root."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "C:/data/textures/wood.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -794,7 +831,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_windows_explicit_root_with_remainder_multiple_drives(self) -> None:
         """Windows: explicit root with remainder across multiple drives."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "D:/assets/textures/wood.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -813,7 +850,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_windows_explicit_root_with_unc_remainder(self) -> None:
         """Windows: explicit root with UNC path remainder."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {
@@ -841,7 +878,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_relative_explicit_root_with_remainder(self) -> None:
         """Relative paths: explicit root with remainder finds deepest common root."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "libs/common/utils.py", "hash": "h2", "size": 200, "mtime": 2000},
@@ -860,7 +897,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_referenced_paths_only_introduces_remainder(self) -> None:
         """referenced_paths introduces additional root when no manifest files there."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
             ]
@@ -879,7 +916,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_referenced_paths_deepens_remainder_root(self) -> None:
         """referenced_paths affects the depth of remainder root determination."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "data/assets/texture.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -902,7 +939,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_posix_many_remainder_paths_same_toplevel(self) -> None:
         """POSIX: many remainder paths under same top-level find deepest common."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {"path": "/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {
@@ -932,7 +969,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_posix_remainder_with_nested_explicit_root(self) -> None:
         """POSIX: remainder paths when explicit root is deeply nested."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {
                     "path": "/projects/client/job/scene/assets/model.blend",
@@ -956,7 +993,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_multiple_explicit_roots_with_remainder(self) -> None:
         """Multiple explicit roots with paths not covered by any."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "project/tests/test_main.py", "hash": "h2", "size": 200, "mtime": 2000},
@@ -974,7 +1011,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_explicit_root_covers_all_no_remainder(self) -> None:
         """Explicit root that covers all paths produces no remainder roots."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "project/src/utils.py", "hash": "h2", "size": 200, "mtime": 2000},
@@ -989,7 +1026,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_posix_single_file_remainder(self) -> None:
         """POSIX: single file in remainder gets its parent as root."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {"path": "/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "/etc/config.ini", "hash": "h2", "size": 200, "mtime": 2000},
@@ -1006,7 +1043,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_windows_mixed_drives_and_unc_remainder(self) -> None:
         """Windows: remainder with both drive letters and UNC paths."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {"path": "C:/projects/scene/model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "D:/data/texture1.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -1028,7 +1065,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_remainder_with_common_prefix_at_different_depths(self) -> None:
         """Remainder paths with varying depths find appropriate common prefixes."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_manifest(
             files=[
                 {"path": "project/main.py", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "libs/a/b/c/deep.py", "hash": "h2", "size": 200, "mtime": 2000},
@@ -1046,7 +1083,7 @@ class TestPartitionManifestAdditionalRoots:
 
     def test_posix_explicit_root_is_subpath_of_potential_remainder(self) -> None:
         """POSIX: explicit root prevents its ancestors from being remainder roots."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_manifest(
             files=[
                 {
                     "path": "/data/project/scene/model.blend",

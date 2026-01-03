@@ -248,7 +248,7 @@ Operations are refactored in waves. Each wave contains operations that have no u
 | 1 | SUBTREE | - | - | ✓ Done |
 | 2 | HASH | - | COLLECT | ✓ Done |
 | 2 | HASH_UPLOAD | - | COLLECT | ✓ Done |
-| 2 | PARTITION | SUBTREE | - | ☐ Not started |
+| 2 | PARTITION | SUBTREE | - | ✓ Done |
 
 **Wave 1** operations are isolated - they can be refactored in any order.
 
