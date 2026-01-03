@@ -17,7 +17,7 @@ import math
 import os
 import posixpath
 from dataclasses import dataclass, fields
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from .hash_algorithms import HashAlgorithm
 from .versions import ManifestType
@@ -515,3 +515,11 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
         """Validate relative paths and diff constraints."""
         self._validate_relative_paths()
         self._validate_diff()
+
+# =============================================================================
+# Type Aliases
+# =============================================================================
+
+# Type aliases for clearer function signatures
+SnapshotManifest = Union[AbsSnapshotManifest, RelSnapshotManifest]
+DiffManifest = Union[AbsDiffManifest, RelDiffManifest]
