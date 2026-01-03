@@ -4,12 +4,11 @@
 
 import json
 
-
-from deadline.job_attachments.asset_manifests import HashAlgorithm
 from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
     AssetManifest,
     ManifestPath,
 )
+from deadline.job_attachments.asset_manifests import HashAlgorithm
 
 
 def test_encode():

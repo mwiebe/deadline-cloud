@@ -11,41 +11,6 @@ from typing import Any, ClassVar
 from .hash_algorithms import HashAlgorithm
 from .versions import ManifestVersion
 
-# Re-export unified manifest classes for operations that don't need serialization
-from .manifest import (
-    FILE_CHUNK_SIZE_BYTES,
-    Manifest,
-    ManifestFilePath,
-    ManifestDirectoryPath,
-    AbsSnapshotManifest,
-    AbsDiffManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
-    AbsManifestMixin,
-    RelManifestMixin,
-    SnapshotManifestMixin,
-    DiffManifestMixin,
-)
-
-__all__ = [
-    # Abstract base classes for version-specific serialization
-    "BaseAssetManifest",
-    "BaseManifestPath",
-    "FILE_CHUNK_SIZE_BYTES",
-    # Unified manifest classes (re-exported from manifest.py)
-    "Manifest",
-    "ManifestFilePath",
-    "ManifestDirectoryPath",
-    "AbsSnapshotManifest",
-    "AbsDiffManifest",
-    "RelSnapshotManifest",
-    "RelDiffManifest",
-    "AbsManifestMixin",
-    "RelManifestMixin",
-    "SnapshotManifestMixin",
-    "DiffManifestMixin",
-]
-
 
 @dataclass
 class BaseManifestPath(ABC):
@@ -114,3 +79,4 @@ class BaseAssetManifest(ABC):
         Recursively encode the Asset Manifest into a string according to
         whatever format the Asset Manifest was written for.
         """
+        raise NotImplementedError("Asset Manifest base class does not implement encode")

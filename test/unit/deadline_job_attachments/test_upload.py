@@ -29,7 +29,6 @@ from deadline.job_attachments.asset_manifests import (
     HashAlgorithm,
     ManifestVersion,
 )
-from deadline.job_attachments.asset_manifests.v2023_03_03 import ManifestPath
 from deadline.job_attachments.caches import HashCacheEntry, S3CheckCacheEntry
 from deadline.job_attachments.exceptions import (
     AssetSyncError,
@@ -2839,8 +2838,8 @@ class TestUpload:
             hash_alg=HashAlgorithm("xxh128"),
             total_size=10,
             paths=[
-                ManifestPath(path="output_file", hash="a", size=1, mtime=167907934333848),
-                ManifestPath(
+                BaseManifestPath(path="output_file", hash="a", size=1, mtime=167907934333848),
+                BaseManifestPath(
                     path="output/nested_output_file", hash="b", size=1, mtime=1479079344833848
                 ),
             ],
@@ -2859,8 +2858,8 @@ class TestUpload:
             hash_alg=HashAlgorithm("xxh128"),
             total_size=10,
             paths=[
-                ManifestPath(path="output_file", hash="a", size=1, mtime=167907934333848),
-                ManifestPath(
+                BaseManifestPath(path="output_file", hash="a", size=1, mtime=167907934333848),
+                BaseManifestPath(
                     path="output/nested_output_file", hash="b", size=1, mtime=1479079344833848
                 ),
             ],

@@ -1,18 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-from .base_manifest import (
-    FILE_CHUNK_SIZE_BYTES,
-    BaseAssetManifest,
-    BaseManifestPath,
-)
+from .base_manifest import BaseAssetManifest, BaseManifestPath
 from .hash_algorithms import HashAlgorithm, hash_data, hash_file
 from .manifest_model import BaseManifestModel, ManifestModelRegistry
-from .versions import ManifestType, ManifestVersion
+from .versions import ManifestVersion
 
 __all__ = [
-    "FILE_CHUNK_SIZE_BYTES",
     "ManifestVersion",
-    "ManifestType",
     "ManifestModelRegistry",
     "BaseAssetManifest",
     "BaseManifestModel",
