@@ -192,10 +192,6 @@ from .manifest import (
 # that v2023 and v2025 modules extend for encode()/decode() functionality
 ```
 
-**Note:** The original plan to make `BaseAssetManifest` an alias of `Manifest` doesn't work because `BaseAssetManifest` has abstract methods (`encode`, `decode`) that version modules implement. Instead, we keep both:
-- `base_manifest.py`: Abstract base classes for version-specific serialization
-- `manifest.py`: Unified in-memory classes for operations
-
 The v2023 and v2025 modules continue to provide:
 - `encode()` - Serialize to on-disk format
 - `decode()` - Deserialize from on-disk format
@@ -203,17 +199,59 @@ The v2023 and v2025 modules continue to provide:
 
 ### Progress
 
-| Task | Status | Notes |
-|------|--------|-------|
-| Create `manifest.py` with unified classes | ✓ Done | Created Manifest, ManifestFilePath, ManifestDirectoryPath |
-| Create mixin classes for validation | ✓ Done | AbsManifestMixin, RelManifestMixin, SnapshotManifestMixin, DiffManifestMixin |
-| Create concrete manifest classes | ✓ Done | AbsSnapshotManifest, AbsDiffManifest, RelSnapshotManifest, RelDiffManifest |
-| Update `base_manifest.py` to use aliases | ✓ Done | Re-exports unified classes; keeps abstract base classes for version modules |
-| Update v2023 module for compatibility | ☐ Not started | |
-| Update v2025 module for compatibility | ☐ Not started | |
-| Update operations to use new classes | ☐ Not started | |
-| Update tests | ☐ Not started | |
-| Verify backwards compatibility | ✓ Done | All 512 asset manifest tests pass |
+Phase 1 (Foundation) is complete:
+
+| Task | Status |
+|------|--------|
+| Create `manifest.py` with unified classes | ✓ Done |
+| Create mixin classes for validation | ✓ Done |
+| Create concrete manifest classes | ✓ Done |
+| Update `base_manifest.py` to re-export | ✓ Done |
+| Verify v2023/v2025 module compatibility | ✓ Done |
+| Verify backwards compatibility (512 tests) | ✓ Done |
+
+Phase 2 (Operations) is in progress. Operations are refactored in dependency order:
+
+### Operation Dependency Analysis
+
+**Implementation dependencies** (operation A imports from operation B):
+- PARTITION depends on SUBTREE
+
+**Test dependencies** (test file A uses operation B to set up test data):
+- `test_hash_manifest.py` uses `collect_manifest`
+- `test_hash_upload_manifest.py` uses `collect_manifest`
+
+### Refactoring Order
+
+Operations are refactored in waves. Each wave contains operations that have no unrefactored dependencies.
+
+| Wave | Operation | Impl Depends On | Test Depends On | Status |
+|------|-----------|-----------------|-----------------|--------|
+| 1 | COLLECT | - | - | ☐ Not started |
+| 1 | FILTER | - | - | ☐ Not started |
+| 1 | JOIN | - | - | ☐ Not started |
+| 1 | COMPOSE | - | - | ☐ Not started |
+| 1 | DIFF | - | - | ☐ Not started |
+| 1 | SUBTREE | - | - | ☐ Not started |
+| 2 | HASH | - | COLLECT | ☐ Not started |
+| 2 | HASH_UPLOAD | - | COLLECT | ☐ Not started |
+| 2 | PARTITION | SUBTREE | - | ☐ Not started |
+
+**Wave 1** operations are isolated - they can be refactored in any order.
+
+**Wave 2** operations depend on Wave 1:
+- HASH and HASH_UPLOAD tests use `collect_manifest` to create test manifests
+- PARTITION implementation imports `subtree_manifest`
+
+### Per-Operation Refactoring Checklist
+
+For each operation:
+1. Update operation module to use unified `Manifest`/`ManifestFilePath`/`ManifestDirectoryPath` classes
+2. Update type hints to use unified classes where appropriate
+3. Update tests to use unified classes
+4. Run operation-specific tests: `hatch run test -- -k test_<operation> --numprocesses=1`
+5. Run full asset manifest test suite: `hatch run test -- test/unit/deadline_job_attachments/asset_manifests/`
+6. Run mypy: `hatch run typing`
 
 ## Path Separator Convention
 
