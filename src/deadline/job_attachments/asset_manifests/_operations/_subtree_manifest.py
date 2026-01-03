@@ -34,7 +34,6 @@ import posixpath
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ..manifest import (
-    AbsDiffManifest,
     AbsSnapshotManifest,
     Manifest,
     ManifestDirectoryPath,
@@ -313,7 +312,6 @@ def _subtree_manifest(
             paths=result_paths,
             total_size=total_size,
         )
-
 
 
 def _handle_symlink_in_subtree(

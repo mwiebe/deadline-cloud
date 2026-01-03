@@ -65,6 +65,7 @@ class TestHashManifestBasic:
         hashed = hash_manifest(collected)
 
         assert len(hashed.paths) == 1
+        assert hashed.paths[0].hash is not None
         assert hashed.paths[0].hash != ""
         assert len(hashed.paths[0].hash) == 32  # XXH128 produces 32 hex chars
 
@@ -97,6 +98,7 @@ class TestHashManifestBasic:
 
         assert len(hashed.paths) == 2
         for entry in hashed.paths:
+            assert entry.hash is not None
             assert entry.hash != ""
             assert len(entry.hash) == 32
 
@@ -740,6 +742,7 @@ class TestInputValidation:
 
             hashed = hash_manifest(manifest)
 
+            assert hashed.paths[0].chunkhashes is not None
             assert len(hashed.paths[0].chunkhashes) == 3
 
     def test_small_file_rejects_non_string_hash(self, tmp_path: Path) -> None:
@@ -918,6 +921,7 @@ class TestHashDiffManifest:
         hashed = hash_manifest(diff_manifest)
 
         # Verify hash was computed
+        assert hashed.paths[0].hash is not None
         assert hashed.paths[0].hash != ""
         assert len(hashed.paths[0].hash) == 32
         # Verify manifest type is preserved

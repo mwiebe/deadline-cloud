@@ -516,6 +516,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
         self._validate_relative_paths()
         self._validate_diff()
 
+
 # =============================================================================
 # Type Aliases
 # =============================================================================

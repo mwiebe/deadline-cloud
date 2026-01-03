@@ -6,6 +6,9 @@ Unit tests for the HASH_UPLOAD manifest operation.
 These tests use moto to mock S3 and perform end-to-end testing of the
 hash_upload_manifest function, verifying that files are correctly hashed
 and uploaded to S3.
+
+All tests use the unified manifest classes (AbsSnapshotManifest, AbsDiffManifest)
+from manifest.py, following the Wave 2 refactoring pattern.
 """
 
 from __future__ import annotations
@@ -27,14 +30,11 @@ from deadline.job_attachments.asset_manifests._operations._hash_upload_manifest 
     _MemoryPool,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm, hash_file
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
-from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
-)
-from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestFilePath as ManifestFilePath2025,
+from deadline.job_attachments.asset_manifests.versions import SymlinkPolicy
+from deadline.job_attachments.asset_manifests.manifest import (
+    AbsDiffManifest,
+    AbsSnapshotManifest,
+    ManifestFilePath,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
@@ -108,8 +108,8 @@ class TestChunkWorkItem:
         assert item.chunk_hash is None
 
 
-class TestHashUploadManifestV2023:
-    """Tests for hash_upload_manifest with v2023 manifests using moto S3."""
+class TestHashUploadManifest:
+    """Tests for hash_upload_manifest with unified manifest classes."""
 
     @pytest.fixture(autouse=True)
     def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
@@ -130,7 +130,7 @@ class TestHashUploadManifestV2023:
 
     def test_hash_upload_empty_manifest(self) -> None:
         """Test hashing and uploading an empty manifest."""
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[],
             total_size=0,
@@ -142,7 +142,7 @@ class TestHashUploadManifestV2023:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
-        assert isinstance(result, AssetManifest2023)
+        assert isinstance(result, AbsSnapshotManifest)
         assert len(result.paths) == 0
         assert result.totalSize == 0
         # No objects should be uploaded
@@ -158,10 +158,10 @@ class TestHashUploadManifestV2023:
         # Use absolute path in manifest (as required by HASH_UPLOAD)
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",  # Empty hash to be filled
                     size=int(file_stat.st_size),
@@ -177,7 +177,7 @@ class TestHashUploadManifestV2023:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
-        assert isinstance(result, AssetManifest2023)
+        assert isinstance(result, AbsSnapshotManifest)
         assert len(result.paths) == 1
         assert result.paths[0].hash != ""  # Hash should be filled in
         assert result.paths[0].path == abs_path
@@ -205,11 +205,10 @@ class TestHashUploadManifestV2023:
         file3.parent.mkdir()
         file3.write_text("Content of file 3")
 
-        # Collect the manifest
+        # Collect the manifest (returns AbsSnapshotManifest)
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
@@ -219,11 +218,14 @@ class TestHashUploadManifestV2023:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
-        assert isinstance(result, AssetManifest2023)
-        assert len(result.paths) == 3
+        assert isinstance(result, AbsSnapshotManifest)
+        # Filter to file entries only
+        file_entries = [p for p in result.paths if p.symlink_target is None and not p.deleted]
+        assert len(file_entries) == 3
 
         # All files should have hashes
-        for entry in result.paths:
+        for entry in file_entries:
+            assert entry.hash is not None
             assert entry.hash != ""
             assert len(entry.hash) == 32  # XXH128 produces 32 hex chars
 
@@ -242,7 +244,6 @@ class TestHashUploadManifestV2023:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
@@ -252,8 +253,12 @@ class TestHashUploadManifestV2023:
             s3_key_prefix=TEST_KEY_PREFIX,
         )
 
+        # Filter to file entries
+        file_entries = [p for p in result.paths if p.symlink_target is None]
+        assert len(file_entries) == 2
+
         # Both files should have the same hash
-        assert result.paths[0].hash == result.paths[1].hash
+        assert file_entries[0].hash == file_entries[1].hash
 
         # Only one object should be in S3 (content-addressable storage)
         s3_objects = self._get_s3_objects()
@@ -264,23 +269,24 @@ class TestHashUploadManifestV2023:
         test_file = tmp_path / "test.txt"
         test_file.write_text("Test content for caching")
         file_stat = test_file.stat()
+        file_size = int(file_stat.st_size)
 
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
-                    size=int(file_stat.st_size),
+                    size=file_size,
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
             ],
-            total_size=int(file_stat.st_size),
+            total_size=file_size,
         )
 
         with HashCache(str(cache_dir)) as hash_cache:
@@ -292,8 +298,11 @@ class TestHashUploadManifestV2023:
             )
 
             # Verify hash was computed and cached
+            # The cache stores entries with range_start=0 and range_end=file_size
             cache_key = str(test_file.resolve())
-            cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
+            cached_entry = hash_cache.get_entry(
+                cache_key, HashAlgorithm.XXH128, range_start=0, range_end=file_size
+            )
             assert cached_entry is not None
             assert cached_entry.file_hash == result.paths[0].hash
 
@@ -308,10 +317,10 @@ class TestHashUploadManifestV2023:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
                     size=int(file_stat.st_size),
@@ -350,10 +359,10 @@ class TestHashUploadManifestV2023:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
                     size=int(file_stat.st_size),
@@ -383,10 +392,10 @@ class TestHashUploadManifestV2023:
         original_size = int(file_stat.st_size)
         original_mtime = int(file_stat.st_mtime_ns // 1000)
 
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
                     size=original_size,
@@ -406,51 +415,6 @@ class TestHashUploadManifestV2023:
         assert result.paths[0].mtime == original_mtime
         assert result.paths[0].path == abs_path
 
-
-class TestHashUploadManifestV2025:
-    """Tests for hash_upload_manifest with v2025 manifests using moto S3."""
-
-    @pytest.fixture(autouse=True)
-    def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
-        """Create the test S3 bucket before each test."""
-        create_s3_bucket(TEST_BUCKET)
-        self.s3_client = s3
-
-    def _get_s3_objects(self) -> Set[str]:
-        """Get all object keys in the test bucket."""
-        s3_resource = boto3.Session(region_name="us-west-2").resource("s3")
-        bucket = s3_resource.Bucket(TEST_BUCKET)
-        return {obj.key for obj in bucket.objects.all()}
-
-    def test_hash_upload_single_file(self, tmp_path: Path) -> None:
-        """Test hashing and uploading a single file with v2025 format."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("Hello, World!")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-
-        result = hash_upload_manifest(
-            manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
-        )
-
-        assert isinstance(result, AssetManifest2025)
-        # Find the file entry (not directory)
-        file_entries = [p for p in result.paths if p.symlink_target is None]
-        assert len(file_entries) == 1
-        assert file_entries[0].hash != ""
-        assert len(file_entries[0].hash) == 32
-
-        # Verify file was uploaded
-        s3_objects = self._get_s3_objects()
-        assert len(s3_objects) == 1
-
     def test_symlinks_pass_through_unchanged(self, tmp_path: Path) -> None:
         """Test that symlinks are passed through without uploading."""
         # Create a target file and symlink
@@ -462,7 +426,6 @@ class TestHashUploadManifestV2025:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -497,7 +460,6 @@ class TestHashUploadManifestV2025:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -517,11 +479,11 @@ class TestHashUploadManifestV2025:
     def test_deleted_entries_pass_through(self) -> None:
         """Test that deleted entries in diff manifests pass through unchanged."""
         # Create a diff manifest with a deleted entry
-        manifest = AssetManifest2025(
+        manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path="/some/deleted/file.txt",
                     deleted=True,
                 )
@@ -555,7 +517,6 @@ class TestHashUploadManifestV2025:
         collected = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -569,7 +530,8 @@ class TestHashUploadManifestV2025:
         file_entries = [p for p in result.paths if p.symlink_target is None]
         assert len(file_entries) == 1
         # Runnable flag should be preserved from collected manifest
-        assert file_entries[0].runnable == collected.paths[0].runnable
+        collected_file = [p for p in collected.paths if p.symlink_target is None][0]
+        assert file_entries[0].runnable == collected_file.runnable
 
     @pytest.mark.parametrize("runnable", [True, False])
     def test_preserves_runnable_flag_from_manifest(self, tmp_path: Path, runnable: bool) -> None:
@@ -581,11 +543,11 @@ class TestHashUploadManifestV2025:
         abs_path = str(test_file).replace("\\", "/")
 
         # Construct manifest directly with specified runnable value
-        manifest = AssetManifest2025(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
                     size=int(file_stat.st_size),
@@ -606,6 +568,57 @@ class TestHashUploadManifestV2025:
         assert result.paths[0].runnable is runnable
         assert result.paths[0].hash != ""
 
+    def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
+        """Test that AbsSnapshotManifest input returns AbsSnapshotManifest."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+
+        collected = collect_manifest(
+            [tmp_path],
+            [],
+            symlink_policy=SymlinkPolicy.PRESERVE,
+        )
+
+        result = hash_upload_manifest(
+            manifest=collected,
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+        )
+
+        assert isinstance(result, AbsSnapshotManifest)
+
+    def test_returns_abs_diff_manifest(self, tmp_path: Path) -> None:
+        """Test that AbsDiffManifest input returns AbsDiffManifest."""
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("content")
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash="",
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+            parent_manifest_hash="abc123",
+        )
+
+        result = hash_upload_manifest(
+            manifest=manifest,
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+        )
+
+        assert isinstance(result, AbsDiffManifest)
+        assert result.parentManifestHash == "abc123"
+
 
 class TestHashUploadInputValidation:
     """Tests for input validation in hash_upload_manifest."""
@@ -617,10 +630,10 @@ class TestHashUploadInputValidation:
 
     def test_rejects_relative_paths(self) -> None:
         """Test that manifest with relative paths raises ValueError."""
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path="relative/path/file.txt",  # Relative path
                     hash="",
                     size=100,
@@ -645,10 +658,10 @@ class TestHashUploadInputValidation:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AssetManifest2023(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             paths=[
-                ManifestPath2023(
+                ManifestFilePath(
                     path=abs_path,
                     hash="",
                     size=int(file_stat.st_size),

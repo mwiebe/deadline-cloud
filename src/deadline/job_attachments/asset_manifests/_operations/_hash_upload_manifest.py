@@ -4,7 +4,7 @@
 Module for filling in hashes AND uploading file content to S3 in a pipelined manner.
 
 This module implements the HASH_UPLOAD operation from the composable manifest operations design:
-    HASH_UPLOAD: Manifest (with hash="") → Manifest (with hashes filled in) + S3 uploads
+    HASH_UPLOAD: AbsManifest (with hash="") → AbsManifest (with hashes filled in) + S3 uploads
 
 The operation combines hashing and uploading into a single pass over the data:
 - Reads file chunks into memory
@@ -19,6 +19,10 @@ The pipeline uses bounded memory to prevent OOM conditions:
 - HASH stage computes hashes in-place
 - UPLOAD stage uploads and releases memory
 - When memory limit is reached, READ blocks until UPLOAD frees space
+
+All composable operations use v2025 structure and semantics internally. Support for
+v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
+deletions, and other v2025-only features.
 """
 
 from __future__ import annotations
@@ -28,25 +32,21 @@ import threading
 import queue
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import logging
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from ..base_manifest import BaseAssetManifest, FILE_CHUNK_SIZE_BYTES
+from ..manifest import (
+    FILE_CHUNK_SIZE_BYTES,
+    AbsManifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    _is_absolute_path,
+)
 from ..hash_algorithms import HashAlgorithm, hash_data
-from ..versions import ManifestVersion
-from ..v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
-)
-from ..v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
-from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
+from ...caches.hash_cache import HashCache, HashCacheEntry
 from ...caches.s3_check_cache import S3CheckCache, S3CheckCacheEntry
 from ..._aws.aws_clients import get_boto3_session, get_s3_client, get_account_id
 from ...progress_tracker import ProgressTracker
@@ -65,18 +65,7 @@ MIN_MEMORY_BYTES = 256 * 1024 * 1024
 _SHUTDOWN_SENTINEL = object()
 
 
-def _is_absolute_path(path: str) -> bool:
-    """Check if a path string represents an absolute path."""
-    # POSIX absolute paths start with /
-    # Windows absolute paths start with drive letter (e.g., C:/) or UNC (//server)
-    return (
-        path.startswith("/")
-        or (len(path) >= 3 and path[1] == ":" and path[2] == "/")
-        or path.startswith("//")
-    )
-
-
-def _validate_absolute_paths(manifest: BaseAssetManifest) -> None:
+def _validate_absolute_paths(manifest: AbsManifest) -> None:
     """Validate that all paths in the manifest are absolute."""
     for entry in manifest.paths:
         if not _is_absolute_path(entry.path):
@@ -86,15 +75,13 @@ def _validate_absolute_paths(manifest: BaseAssetManifest) -> None:
                 f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
             )
 
-    # Also check directory paths for v2025
-    if hasattr(manifest, "dirs"):
-        for d in manifest.dirs:
-            if not _is_absolute_path(d.path):
-                raise ValueError(
-                    f"HASH_UPLOAD operation requires absolute paths. "
-                    f"Found relative directory path: '{d.path}'. "
-                    f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
-                )
+    for d in manifest.dirs:
+        if not _is_absolute_path(d.path):
+            raise ValueError(
+                f"HASH_UPLOAD operation requires absolute paths. "
+                f"Found relative directory path: '{d.path}'. "
+                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+            )
 
 
 def _get_default_max_memory_bytes() -> int:
@@ -455,7 +442,7 @@ class _UploadStage(_PipelineStage):
 
 
 def hash_upload_manifest(
-    manifest: BaseAssetManifest,
+    manifest: AbsManifest,
     s3_bucket: str,
     s3_key_prefix: str,
     boto3_session: Optional[boto3.Session] = None,
@@ -465,7 +452,7 @@ def hash_upload_manifest(
     max_memory_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
-) -> BaseAssetManifest:
+) -> AbsManifest:
     """
     Fill in hashes for a manifest AND upload file content to S3 in a pipelined manner.
 
@@ -473,7 +460,8 @@ def hash_upload_manifest(
     avoiding the need to read files twice (once for hashing, once for uploading).
 
     Args:
-        manifest: Manifest with absolute paths and empty hashes (from collect_manifest)
+        manifest: Manifest with absolute paths and empty hashes (from collect_manifest).
+            Can be AbsSnapshotManifest or AbsDiffManifest.
         s3_bucket: S3 bucket name for uploads
         s3_key_prefix: S3 key prefix for content-addressable storage (e.g., "Data")
         boto3_session: Optional boto3 session for AWS credentials
@@ -485,7 +473,7 @@ def hash_upload_manifest(
         progress_tracker: Optional progress tracker for upload progress
 
     Returns:
-        A NEW manifest with all hashes filled in
+        A NEW manifest of the same type with all hashes filled in
 
     Raises:
         ValueError: If the manifest contains relative paths (paths must be absolute)
@@ -503,7 +491,8 @@ def hash_upload_manifest(
         - Input manifest must have absolute paths (from collect_manifest)
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
-        - For v2025 large files (>256MB): computes chunkhashes and uploads each chunk
+        - Deleted entries are unchanged (they mark deletions, no hash needed)
+        - For large files (>256MB): computes chunkhashes and uploads each chunk
         - Returns a NEW manifest (does not mutate input)
     """
     # Validate that manifest has absolute paths
@@ -519,205 +508,10 @@ def hash_upload_manifest(
     s3_client = get_s3_client(boto3_session)
     account_id = get_account_id(session=boto3_session)
 
-    if manifest.manifestVersion == ManifestVersion.v2023_03_03:
-        if not isinstance(manifest, AssetManifest2023):
-            raise TypeError(
-                f"Expected AssetManifest2023 for version {manifest.manifestVersion}, "
-                f"got {type(manifest).__name__}"
-            )
-        return _hash_upload_manifest_v2023(
-            manifest=manifest,
-            s3_bucket=s3_bucket,
-            s3_key_prefix=s3_key_prefix,
-            s3_client=s3_client,
-            account_id=account_id,
-            hash_cache=hash_cache,
-            s3_check_cache=s3_check_cache,
-            force_rehash=force_rehash,
-            max_memory_bytes=max_memory_bytes,
-            print_function_callback=print_function_callback,
-            progress_tracker=progress_tracker,
-        )
-    elif manifest.manifestVersion == ManifestVersion.v2025_12_04_beta:
-        if not isinstance(manifest, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {manifest.manifestVersion}, "
-                f"got {type(manifest).__name__}"
-            )
-        return _hash_upload_manifest_v2025(
-            manifest=manifest,
-            s3_bucket=s3_bucket,
-            s3_key_prefix=s3_key_prefix,
-            s3_client=s3_client,
-            account_id=account_id,
-            hash_cache=hash_cache,
-            s3_check_cache=s3_check_cache,
-            force_rehash=force_rehash,
-            max_memory_bytes=max_memory_bytes,
-            print_function_callback=print_function_callback,
-            progress_tracker=progress_tracker,
-        )
-    else:
-        raise ValueError(f"Unsupported manifest version: {manifest.manifestVersion}")
-
-
-def _hash_upload_manifest_v2023(
-    manifest: AssetManifest2023,
-    s3_bucket: str,
-    s3_key_prefix: str,
-    s3_client: Any,
-    account_id: str,
-    hash_cache: Optional[HashCache],
-    s3_check_cache: Optional[S3CheckCache],
-    force_rehash: bool,
-    max_memory_bytes: int,
-    print_function_callback: Callable[[Any], None],
-    progress_tracker: Optional[ProgressTracker],
-) -> AssetManifest2023:
-    """
-    Fill in hashes and upload for a v2023-03-03 manifest.
-
-    v2023 format only supports regular files with single hashes (no chunking).
-
-    Caching logic:
-    - Only skip the pipeline if BOTH hash cache AND s3 check cache hit
-    - Otherwise, always read → hash → upload for data consistency
-    - xxh128 is fast enough that re-hashing is preferred over trusting stale cache
-    """
-    # Create work items for all files
-    work_items: List[_ChunkWorkItem] = []
-    for entry in manifest.paths:
-        abs_path = Path(entry.path)
-        # Use resolved path as cache key for consistency
-        cache_key = str(abs_path.resolve())
-        work_items.append(
-            _ChunkWorkItem(
-                file_path=abs_path,
-                cache_key=cache_key,
-                file_size=entry.size,
-                mtime=entry.mtime,
-                chunk_index=0,
-                chunk_start=0,
-                chunk_end=entry.size,
-            )
-        )
-
-    # Check caches - only skip if BOTH hash cache AND s3 check cache hit
-    cached_results: dict[str, str] = {}
-    items_to_process: List[_ChunkWorkItem] = []
-
-    for item in work_items:
-        skip_pipeline = False
-        cached_hash: Optional[str] = None
-
-        if hash_cache is not None and s3_check_cache is not None and not force_rehash:
-            mtime_str = str(item.mtime) if item.mtime is not None else ""
-            hash_cache_entry = hash_cache.get_entry(
-                item.cache_key, manifest.hashAlg, 0, WHOLE_FILE_RANGE_END
-            )
-            if hash_cache_entry is not None and hash_cache_entry.last_modified_time == mtime_str:
-                cached_hash = hash_cache_entry.file_hash
-                # Check S3 cache
-                s3_key = f"{s3_key_prefix}/{cached_hash}.{manifest.hashAlg.value}"
-                s3_cache_key = f"{s3_bucket}/{s3_key}"
-                s3_cache_entry = s3_check_cache.get_entry(s3_cache_key)
-                if s3_cache_entry is not None:
-                    # Both caches hit - skip the pipeline entirely
-                    skip_pipeline = True
-                    cached_results[item.cache_key] = cached_hash
-                    print_function_callback(f"Fully cached (hash + S3): {item.file_path}")
-
-        if not skip_pipeline:
-            items_to_process.append(item)
-
-    # Process remaining items through pipeline
-    pipeline_results = _run_pipeline(
-        work_items=items_to_process,
-        hash_alg=manifest.hashAlg,
-        s3_bucket=s3_bucket,
-        s3_key_prefix=s3_key_prefix,
-        s3_client=s3_client,
-        account_id=account_id,
-        s3_check_cache=s3_check_cache,
-        max_memory_bytes=max_memory_bytes,
-        progress_tracker=progress_tracker,
-    )
-
-    # Merge cached and pipeline results
-    all_hashes: dict[str, str] = {**cached_results}
-    for item in pipeline_results:
-        if item.chunk_hash is not None:
-            all_hashes[item.cache_key] = item.chunk_hash
-            # Update hash cache
-            if hash_cache is not None:
-                mtime_str = str(item.mtime) if item.mtime is not None else ""
-                hash_cache.put_entry(
-                    HashCacheEntry(
-                        file_path=item.cache_key,
-                        hash_algorithm=manifest.hashAlg,
-                        file_hash=item.chunk_hash,
-                        last_modified_time=mtime_str,
-                        range_start=0,
-                        range_end=WHOLE_FILE_RANGE_END,
-                    )
-                )
-            print_function_callback(f"Hashed and uploaded: {item.file_path}")
-
-    # Build result manifest
-    hashed_paths: List[ManifestPath2023] = []
-    total_size = 0
-
-    for entry in manifest.paths:
-        abs_path = Path(entry.path)
-        cache_key = str(abs_path.resolve())
-        file_hash = all_hashes.get(cache_key, "")
-        hashed_paths.append(
-            ManifestPath2023(
-                path=entry.path,
-                hash=file_hash,
-                size=entry.size,
-                mtime=entry.mtime,
-            )
-        )
-        total_size += entry.size
-
-    return AssetManifest2023(
-        hash_alg=manifest.hashAlg,
-        paths=hashed_paths,
-        total_size=total_size,
-    )
-
-
-def _hash_upload_manifest_v2025(
-    manifest: AssetManifest2025,
-    s3_bucket: str,
-    s3_key_prefix: str,
-    s3_client: Any,
-    account_id: str,
-    hash_cache: Optional[HashCache],
-    s3_check_cache: Optional[S3CheckCache],
-    force_rehash: bool,
-    max_memory_bytes: int,
-    print_function_callback: Callable[[Any], None],
-    progress_tracker: Optional[ProgressTracker],
-) -> AssetManifest2025:
-    """
-    Fill in hashes and upload for a v2025-12-04-beta manifest.
-
-    Handles:
-    - Regular files: single hash or chunkhashes (>256MB)
-    - Symlinks: unchanged (no hash needed)
-    - Directories: unchanged (no hash needed)
-
-    Caching logic:
-    - Only skip the pipeline if BOTH hash cache AND s3 check cache hit
-    - Otherwise, always read → hash → upload for data consistency
-    - xxh128 is fast enough that re-hashing is preferred over trusting stale cache
-    """
     # Separate entries by type
-    file_entries_to_process: List[Tuple[int, ManifestFilePath2025]] = []
-    symlink_entries: List[Tuple[int, ManifestFilePath2025]] = []
-    deleted_entries: List[Tuple[int, ManifestFilePath2025]] = []
+    file_entries_to_process: List[Tuple[int, ManifestFilePath]] = []
+    symlink_entries: List[Tuple[int, ManifestFilePath]] = []
+    deleted_entries: List[Tuple[int, ManifestFilePath]] = []
 
     for idx, entry in enumerate(manifest.paths):
         if entry.symlink_target is not None:
@@ -730,7 +524,7 @@ def _hash_upload_manifest_v2025(
     # Create work items for all file chunks
     work_items: List[_ChunkWorkItem] = []
     # Map from cache_key to list of chunk indices in work_items
-    file_chunk_map: dict[str, List[int]] = {}
+    file_chunk_map: Dict[str, List[int]] = {}
 
     for idx, entry in file_entries_to_process:
         abs_path = Path(entry.path)
@@ -776,7 +570,7 @@ def _hash_upload_manifest_v2025(
             file_chunk_map[cache_key] = [len(work_items) - 1]
 
     # Check caches - only skip if BOTH hash cache AND s3 check cache hit
-    cached_chunk_hashes: dict[str, dict[int, str]] = {}  # cache_key -> {chunk_idx -> hash}
+    cached_chunk_hashes: Dict[str, Dict[int, str]] = {}  # cache_key -> {chunk_idx -> hash}
     items_to_process: List[_ChunkWorkItem] = []
 
     for item in work_items:
@@ -823,7 +617,7 @@ def _hash_upload_manifest_v2025(
     )
 
     # Collect pipeline results
-    pipeline_chunk_hashes: dict[str, dict[int, str]] = {}
+    pipeline_chunk_hashes: Dict[str, Dict[int, str]] = {}
     for item in pipeline_results:
         if item.chunk_hash is not None:
             if item.cache_key not in pipeline_chunk_hashes:
@@ -848,7 +642,7 @@ def _hash_upload_manifest_v2025(
             )
 
     # Merge cached and pipeline results
-    all_chunk_hashes: dict[str, dict[int, str]] = {}
+    all_chunk_hashes: Dict[str, Dict[int, str]] = {}
     for cache_key in file_chunk_map:
         all_chunk_hashes[cache_key] = {}
         if cache_key in cached_chunk_hashes:
@@ -857,7 +651,7 @@ def _hash_upload_manifest_v2025(
             all_chunk_hashes[cache_key].update(pipeline_chunk_hashes[cache_key])
 
     # Build result manifest
-    hashed_paths: List[ManifestFilePath2025] = []
+    hashed_paths: List[ManifestFilePath] = []
     total_size = 0
 
     # Process file entries
@@ -872,24 +666,24 @@ def _hash_upload_manifest_v2025(
             expected_chunks = (file_size + FILE_CHUNK_SIZE_BYTES - 1) // FILE_CHUNK_SIZE_BYTES
             chunkhashes_list = [chunk_hashes.get(i, "") for i in range(expected_chunks)]
             hashed_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=entry.path,
                     chunkhashes=chunkhashes_list,
                     size=entry.size,
                     mtime=entry.mtime,
-                    runnable=getattr(entry, "runnable", False),
+                    runnable=entry.runnable,
                 )
             )
         else:
             # Small file: single hash
             file_hash = chunk_hashes.get(0, "")
             hashed_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=entry.path,
                     hash=file_hash,
                     size=entry.size,
                     mtime=entry.mtime,
-                    runnable=getattr(entry, "runnable", False),
+                    runnable=entry.runnable,
                 )
             )
 
@@ -899,7 +693,7 @@ def _hash_upload_manifest_v2025(
     # Add symlink entries unchanged
     for idx, entry in symlink_entries:
         hashed_paths.append(
-            ManifestFilePath2025(
+            ManifestFilePath(
                 path=entry.path,
                 symlink_target=entry.symlink_target,
             )
@@ -908,28 +702,29 @@ def _hash_upload_manifest_v2025(
     # Add deleted entries unchanged
     for idx, entry in deleted_entries:
         hashed_paths.append(
-            ManifestFilePath2025(
+            ManifestFilePath(
                 path=entry.path,
                 deleted=True,
             )
         )
 
     # Copy directory entries unchanged
-    dir_entries: List[ManifestDirectoryPath2025] = []
+    dir_entries: List[ManifestDirectoryPath] = []
     for d in manifest.dirs:
         dir_entries.append(
-            ManifestDirectoryPath2025(
+            ManifestDirectoryPath(
                 path=d.path,
                 deleted=d.deleted,
             )
         )
 
-    return AssetManifest2025(
+    # Return the same manifest type as input
+    manifest_type = type(manifest)
+    return manifest_type(
         hash_alg=manifest.hashAlg,
         dirs=dir_entries,
         paths=hashed_paths,
         total_size=total_size,
-        manifest_type=manifest.manifestType,
         parent_manifest_hash=manifest.parentManifestHash,
     )
 

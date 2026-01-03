@@ -34,7 +34,7 @@ from ..manifest import (
     ManifestFilePath,
     _is_absolute_path,
 )
-from ..hash_algorithms import hash_file
+from ..hash_algorithms import hash_file, HashAlgorithm
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
 
@@ -232,9 +232,6 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
                 f"Found relative directory path: '{d.path}'. "
                 f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
             )
-
-
-from ..hash_algorithms import HashAlgorithm
 
 
 def _get_or_compute_hash(

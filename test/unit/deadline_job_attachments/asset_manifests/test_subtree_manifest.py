@@ -32,7 +32,6 @@ from deadline.job_attachments.asset_manifests.versions import (
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.manifest import (
     AbsSnapshotManifest,
-    AbsDiffManifest,
     RelSnapshotManifest,
     RelDiffManifest,
     ManifestFilePath,
@@ -264,7 +263,6 @@ class TestSubtreeManifestRelative:
         result = subtree_manifest(manifest, "data/large")
 
         assert result.paths[0].chunkhashes == ["c1", "c2"]
-
 
 
 class TestSubtreeManifestDiff:
@@ -548,7 +546,6 @@ class TestSubtreeManifestValidation:
 
         with pytest.raises(ValueError, match="absolute.*relative"):
             subtree_manifest(manifest, abs_subtree)
-
 
 
 class TestSubtreeManifestAbsolutePaths:

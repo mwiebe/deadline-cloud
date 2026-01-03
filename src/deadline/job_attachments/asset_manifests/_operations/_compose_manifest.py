@@ -24,15 +24,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from ..manifest import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    DiffManifest,
     Manifest,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    RelSnapshotManifest,
-    SnapshotManifest,
 )
 from ..versions import ManifestType
 
