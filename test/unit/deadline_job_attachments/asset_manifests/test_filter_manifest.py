@@ -7,9 +7,9 @@ These tests cover:
 - Basic filtering with include patterns
 - Basic filtering with exclude patterns
 - Combined include/exclude patterns
-- Filtering for both v2023 and v2025 formats
-- Directory filtering (v2025 only)
-- Symlink filtering (v2025 only)
+- Filtering for unified manifest classes
+- Directory filtering
+- Symlink filtering
 - Preservation of manifest metadata
 - Edge cases (empty patterns, no matches, etc.)
 - Custom filter callables
@@ -22,32 +22,21 @@ from deadline.job_attachments.asset_manifests._operations import (
     filter_manifest,
 )
 from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
-    _filter_manifest_v2023,
-    _filter_manifest_v2025,
     _matches_patterns,
     IncludeExcludePathsFilter,
+    ManifestEntry,
 )
-from deadline.job_attachments.asset_manifests.versions import (
-    ManifestType,
-    ManifestVersion,
-)
+from deadline.job_attachments.asset_manifests.versions import ManifestType
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
+from deadline.job_attachments.asset_manifests.manifest import (
+    Manifest,
+    ManifestFilePath,
+    ManifestDirectoryPath,
+    AbsSnapshotManifest,
+    AbsDiffManifest,
+    RelSnapshotManifest,
+    RelDiffManifest,
 )
-from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
-from deadline.job_attachments.asset_manifests.base_manifest import (
-    BaseManifestDirectoryPath,
-    BaseManifestPath,
-)
-
-# Type alias for manifest entries (matches the one in _filter_manifest.py)
-ManifestEntry = Union[BaseManifestPath, BaseManifestDirectoryPath]
 
 
 class TestMatchesPatterns:
@@ -115,31 +104,31 @@ class TestIncludeExcludePathsFilter:
     def test_empty_patterns_matches_all(self) -> None:
         """Empty patterns match everything."""
         filter_obj = IncludeExcludePathsFilter()
-        entry = ManifestPath2023(path="any/path.txt", hash="h1", size=10, mtime=1000)
+        entry = ManifestFilePath(path="any/path.txt", hash="h1", size=10, mtime=1000)
         assert filter_obj(entry) is True
 
     def test_include_pattern_matches(self) -> None:
         """Include pattern filters correctly."""
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        entry1 = ManifestPath2023(path="model.blend", hash="h1", size=10, mtime=1000)
-        entry2 = ManifestPath2023(path="texture.png", hash="h2", size=20, mtime=2000)
+        entry1 = ManifestFilePath(path="model.blend", hash="h1", size=10, mtime=1000)
+        entry2 = ManifestFilePath(path="texture.png", hash="h2", size=20, mtime=2000)
         assert filter_obj(entry1) is True
         assert filter_obj(entry2) is False
 
     def test_exclude_pattern_matches(self) -> None:
         """Exclude pattern filters correctly."""
         filter_obj = IncludeExcludePathsFilter(exclude=["backup/*"])
-        entry1 = ManifestPath2023(path="src/main.py", hash="h1", size=10, mtime=1000)
-        entry2 = ManifestPath2023(path="backup/old.py", hash="h2", size=20, mtime=2000)
+        entry1 = ManifestFilePath(path="src/main.py", hash="h1", size=10, mtime=1000)
+        entry2 = ManifestFilePath(path="backup/old.py", hash="h2", size=20, mtime=2000)
         assert filter_obj(entry1) is True
         assert filter_obj(entry2) is False
 
     def test_combined_patterns(self) -> None:
         """Include and exclude patterns work together."""
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"], exclude=["backup/*"])
-        entry1 = ManifestPath2023(path="model.blend", hash="h1", size=10, mtime=1000)
-        entry2 = ManifestPath2023(path="backup/old.blend", hash="h2", size=20, mtime=2000)
-        entry3 = ManifestPath2023(path="texture.png", hash="h3", size=30, mtime=3000)
+        entry1 = ManifestFilePath(path="model.blend", hash="h1", size=10, mtime=1000)
+        entry2 = ManifestFilePath(path="backup/old.blend", hash="h2", size=20, mtime=2000)
+        entry3 = ManifestFilePath(path="texture.png", hash="h3", size=30, mtime=3000)
         assert filter_obj(entry1) is True
         assert filter_obj(entry2) is False
         assert filter_obj(entry3) is False
@@ -147,8 +136,8 @@ class TestIncludeExcludePathsFilter:
     def test_filters_directory_entries(self) -> None:
         """Filter works with directory entries."""
         filter_obj = IncludeExcludePathsFilter(include=["src*"])
-        dir1 = ManifestDirectoryPath2025(path="src")
-        dir2 = ManifestDirectoryPath2025(path="backup")
+        dir1 = ManifestDirectoryPath(path="src")
+        dir2 = ManifestDirectoryPath(path="backup")
         assert filter_obj(dir1) is True
         assert filter_obj(dir2) is False
 
@@ -161,206 +150,184 @@ class TestIncludeExcludePathsFilter:
         assert "backup/*" in repr_str
 
 
-class TestFilterManifestV2023:
-    """Tests for v2023-03-03 manifest filtering."""
+class TestFilterManifestAbsSnapshot:
+    """Tests for filtering AbsSnapshotManifest."""
 
-    def _create_v2023_manifest(self, paths: List[tuple[str, str, int, int]]) -> AssetManifest2023:
-        """Helper to create a v2023 manifest with given paths.
-
-        Args:
-            paths: List of (path, hash, size, mtime) tuples
-        """
-        entries = [ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
-        total_size = sum(s for _, _, s, _ in paths)
-        return AssetManifest2023(
+    def _create_manifest(
+        self, files: List[dict], dirs: List[dict] | None = None
+    ) -> AbsSnapshotManifest:
+        """Helper to create an AbsSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=entries,
+            dirs=dir_entries,
+            paths=file_entries,
             total_size=total_size,
         )
 
     def test_filter_with_include_pattern(self) -> None:
         """Include pattern filters to matching files only."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_manifest(
             [
-                ("model.blend", "hash1", 100, 1000),
-                ("texture.png", "hash2", 200, 2000),
-                ("notes.txt", "hash3", 50, 3000),
+                {"path": "/project/model.blend", "hash": "hash1", "size": 100, "mtime": 1000},
+                {"path": "/project/texture.png", "hash": "hash2", "size": 200, "mtime": 2000},
+                {"path": "/project/notes.txt", "hash": "hash3", "size": 50, "mtime": 3000},
             ]
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "model.blend"
+        assert filtered.paths[0].path == "/project/model.blend"
         assert filtered.totalSize == 100
 
     def test_filter_with_exclude_pattern(self) -> None:
         """Exclude pattern removes matching files."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_manifest(
             [
-                ("src/main.py", "hash1", 100, 1000),
-                ("backup/old.py", "hash2", 200, 2000),
-                ("src/utils.py", "hash3", 50, 3000),
+                {"path": "/src/main.py", "hash": "hash1", "size": 100, "mtime": 1000},
+                {"path": "/backup/old.py", "hash": "hash2", "size": 200, "mtime": 2000},
+                {"path": "/src/utils.py", "hash": "hash3", "size": 50, "mtime": 3000},
             ]
         )
 
-        filter_obj = IncludeExcludePathsFilter(exclude=["backup/*"])
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filter_obj = IncludeExcludePathsFilter(exclude=["/backup/*"])
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 2
         paths = {p.path for p in filtered.paths}
-        assert paths == {"src/main.py", "src/utils.py"}
+        assert paths == {"/src/main.py", "/src/utils.py"}
         assert filtered.totalSize == 150
 
     def test_filter_with_both_patterns(self) -> None:
         """Include and exclude patterns work together."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_manifest(
             [
-                ("model.blend", "hash1", 100, 1000),
-                ("backup/old.blend", "hash2", 200, 2000),
-                ("texture.png", "hash3", 50, 3000),
+                {"path": "/project/model.blend", "hash": "hash1", "size": 100, "mtime": 1000},
+                {"path": "/backup/old.blend", "hash": "hash2", "size": 200, "mtime": 2000},
+                {"path": "/project/texture.png", "hash": "hash3", "size": 50, "mtime": 3000},
             ]
         )
 
-        filter_obj = IncludeExcludePathsFilter(include=["*.blend"], exclude=["backup/*"])
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filter_obj = IncludeExcludePathsFilter(include=["*.blend"], exclude=["/backup/*"])
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "model.blend"
+        assert filtered.paths[0].path == "/project/model.blend"
 
     def test_filter_empty_patterns_returns_all(self) -> None:
         """Empty patterns return all entries."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_manifest(
             [
-                ("a.txt", "hash1", 10, 1000),
-                ("b.txt", "hash2", 20, 2000),
+                {"path": "/a.txt", "hash": "hash1", "size": 10, "mtime": 1000},
+                {"path": "/b.txt", "hash": "hash2", "size": 20, "mtime": 2000},
             ]
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 2
 
     def test_filter_no_matches_returns_empty(self) -> None:
         """No matches returns empty manifest."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_manifest(
             [
-                ("a.txt", "hash1", 10, 1000),
-                ("b.txt", "hash2", 20, 2000),
+                {"path": "/a.txt", "hash": "hash1", "size": 10, "mtime": 1000},
+                {"path": "/b.txt", "hash": "hash2", "size": 20, "mtime": 2000},
             ]
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 0
         assert filtered.totalSize == 0
 
     def test_filter_preserves_hash_algorithm(self) -> None:
         """Filtered manifest preserves hash algorithm."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("a.txt", "hash1", 10, 1000),
-            ]
+        manifest = self._create_manifest(
+            [{"path": "/a.txt", "hash": "hash1", "size": 10, "mtime": 1000}]
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.hashAlg == HashAlgorithm.XXH128
 
     def test_filter_preserves_entry_metadata(self) -> None:
         """Filtered entries preserve all metadata."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("test.txt", "abc123", 42, 1234567890),
-            ]
+        manifest = self._create_manifest(
+            [{"path": "/test.txt", "hash": "abc123", "size": 42, "mtime": 1234567890}]
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2023(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         entry = filtered.paths[0]
-        assert entry.path == "test.txt"
+        assert entry.path == "/test.txt"
         assert entry.hash == "abc123"
         assert entry.size == 42
         assert entry.mtime == 1234567890
 
     def test_filter_does_not_mutate_original(self) -> None:
         """Filtering creates new manifest, doesn't mutate original."""
-        manifest = self._create_v2023_manifest(
+        manifest = self._create_manifest(
             [
-                ("keep.txt", "hash1", 10, 1000),
-                ("remove.txt", "hash2", 20, 2000),
+                {"path": "/keep.txt", "hash": "hash1", "size": 10, "mtime": 1000},
+                {"path": "/remove.txt", "hash": "hash2", "size": 20, "mtime": 2000},
             ]
         )
         original_count = len(manifest.paths)
 
-        filter_obj = IncludeExcludePathsFilter(include=["keep.txt"])
-        _filter_manifest_v2023(manifest, filter_obj)
+        filter_obj = IncludeExcludePathsFilter(include=["/keep.txt"])
+        filter_manifest(manifest, filter_obj)
 
         assert len(manifest.paths) == original_count
 
-    def test_custom_filter_callable(self) -> None:
-        """Custom filter callable works correctly."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("small.txt", "hash1", 10, 1000),
-                ("large.txt", "hash2", 1000, 2000),
-            ]
+    def test_returns_abs_snapshot_manifest(self) -> None:
+        """Filtering AbsSnapshotManifest returns AbsSnapshotManifest."""
+        manifest = self._create_manifest(
+            [{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
 
-        # Custom filter: only files > 100 bytes
-        def large_files_only(entry: ManifestEntry) -> bool:
-            if isinstance(entry, BaseManifestPath) and entry.size is not None:
-                return entry.size > 100
-            return False
+        filter_obj = IncludeExcludePathsFilter()
+        filtered = filter_manifest(manifest, filter_obj)
 
-        filtered = _filter_manifest_v2023(manifest, large_files_only)
-
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "large.txt"
+        assert isinstance(filtered, AbsSnapshotManifest)
 
 
-class TestFilterManifestV2025:
-    """Tests for v2025-12-04-beta manifest filtering."""
+class TestFilterManifestRelSnapshot:
+    """Tests for filtering RelSnapshotManifest."""
 
-    def _create_v2025_manifest(
-        self,
-        files: List[dict],
-        dirs: List[dict] | None = None,
-        manifest_type: ManifestType = ManifestType.SNAPSHOT,
-        parent_hash: str | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest.
-
-        Args:
-            files: List of dicts with file entry fields
-            dirs: List of dicts with directory entry fields
-            manifest_type: SNAPSHOT or DIFF
-            parent_hash: Parent manifest hash for diff manifests
-        """
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    def _create_manifest(
+        self, files: List[dict], dirs: List[dict] | None = None
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
             total_size=total_size,
-            manifest_type=manifest_type,
-            parent_manifest_hash=parent_hash,
         )
 
     def test_filter_files_with_include_pattern(self) -> None:
         """Include pattern filters files."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             [
                 {"path": "model.blend", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "texture.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -368,14 +335,14 @@ class TestFilterManifestV2025:
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 1
         assert filtered.paths[0].path == "model.blend"
 
     def test_filter_directories(self) -> None:
         """Directories are filtered by pattern."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[{"path": "src/main.py", "hash": "h1", "size": 100, "mtime": 1000}],
             dirs=[
                 {"path": "src"},
@@ -385,14 +352,14 @@ class TestFilterManifestV2025:
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["src*"])
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         dir_paths = {d.path for d in filtered.dirs}
         assert dir_paths == {"src"}
 
     def test_filter_symlinks(self) -> None:
         """Symlinks are filtered by their path."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             [
                 {"path": "link.blend", "symlink_target": "target.blend"},
                 {"path": "link.png", "symlink_target": "target.png"},
@@ -400,88 +367,44 @@ class TestFilterManifestV2025:
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert len(filtered.paths) == 1
         assert filtered.paths[0].path == "link.blend"
         assert filtered.paths[0].symlink_target == "target.blend"
 
-    def test_filter_deleted_entries(self) -> None:
-        """Deleted entries are filtered by path."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "keep.blend", "deleted": True},
-                {"path": "remove.txt", "deleted": True},
-            ],
-            manifest_type=ManifestType.DIFF,
-        )
-
-        filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
-
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "keep.blend"
-        assert filtered.paths[0].deleted is True
-
-    def test_filter_preserves_manifest_type(self) -> None:
-        """Filtered manifest preserves manifest type."""
-        manifest = self._create_v2025_manifest(
-            files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}],
-            manifest_type=ManifestType.DIFF,
-        )
-
-        filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
-
-        assert filtered.manifestType == ManifestType.DIFF
-
-    def test_filter_preserves_parent_hash(self) -> None:
-        """Filtered manifest preserves parent manifest hash."""
-        manifest = self._create_v2025_manifest(
-            files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}],
-            manifest_type=ManifestType.DIFF,
-            parent_hash="parent123",
-        )
-
-        filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
-
-        assert filtered.parentManifestHash == "parent123"
-
     def test_filter_preserves_runnable(self) -> None:
         """Filtered entries preserve runnable flag."""
-        manifest = self._create_v2025_manifest(
-            [
-                {"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True},
-            ]
+        manifest = self._create_manifest(
+            [{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.paths[0].runnable is True
 
     def test_filter_preserves_chunkhashes(self) -> None:
         """Filtered entries preserve chunkhashes for large files."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             [
                 {
                     "path": "large.bin",
                     "chunkhashes": ["chunk1", "chunk2"],
                     "size": 512 * 1024 * 1024,  # 512MB
                     "mtime": 1000,
-                },
+                }
             ]
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.paths[0].chunkhashes == ["chunk1", "chunk2"]
 
     def test_filter_recalculates_total_size(self) -> None:
         """Total size is recalculated for filtered entries."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             [
                 {"path": "keep.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "remove.txt", "hash": "h2", "size": 200, "mtime": 2000},
@@ -489,13 +412,13 @@ class TestFilterManifestV2025:
         )
 
         filter_obj = IncludeExcludePathsFilter(include=["keep.txt"])
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.totalSize == 100
 
     def test_filter_excludes_symlinks_from_total_size(self) -> None:
         """Symlinks don't contribute to total size."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             [
                 {"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "link.txt", "symlink_target": "file.txt"},
@@ -503,139 +426,154 @@ class TestFilterManifestV2025:
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.totalSize == 100
 
-    def test_filter_excludes_deleted_from_total_size(self) -> None:
-        """Deleted entries don't contribute to total size."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "existing.txt", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "deleted.txt", "deleted": True},
-            ],
-            manifest_type=ManifestType.DIFF,
+    def test_returns_rel_snapshot_manifest(self) -> None:
+        """Filtering RelSnapshotManifest returns RelSnapshotManifest."""
+        manifest = self._create_manifest(
+            [{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
 
         filter_obj = IncludeExcludePathsFilter()
-        filtered = _filter_manifest_v2025(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
-        assert filtered.totalSize == 100
+        assert isinstance(filtered, RelSnapshotManifest)
 
-    def test_filter_does_not_mutate_original(self) -> None:
-        """Filtering creates new manifest, doesn't mutate original."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "keep.txt", "hash": "h1", "size": 10, "mtime": 1000},
-                {"path": "remove.txt", "hash": "h2", "size": 20, "mtime": 2000},
-            ],
-            dirs=[{"path": "keep"}, {"path": "remove"}],
+
+class TestFilterManifestAbsDiff:
+    """Tests for filtering AbsDiffManifest."""
+
+    def _create_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+        parent_hash: str | None = None,
+    ) -> AbsDiffManifest:
+        """Helper to create an AbsDiffManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
         )
-        original_file_count = len(manifest.paths)
-        original_dir_count = len(manifest.dirs)
+        return AbsDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+            parent_manifest_hash=parent_hash,
+        )
 
-        filter_obj = IncludeExcludePathsFilter(include=["keep*"])
-        _filter_manifest_v2025(manifest, filter_obj)
-
-        assert len(manifest.paths) == original_file_count
-        assert len(manifest.dirs) == original_dir_count
-
-    def test_custom_filter_callable(self) -> None:
-        """Custom filter callable works correctly."""
-        manifest = self._create_v2025_manifest(
-            [
-                {"path": "small.txt", "hash": "h1", "size": 10, "mtime": 1000},
-                {"path": "large.txt", "hash": "h2", "size": 1000, "mtime": 2000},
+    def test_filter_deleted_entries(self) -> None:
+        """Deleted entries are filtered by path."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "/keep.blend", "deleted": True},
+                {"path": "/remove.txt", "deleted": True},
             ]
         )
 
-        # Custom filter: only files > 100 bytes
-        def large_files_only(entry: ManifestEntry) -> bool:
-            if isinstance(entry, BaseManifestPath) and entry.size is not None:
-                return entry.size > 100
-            return False
-
-        filtered = _filter_manifest_v2025(manifest, large_files_only)
-
-        assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "large.txt"
-
-
-class TestFilterManifestDispatch:
-    """Tests for the main _filter_manifest dispatch function."""
-
-    def test_dispatch_to_v2023(self) -> None:
-        """Version v2023-03-03 dispatches to v2023 implementation."""
-        manifest = AssetManifest2023(
-            hash_alg=HashAlgorithm.XXH128,
-            paths=[ManifestPath2023(path="test.txt", hash="h1", size=10, mtime=1000)],
-            total_size=10,
-        )
-
-        filter_obj = IncludeExcludePathsFilter(include=["*.txt"])
+        filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert filtered.manifestVersion == ManifestVersion.v2023_03_03
         assert len(filtered.paths) == 1
+        assert filtered.paths[0].path == "/keep.blend"
+        assert filtered.paths[0].deleted is True
 
-    def test_dispatch_to_v2025(self) -> None:
-        """Version v2025-12-04-beta dispatches to v2025 implementation."""
-        manifest = AssetManifest2025(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=[],
-            paths=[ManifestFilePath2025(path="test.txt", hash="h1", size=10, mtime=1000)],
-            total_size=10,
+    def test_filter_preserves_parent_hash(self) -> None:
+        """Filtered manifest preserves parent manifest hash."""
+        manifest = self._create_manifest(
+            files=[{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}],
+            parent_hash="parent123",
         )
 
-        filter_obj = IncludeExcludePathsFilter(include=["*.txt"])
+        filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert filtered.manifestVersion == ManifestVersion.v2025_12_04_beta
+        assert filtered.parentManifestHash == "parent123"
+
+    def test_filter_excludes_deleted_from_total_size(self) -> None:
+        """Deleted entries don't contribute to total size."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "/existing.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "/deleted.txt", "deleted": True},
+            ]
+        )
+
+        filter_obj = IncludeExcludePathsFilter()
+        filtered = filter_manifest(manifest, filter_obj)
+
+        assert filtered.totalSize == 100
+
+    def test_returns_abs_diff_manifest(self) -> None:
+        """Filtering AbsDiffManifest returns AbsDiffManifest."""
+        manifest = self._create_manifest(
+            files=[{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
+        )
+
+        filter_obj = IncludeExcludePathsFilter()
+        filtered = filter_manifest(manifest, filter_obj)
+
+        assert isinstance(filtered, AbsDiffManifest)
+        assert filtered.manifestType == ManifestType.DIFF
+
+
+class TestFilterManifestRelDiff:
+    """Tests for filtering RelDiffManifest."""
+
+    def _create_manifest(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+        parent_hash: str | None = None,
+    ) -> RelDiffManifest:
+        """Helper to create a RelDiffManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+            parent_manifest_hash=parent_hash,
+        )
+
+    def test_filter_deleted_entries(self) -> None:
+        """Deleted entries are filtered by path."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "keep.blend", "deleted": True},
+                {"path": "remove.txt", "deleted": True},
+            ]
+        )
+
+        filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
+        filtered = filter_manifest(manifest, filter_obj)
+
         assert len(filtered.paths) == 1
+        assert filtered.paths[0].path == "keep.blend"
+        assert filtered.paths[0].deleted is True
 
-    def test_type_error_for_wrong_manifest_type_v2023(self) -> None:
-        """TypeError raised if manifest type doesn't match version for v2023."""
-        # Create a v2025 manifest but lie about its version
-        manifest = AssetManifest2025(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=[],
-            paths=[],
-            total_size=0,
+    def test_returns_rel_diff_manifest(self) -> None:
+        """Filtering RelDiffManifest returns RelDiffManifest."""
+        manifest = self._create_manifest(
+            files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
-        # Manually override version to trigger type check
-        manifest.manifestVersion = ManifestVersion.v2023_03_03
 
         filter_obj = IncludeExcludePathsFilter()
-        with pytest.raises(TypeError, match="Expected AssetManifest2023"):
-            filter_manifest(manifest, filter_obj)
+        filtered = filter_manifest(manifest, filter_obj)
 
-    def test_type_error_for_wrong_manifest_type_v2025(self) -> None:
-        """TypeError raised if manifest type doesn't match version for v2025."""
-        # Create a v2023 manifest but lie about its version
-        manifest = AssetManifest2023(
-            hash_alg=HashAlgorithm.XXH128,
-            paths=[],
-            total_size=0,
-        )
-        # Manually override version to trigger type check
-        manifest.manifestVersion = ManifestVersion.v2025_12_04_beta
-
-        filter_obj = IncludeExcludePathsFilter()
-        with pytest.raises(TypeError, match="Expected AssetManifest2025"):
-            filter_manifest(manifest, filter_obj)
-
-    def test_unsupported_version_raises(self) -> None:
-        """Unsupported version raises ValueError."""
-        manifest = AssetManifest2023(
-            hash_alg=HashAlgorithm.XXH128,
-            paths=[],
-            total_size=0,
-        )
-        manifest.manifestVersion = ManifestVersion.UNDEFINED
-
-        filter_obj = IncludeExcludePathsFilter()
-        with pytest.raises(ValueError, match="Unsupported manifest version"):
-            filter_manifest(manifest, filter_obj)
+        assert isinstance(filtered, RelDiffManifest)
+        assert filtered.manifestType == ManifestType.DIFF
 
 
 class TestFilterManifestDiffScenarios:
@@ -659,24 +597,24 @@ class TestFilterManifestDiffScenarios:
 
         Diff should show: new.blend added (not texture.png/notes.txt deleted)
         """
-        parent = AssetManifest2025(
+        parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(path="model.blend", hash="h1", size=100, mtime=1000),
-                ManifestFilePath2025(path="texture.png", hash="h2", size=200, mtime=2000),
-                ManifestFilePath2025(path="notes.txt", hash="h3", size=50, mtime=3000),
+                ManifestFilePath(path="/model.blend", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="/texture.png", hash="h2", size=200, mtime=2000),
+                ManifestFilePath(path="/notes.txt", hash="h3", size=50, mtime=3000),
             ],
             total_size=350,
         )
 
-        current = AssetManifest2025(
+        current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(path="model.blend", hash="h1", size=100, mtime=1000),
-                ManifestFilePath2025(path="texture.png", hash="h2", size=200, mtime=2000),
-                ManifestFilePath2025(path="new.blend", hash="h4", size=150, mtime=4000),
+                ManifestFilePath(path="/model.blend", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="/texture.png", hash="h2", size=200, mtime=2000),
+                ManifestFilePath(path="/new.blend", hash="h4", size=150, mtime=4000),
             ],
             total_size=450,
         )
@@ -688,47 +626,43 @@ class TestFilterManifestDiffScenarios:
 
         # Parent should only have model.blend
         parent_paths = {p.path for p in filtered_parent.paths}
-        assert parent_paths == {"model.blend"}
+        assert parent_paths == {"/model.blend"}
 
         # Current should have model.blend and new.blend
         current_paths = {p.path for p in filtered_current.paths}
-        assert current_paths == {"model.blend", "new.blend"}
-
-        # The diff would correctly show new.blend as added
-        # (texture.png and notes.txt are not considered deleted because
-        # they were filtered out of both manifests)
+        assert current_paths == {"/model.blend", "/new.blend"}
 
     def test_filter_directories_for_diff(self) -> None:
         """Directory filtering works correctly for diff scenarios."""
-        parent = AssetManifest2025(
+        parent = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
-                ManifestDirectoryPath2025(path="src"),
-                ManifestDirectoryPath2025(path="backup"),
+                ManifestDirectoryPath(path="/src"),
+                ManifestDirectoryPath(path="/backup"),
             ],
             paths=[],
             total_size=0,
         )
 
-        current = AssetManifest2025(
+        current = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
-                ManifestDirectoryPath2025(path="src"),
-                ManifestDirectoryPath2025(path="new_dir"),
+                ManifestDirectoryPath(path="/src"),
+                ManifestDirectoryPath(path="/new_dir"),
             ],
             paths=[],
             total_size=0,
         )
 
-        filter_obj = IncludeExcludePathsFilter(exclude=["backup*"])
+        filter_obj = IncludeExcludePathsFilter(exclude=["/backup*"])
         filtered_parent = filter_manifest(parent, filter_obj)
         filtered_current = filter_manifest(current, filter_obj)
 
         parent_dirs = {d.path for d in filtered_parent.dirs}
         current_dirs = {d.path for d in filtered_current.dirs}
 
-        assert parent_dirs == {"src"}
-        assert current_dirs == {"src", "new_dir"}
+        assert parent_dirs == {"/src"}
+        assert current_dirs == {"/src", "/new_dir"}
 
 
 class TestCustomFilterCallables:
@@ -736,36 +670,36 @@ class TestCustomFilterCallables:
 
     def test_filter_by_size(self) -> None:
         """Filter files by size threshold."""
-        manifest = AssetManifest2025(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(path="small.txt", hash="h1", size=100, mtime=1000),
-                ManifestFilePath2025(path="medium.txt", hash="h2", size=1000, mtime=2000),
-                ManifestFilePath2025(path="large.txt", hash="h3", size=10000, mtime=3000),
+                ManifestFilePath(path="/small.txt", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="/medium.txt", hash="h2", size=1000, mtime=2000),
+                ManifestFilePath(path="/large.txt", hash="h3", size=10000, mtime=3000),
             ],
             total_size=11100,
         )
 
         def size_filter(entry: ManifestEntry) -> bool:
-            if isinstance(entry, BaseManifestPath) and entry.size is not None:
+            if isinstance(entry, ManifestFilePath) and entry.size is not None:
                 return entry.size >= 1000
             return True  # Keep directories
 
         filtered = filter_manifest(manifest, size_filter)
 
         paths = {p.path for p in filtered.paths}
-        assert paths == {"medium.txt", "large.txt"}
+        assert paths == {"/medium.txt", "/large.txt"}
 
     def test_filter_by_extension_case_insensitive(self) -> None:
         """Custom filter for case-insensitive extension matching."""
-        manifest = AssetManifest2025(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(path="model.BLEND", hash="h1", size=100, mtime=1000),
-                ManifestFilePath2025(path="scene.blend", hash="h2", size=200, mtime=2000),
-                ManifestFilePath2025(path="texture.PNG", hash="h3", size=300, mtime=3000),
+                ManifestFilePath(path="/model.BLEND", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="/scene.blend", hash="h2", size=200, mtime=2000),
+                ManifestFilePath(path="/texture.PNG", hash="h3", size=300, mtime=3000),
             ],
             total_size=600,
         )
@@ -776,38 +710,38 @@ class TestCustomFilterCallables:
         filtered = filter_manifest(manifest, blend_filter)
 
         paths = {p.path for p in filtered.paths}
-        assert paths == {"model.BLEND", "scene.blend"}
+        assert paths == {"/model.BLEND", "/scene.blend"}
 
     def test_filter_exclude_runnable(self) -> None:
         """Filter to exclude executable files."""
-        manifest = AssetManifest2025(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath2025(
-                    path="script.sh", hash="h1", size=100, mtime=1000, runnable=True
+                ManifestFilePath(
+                    path="/script.sh", hash="h1", size=100, mtime=1000, runnable=True
                 ),
-                ManifestFilePath2025(path="data.txt", hash="h2", size=200, mtime=2000),
+                ManifestFilePath(path="/data.txt", hash="h2", size=200, mtime=2000),
             ],
             total_size=300,
         )
 
         def non_executable_filter(entry: ManifestEntry) -> bool:
-            if isinstance(entry, BaseManifestPath):
+            if isinstance(entry, ManifestFilePath):
                 return not entry.runnable
             return True
 
         filtered = filter_manifest(manifest, non_executable_filter)
 
         assert len(filtered.paths) == 1
-        assert filtered.paths[0].path == "data.txt"
+        assert filtered.paths[0].path == "/data.txt"
 
     def test_always_true_filter(self) -> None:
         """Filter that accepts everything."""
-        manifest = AssetManifest2025(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            dirs=[ManifestDirectoryPath2025(path="dir1")],
-            paths=[ManifestFilePath2025(path="file.txt", hash="h1", size=100, mtime=1000)],
+            dirs=[ManifestDirectoryPath(path="/dir1")],
+            paths=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 
@@ -821,10 +755,10 @@ class TestCustomFilterCallables:
 
     def test_always_false_filter(self) -> None:
         """Filter that rejects everything."""
-        manifest = AssetManifest2025(
+        manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            dirs=[ManifestDirectoryPath2025(path="dir1")],
-            paths=[ManifestFilePath2025(path="file.txt", hash="h1", size=100, mtime=1000)],
+            dirs=[ManifestDirectoryPath(path="/dir1")],
+            paths=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
 

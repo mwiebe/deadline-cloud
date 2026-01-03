@@ -241,7 +241,7 @@ Operations are refactored in waves. Each wave contains operations that have no u
 | Wave | Operation | Impl Depends On | Test Depends On | Status |
 |------|-----------|-----------------|-----------------|--------|
 | 1 | COLLECT | - | - | ✓ Done |
-| 1 | FILTER | - | - | ☐ Not started |
+| 1 | FILTER | - | - | ✓ Done |
 | 1 | JOIN | - | - | ☐ Not started |
 | 1 | COMPOSE | - | - | ☐ Not started |
 | 1 | DIFF | - | - | ☐ Not started |
