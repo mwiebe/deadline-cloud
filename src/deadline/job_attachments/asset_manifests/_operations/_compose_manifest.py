@@ -7,38 +7,42 @@ This module implements the COMPOSE operation from the composable manifest operat
     COMPOSE: (Manifest, Manifest, ...) → Manifest
 
 The compose operation layers manifests together, as if applying each manifest as a set of
-changes in order:
-- For v2023-03-03: Later entries override earlier ones for the same path
-- For v2025-12-04-beta: Applies diffs to a base snapshot, handling deletions
+changes in order. Later entries override earlier ones for the same path.
 
 Supported compositions:
-- v2023-03-03: (snapshot, snapshot, ...) → snapshot
-- v2025-12-04-beta: (snapshot, diff, diff, ...) → snapshot
-- v2025-12-04-beta: (diff, diff, ...) → diff
+- (Snapshot, Diff, Diff, ...) → Snapshot
+- (Diff, Diff, ...) → Diff
+
+All composable operations use v2025 structure and semantics internally. Support for
+v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
+deletions, and other v2025-only features.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
-from ..base_manifest import BaseAssetManifest
-from ..versions import ManifestType, ManifestVersion
-from ..v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
+from ..manifest import (
+    AbsDiffManifest,
+    AbsSnapshotManifest,
+    Manifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    RelDiffManifest,
+    RelSnapshotManifest,
 )
-from ..v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
+from ..versions import ManifestType
+
+# Type aliases for manifest categories
+SnapshotManifest = Union[AbsSnapshotManifest, RelSnapshotManifest]
+DiffManifest = Union[AbsDiffManifest, RelDiffManifest]
 
 
 @dataclass
 class _ManifestTrieNode:
     """
-    A node in the manifest trie structure for v2025 manifests.
+    A node in the manifest trie structure.
 
     Each node represents a path component in the directory tree. Nodes can hold:
     - A file/symlink entry (for leaf nodes representing files)
@@ -55,7 +59,7 @@ class _ManifestTrieNode:
     children: Dict[str, "_ManifestTrieNode"] = field(default_factory=dict)
     """Child nodes keyed by path component"""
 
-    file_entry: Optional[ManifestFilePath2025] = None
+    file_entry: Optional[ManifestFilePath] = None
     """File or symlink entry at this node"""
 
     deleted: bool = False
@@ -171,20 +175,25 @@ class _ManifestTrieNode:
         node.deleted = True
         return node
 
-    def iter_files(self, path_prefix: List[str] = []) -> Iterator[Tuple[str, ManifestFilePath2025]]:
+    def iter_files(
+        self, path_prefix: Optional[List[str]] = None
+    ) -> Iterator[Tuple[str, ManifestFilePath]]:
         """
         Iterate over all file entries in the trie (excludes deleted nodes).
 
         Yields:
             Tuples of (path, file_entry)
         """
+        if path_prefix is None:
+            path_prefix = []
+
         if self.file_entry is not None and not self.deleted:
             yield ("/".join(path_prefix), self.file_entry)
 
         for name, child in self.children.items():
             yield from child.iter_files(path_prefix + [name])
 
-    def iter_deleted_files(self, path_prefix: List[str] = []) -> Iterator[str]:
+    def iter_deleted_files(self, path_prefix: Optional[List[str]] = None) -> Iterator[str]:
         """
         Iterate over all deleted file paths in the trie.
 
@@ -193,13 +202,16 @@ class _ManifestTrieNode:
         Yields:
             Deleted file paths as strings
         """
+        if path_prefix is None:
+            path_prefix = []
+
         if self.deleted and not self.children:
             yield "/".join(path_prefix)
 
         for name, child in self.children.items():
             yield from child.iter_deleted_files(path_prefix + [name])
 
-    def iter_dirs(self, path_prefix: List[str] = []) -> Iterator[str]:
+    def iter_dirs(self, path_prefix: Optional[List[str]] = None) -> Iterator[str]:
         """
         Iterate over all directory paths in the trie (excludes deleted nodes).
 
@@ -208,6 +220,9 @@ class _ManifestTrieNode:
         Yields:
             Directory paths as strings
         """
+        if path_prefix is None:
+            path_prefix = []
+
         for name, child in self.children.items():
             child_path = path_prefix + [name]
             # If this child has no file_entry and is not deleted, it's a directory
@@ -215,7 +230,7 @@ class _ManifestTrieNode:
                 yield "/".join(child_path)
             yield from child.iter_dirs(child_path)
 
-    def iter_deleted_dirs(self, path_prefix: List[str] = []) -> Iterator[str]:
+    def iter_deleted_dirs(self, path_prefix: Optional[List[str]] = None) -> Iterator[str]:
         """
         Iterate over all deleted directory paths in the trie.
 
@@ -225,6 +240,9 @@ class _ManifestTrieNode:
         Yields:
             Deleted directory paths as strings
         """
+        if path_prefix is None:
+            path_prefix = []
+
         # A deleted node with no file_entry represents a deleted directory
         # (deleted files would have had a file_entry before deletion)
         if self.deleted and self.file_entry is None:
@@ -285,34 +303,31 @@ def _split_path(path: str) -> List[str]:
 
 
 def compose_manifests(
-    manifests: List[BaseAssetManifest],
+    manifests: List[Manifest],
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> Manifest:
     """
     Compose multiple manifests into a single manifest by layering them together.
 
     The result represents the directory tree you would get by:
     1. Starting with the first manifest's directory tree
     2. Applying each subsequent manifest as a "patch"—adding new entries,
-       updating modified entries, and removing deleted entries (v2025 only)
+       updating modified entries, and removing deleted entries
 
     Args:
-        manifests: List of manifests to compose. Must all be the same version.
-                   For v2025, the first manifest should be a snapshot, followed
-                   by zero or more diff manifests.
+        manifests: List of manifests to compose. Must all be the same type
+                   (all absolute or all relative). The first manifest should
+                   be a snapshot, followed by zero or more diff manifests,
+                   OR all manifests should be diffs.
         print_function_callback: Progress callback
 
     Returns:
         A single composed manifest representing the final state.
+        - (Snapshot, Diff, ...) → Snapshot (same path type as input)
+        - (Diff, Diff, ...) → Diff (same path type as input)
 
     Raises:
-        ValueError: If manifests list is empty, versions don't match, or
-                    invalid manifest type sequence for v2025.
-
-    Supported compositions:
-        - v2023-03-03: (snapshot, snapshot, ...) → snapshot
-        - v2025-12-04-beta: (snapshot, diff, diff, ...) → snapshot
-        - v2025-12-04-beta: (diff, diff, ...) → diff
+        ValueError: If manifests list is empty or invalid manifest type sequence.
     """
     if not manifests:
         raise ValueError("Cannot compose empty list of manifests")
@@ -321,73 +336,20 @@ def compose_manifests(
     if len(manifests) == 1:
         return manifests[0]
 
-    # Validate all manifests are the same version
-    version = manifests[0].manifestVersion
-    for i, manifest in enumerate(manifests[1:], start=1):
-        if manifest.manifestVersion != version:
-            raise ValueError(
-                f"All manifests must be the same version. "
-                f"Manifest 0 is {version.value}, but manifest {i} is {manifest.manifestVersion.value}"
-            )
-
-    if version == ManifestVersion.v2023_03_03:
-        return _compose_manifests_v2023(manifests, print_function_callback)
-    elif version == ManifestVersion.v2025_12_04_beta:
-        # Determine composition type based on first manifest
-        first = manifests[0]
-        if not isinstance(first, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {ManifestVersion.v2025_12_04_beta}, "
-                f"got {type(first).__name__}"
-            )
-        if first.manifestType == ManifestType.SNAPSHOT:
-            return _compose_manifests_snapshot_diffs_v2025(manifests, print_function_callback)
-        else:
-            return _compose_manifests_diffs_v2025(manifests, print_function_callback)
+    # Determine composition type based on first manifest
+    first = manifests[0]
+    if first.manifestType == ManifestType.SNAPSHOT:
+        return _compose_snapshot_diffs(manifests, print_function_callback)
     else:
-        raise ValueError(f"Unsupported manifest version: {version}")
+        return _compose_diffs(manifests, print_function_callback)
 
 
-def _compose_manifests_v2023(
-    manifests: List[BaseAssetManifest],
+def _compose_snapshot_diffs(
+    manifests: List[Manifest],
     print_function_callback: Callable[[Any], None],
-) -> AssetManifest2023:
+) -> Manifest:
     """
-    Compose v2023-03-03 manifests by layering them together.
-
-    Later manifests override earlier ones for the same path. Since v2023 format
-    has no deletion markers, files only in earlier manifests are preserved.
-    """
-    # Build merged paths dict - later entries override earlier ones
-    merged_paths: Dict[str, ManifestPath2023] = {}
-
-    for manifest in manifests:
-        if not isinstance(manifest, AssetManifest2023):
-            raise TypeError(
-                f"Expected AssetManifest2023 for version {ManifestVersion.v2023_03_03}, "
-                f"got {type(manifest).__name__}"
-            )
-        for entry in manifest.paths:
-            merged_paths[entry.path] = entry
-            print_function_callback(f"Added/updated: {entry.path}")
-
-    # Build result
-    result_paths = list(merged_paths.values())
-    total_size = sum(entry.size or 0 for entry in result_paths)
-
-    return AssetManifest2023(
-        hash_alg=manifests[0].hashAlg,
-        paths=result_paths,
-        total_size=total_size,
-    )
-
-
-def _compose_manifests_snapshot_diffs_v2025(
-    manifests: List[BaseAssetManifest],
-    print_function_callback: Callable[[Any], None],
-) -> AssetManifest2025:
-    """
-    Compose v2025-12-04-beta manifests: (snapshot, diff, diff, ...) → snapshot.
+    Compose manifests: (snapshot, diff, diff, ...) → snapshot.
 
     The first manifest must be a snapshot. Subsequent manifests must be diffs.
     Diff manifests can add, modify, or delete entries. Deleted entries are
@@ -396,14 +358,9 @@ def _compose_manifests_snapshot_diffs_v2025(
     Uses a trie structure to efficiently manage the directory tree and handle
     cascading deletions when a directory is deleted.
     """
-    # Validate first manifest is a snapshot
     first = manifests[0]
-    if not isinstance(first, AssetManifest2025):
-        raise TypeError(
-            f"Expected AssetManifest2025 for version {ManifestVersion.v2025_12_04_beta}, "
-            f"got {type(first).__name__}"
-        )
 
+    # Validate first manifest is a snapshot
     if first.manifestType != ManifestType.SNAPSHOT:
         raise ValueError(
             f"First manifest must be a SNAPSHOT for snapshot+diffs composition, "
@@ -412,11 +369,6 @@ def _compose_manifests_snapshot_diffs_v2025(
 
     # Validate remaining manifests are diffs
     for i, manifest in enumerate(manifests[1:], start=1):
-        if not isinstance(manifest, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {ManifestVersion.v2025_12_04_beta}, "
-                f"got {type(manifest).__name__}"
-            )
         if manifest.manifestType != ManifestType.DIFF:
             raise ValueError(
                 f"Manifest {i} must be a DIFF for snapshot+diffs composition, "
@@ -441,9 +393,6 @@ def _compose_manifests_snapshot_diffs_v2025(
 
     # Apply each diff in order
     for diff_index, diff_manifest in enumerate(manifests[1:], start=1):
-        if not isinstance(diff_manifest, AssetManifest2025):
-            continue  # Already validated above, but keeps type checker happy
-
         # Apply file deletions first
         for entry in diff_manifest.paths:
             components = _split_path(entry.path)
@@ -478,10 +427,10 @@ def _compose_manifests_snapshot_diffs_v2025(
                 root.insert_path(components)
 
     # Collect results from trie - create new entries without deleted flag
-    result_paths: List[ManifestFilePath2025] = []
+    result_paths: List[ManifestFilePath] = []
     for _, entry in root.iter_files():
         result_paths.append(
-            ManifestFilePath2025(
+            ManifestFilePath(
                 path=entry.path,
                 hash=entry.hash,
                 size=entry.size,
@@ -492,28 +441,28 @@ def _compose_manifests_snapshot_diffs_v2025(
             )
         )
 
-    result_dirs: List[ManifestDirectoryPath2025] = []
+    result_dirs: List[ManifestDirectoryPath] = []
     for dir_path in root.iter_dirs():
-        result_dirs.append(ManifestDirectoryPath2025(path=dir_path))
+        result_dirs.append(ManifestDirectoryPath(path=dir_path))
 
     # Calculate total size (non-symlink entries only)
     total_size = sum(entry.size or 0 for entry in result_paths if entry.symlink_target is None)
 
-    return AssetManifest2025(
+    # Return the same manifest type as input (preserving absolute/relative)
+    return type(first)(
         hash_alg=first.hashAlg,
         dirs=result_dirs,
         paths=result_paths,
         total_size=total_size,
-        manifest_type=ManifestType.SNAPSHOT,
     )
 
 
-def _compose_manifests_diffs_v2025(
-    manifests: List[BaseAssetManifest],
+def _compose_diffs(
+    manifests: List[Manifest],
     print_function_callback: Callable[[Any], None],
-) -> AssetManifest2025:
+) -> Manifest:
     """
-    Compose v2025-12-04-beta diff manifests: (diff, diff, ...) → diff.
+    Compose diff manifests: (diff, diff, ...) → diff.
 
     All manifests must be diffs. The result is a single diff manifest that is
     equivalent to applying all the input diffs in order.
@@ -533,31 +482,18 @@ def _compose_manifests_diffs_v2025(
     """
     # Validate all manifests are diffs
     for i, manifest in enumerate(manifests):
-        if not isinstance(manifest, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {ManifestVersion.v2025_12_04_beta}, "
-                f"got {type(manifest).__name__}"
-            )
         if manifest.manifestType != ManifestType.DIFF:
             raise ValueError(
                 f"Manifest {i} must be a DIFF for diff composition, got {manifest.manifestType}"
             )
 
     first = manifests[0]
-    if not isinstance(first, AssetManifest2025):
-        raise TypeError(
-            f"Expected AssetManifest2025 for version {ManifestVersion.v2025_12_04_beta}, "
-            f"got {type(first).__name__}"
-        )
 
     # Track changes using a trie with deleted flags
     root = _ManifestTrieNode()
 
     # Apply each diff in order
     for diff_index, diff_manifest in enumerate(manifests):
-        if not isinstance(diff_manifest, AssetManifest2025):
-            continue  # Already validated above
-
         # Apply file deletions first
         for entry in diff_manifest.paths:
             components = _split_path(entry.path)
@@ -597,12 +533,12 @@ def _compose_manifests_diffs_v2025(
     root.reconcile_deleted_flags()
 
     # Build result diff manifest
-    result_paths: List[ManifestFilePath2025] = []
+    result_paths: List[ManifestFilePath] = []
 
     # Add all current file entries (additions/modifications)
     for _, entry in root.iter_files():
         result_paths.append(
-            ManifestFilePath2025(
+            ManifestFilePath(
                 path=entry.path,
                 hash=entry.hash,
                 size=entry.size,
@@ -615,18 +551,18 @@ def _compose_manifests_diffs_v2025(
 
     # Add deletion markers for deleted files
     for path in root.iter_deleted_files():
-        result_paths.append(ManifestFilePath2025(path=path, deleted=True))
+        result_paths.append(ManifestFilePath(path=path, deleted=True))
 
     # Build directory entries
-    result_dirs: List[ManifestDirectoryPath2025] = []
+    result_dirs: List[ManifestDirectoryPath] = []
 
     # Add current directories
     for dir_path in root.iter_dirs():
-        result_dirs.append(ManifestDirectoryPath2025(path=dir_path))
+        result_dirs.append(ManifestDirectoryPath(path=dir_path))
 
     # Add deletion markers for deleted directories
     for dir_path in root.iter_deleted_dirs():
-        result_dirs.append(ManifestDirectoryPath2025(path=dir_path, deleted=True))
+        result_dirs.append(ManifestDirectoryPath(path=dir_path, deleted=True))
 
     # Calculate total size (non-symlink, non-deleted entries only)
     total_size = sum(
@@ -635,11 +571,11 @@ def _compose_manifests_diffs_v2025(
         if entry.symlink_target is None and not entry.deleted
     )
 
-    return AssetManifest2025(
+    # Return the same manifest type as input (preserving absolute/relative)
+    return type(first)(
         hash_alg=first.hashAlg,
         dirs=result_dirs,
         paths=result_paths,
         total_size=total_size,
-        manifest_type=ManifestType.DIFF,
         parent_manifest_hash=first.parentManifestHash,
     )

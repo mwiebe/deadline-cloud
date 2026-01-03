@@ -243,7 +243,7 @@ Operations are refactored in waves. Each wave contains operations that have no u
 | 1 | COLLECT | - | - | ✓ Done |
 | 1 | FILTER | - | - | ✓ Done |
 | 1 | JOIN | - | - | ✓ Done |
-| 1 | COMPOSE | - | - | ☐ Not started |
+| 1 | COMPOSE | - | - | ✓ Done |
 | 1 | DIFF | - | - | ☐ Not started |
 | 1 | SUBTREE | - | - | ☐ Not started |
 | 2 | HASH | - | COLLECT | ☐ Not started |
