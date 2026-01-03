@@ -22,35 +22,28 @@ from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
 )
 from deadline.job_attachments.asset_manifests.versions import (
-    ManifestVersion,
     SymlinkPolicy,
 )
-from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-)
-from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-)
+from deadline.job_attachments.asset_manifests.manifest import AbsSnapshotManifest
 
 
 class TestCollectManifest:
     """Tests for collect_manifest function."""
 
-    def test_v2023_absolute_paths(self, tmp_path: Path) -> None:
+    def test_absolute_paths(self, tmp_path: Path) -> None:
         """When using collect_manifest, paths are absolute."""
         (tmp_path / "file.txt").write_text("content")
 
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
         # Path should be absolute (POSIX format)
         assert manifest.paths[0].path == tmp_path.as_posix() + "/file.txt"
 
-    def test_v2023_nested_absolute_paths(self, tmp_path: Path) -> None:
+    def test_nested_absolute_paths(self, tmp_path: Path) -> None:
         """Nested files have full absolute paths."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
@@ -59,13 +52,15 @@ class TestCollectManifest:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
-        assert manifest.paths[0].path == (subdir / "nested.txt").as_posix()
+        # Find the file entry (not directory)
+        file_entries = [p for p in manifest.paths if "nested.txt" in p.path]
+        assert len(file_entries) == 1
+        assert file_entries[0].path == (subdir / "nested.txt").as_posix()
 
-    def test_v2025_absolute_paths(self, tmp_path: Path) -> None:
+    def test_absolute_paths_with_subdir(self, tmp_path: Path) -> None:
         """When using collect_manifest, paths are absolute."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
@@ -74,7 +69,6 @@ class TestCollectManifest:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         # Check file path is absolute
@@ -85,7 +79,7 @@ class TestCollectManifest:
         assert tmp_path.as_posix() in dir_paths
         assert subdir.as_posix() in dir_paths
 
-    def test_v2025_symlink_absolute_paths(self, tmp_path: Path) -> None:
+    def test_symlink_absolute_paths(self, tmp_path: Path) -> None:
         """Symlink entries use absolute paths for both path and target with collect_manifest and PRESERVE policy."""
         target = tmp_path / "target.txt"
         target.write_text("content")
@@ -96,7 +90,6 @@ class TestCollectManifest:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -113,10 +106,10 @@ class TestCollectManifest:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        assert manifest.paths[0].path == (tmp_path / "file.txt").as_posix()
+        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        assert file_entries[0].path == (tmp_path / "file.txt").as_posix()
 
 
 class TestCollectManifestSymlinkChains:
@@ -139,7 +132,6 @@ class TestCollectManifestSymlinkChains:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -160,7 +152,6 @@ class TestCollectManifestSymlinkChains:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -189,7 +180,6 @@ class TestCollectManifestSymlinkChains:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -244,7 +234,6 @@ class TestCollectManifestSymlinkChains:
         manifest = collect_manifest(
             [root],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
@@ -266,7 +255,6 @@ class TestCollectManifestInputValidation:
             collect_manifest(
                 [nonexistent],
                 [],
-                version=ManifestVersion.v2025_12_04_beta,
             )
 
     def test_raises_on_file_as_directory(self, tmp_path: Path) -> None:
@@ -278,7 +266,6 @@ class TestCollectManifestInputValidation:
             collect_manifest(
                 [file_path],
                 [],
-                version=ManifestVersion.v2025_12_04_beta,
             )
 
     def test_raises_on_nonexistent_filename(self, tmp_path: Path) -> None:
@@ -289,7 +276,6 @@ class TestCollectManifestInputValidation:
             collect_manifest(
                 [],
                 [nonexistent],
-                version=ManifestVersion.v2025_12_04_beta,
             )
 
     def test_raises_on_directory_as_filename(self, tmp_path: Path) -> None:
@@ -301,32 +287,9 @@ class TestCollectManifestInputValidation:
             collect_manifest(
                 [],
                 [subdir],
-                version=ManifestVersion.v2025_12_04_beta,
             )
 
-    def test_raises_on_collapse_escaping_policy(self, tmp_path: Path) -> None:
-        """Raises ValueError when COLLAPSE_ESCAPING policy is used."""
-        (tmp_path / "file.txt").write_text("content")
 
-        with pytest.raises(ValueError, match="COLLAPSE_ESCAPING is not supported"):
-            collect_manifest(
-                [tmp_path],
-                [],
-                version=ManifestVersion.v2025_12_04_beta,
-                symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
-            )
-
-    def test_raises_on_unsupported_v2023_symlink_policy(self, tmp_path: Path) -> None:
-        """Raises ValueError when v2023 is used with unsupported symlink policy."""
-        (tmp_path / "file.txt").write_text("content")
-
-        with pytest.raises(ValueError, match="v2023-03-03 manifest format only supports"):
-            collect_manifest(
-                [tmp_path],
-                [],
-                version=ManifestVersion.v2023_03_03,
-                symlink_policy=SymlinkPolicy.PRESERVE,
-            )
 
 
 class TestCollectManifestOptionalFilenames:
@@ -343,7 +306,6 @@ class TestCollectManifestOptionalFilenames:
             [],
             [file1],
             optional_filenames=[file2],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         paths = {p.path for p in manifest.paths}
@@ -360,7 +322,6 @@ class TestCollectManifestOptionalFilenames:
             [],
             [file1],
             optional_filenames=[missing],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         paths = {p.path for p in manifest.paths}
@@ -368,8 +329,8 @@ class TestCollectManifestOptionalFilenames:
         assert missing.as_posix() not in paths
 
 
-class TestCollectManifestV2023SymlinkPolicies:
-    """Tests for v2023 symlink policy handling."""
+class TestCollectManifestSymlinkPolicies:
+    """Tests for symlink policy handling."""
 
     def test_collapse_follows_file_symlinks(self, tmp_path: Path) -> None:
         """COLLAPSE policy follows file symlinks and collects target content."""
@@ -381,12 +342,11 @@ class TestCollectManifestV2023SymlinkPolicies:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
         # Both target and link should be collected as files
-        assert isinstance(manifest, AssetManifest2023)
+        assert isinstance(manifest, AbsSnapshotManifest)
         paths = {p.path for p in manifest.paths}
         assert target.as_posix() in paths
         assert link.as_posix() in paths
@@ -401,59 +361,14 @@ class TestCollectManifestV2023SymlinkPolicies:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2023_03_03,
             symlink_policy=SymlinkPolicy.EXCLUDE,
         )
 
         # Only target should be collected, not the symlink
-        assert isinstance(manifest, AssetManifest2023)
+        assert isinstance(manifest, AbsSnapshotManifest)
         paths = {p.path for p in manifest.paths}
         assert target.as_posix() in paths
         assert link.as_posix() not in paths
-
-
-class TestCollectManifestV2025SymlinkPolicies:
-    """Tests for v2025 symlink policy handling."""
-
-    def test_exclude_skips_symlinks(self, tmp_path: Path) -> None:
-        """EXCLUDE policy skips symlinks entirely."""
-        target = tmp_path / "target.txt"
-        target.write_text("content")
-        link = tmp_path / "link.txt"
-        link.symlink_to(target)
-
-        manifest = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.EXCLUDE,
-        )
-
-        # Only target should be collected, not the symlink
-        assert isinstance(manifest, AssetManifest2025)
-        paths = {p.path for p in manifest.paths}
-        assert target.as_posix() in paths
-        assert link.as_posix() not in paths
-
-    def test_collapse_follows_file_symlinks(self, tmp_path: Path) -> None:
-        """COLLAPSE policy follows file symlinks."""
-        target = tmp_path / "target.txt"
-        target.write_text("content")
-        link = tmp_path / "link.txt"
-        link.symlink_to(target)
-
-        manifest = collect_manifest(
-            [tmp_path],
-            [],
-            version=ManifestVersion.v2025_12_04_beta,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
-        )
-
-        assert isinstance(manifest, AssetManifest2025)
-        # Both should be collected as files (symlink followed)
-        paths = {p.path for p in manifest.paths}
-        assert target.as_posix() in paths
-        assert link.as_posix() in paths
 
     def test_transitive_include_targets_adds_escaping_target(self, tmp_path: Path) -> None:
         """TRANSITIVE_INCLUDE_TARGETS adds escaping symlink targets to manifest."""
@@ -469,11 +384,10 @@ class TestCollectManifestV2025SymlinkPolicies:
         manifest = collect_manifest(
             [root],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
         )
 
-        assert isinstance(manifest, AssetManifest2025)
+        assert isinstance(manifest, AbsSnapshotManifest)
         paths = {p.path for p in manifest.paths}
 
         # Symlink should be preserved
@@ -486,20 +400,19 @@ class TestCollectManifestV2025SymlinkPolicies:
 
 
 class TestCollectManifestDirectoryHandling:
-    """Tests for directory handling in v2025 manifests."""
+    """Tests for directory handling in manifests."""
 
     def test_empty_directory_included(self, tmp_path: Path) -> None:
-        """Empty directories are included in v2025 manifests."""
+        """Empty directories are included in manifests."""
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        assert isinstance(manifest, AssetManifest2025)
+        assert isinstance(manifest, AbsSnapshotManifest)
         dir_paths = {d.path for d in manifest.dirs}
         assert empty_dir.as_posix() in dir_paths
 
@@ -514,10 +427,9 @@ class TestCollectManifestDirectoryHandling:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        assert isinstance(manifest, AssetManifest2025)
+        assert isinstance(manifest, AbsSnapshotManifest)
         dir_paths = {d.path for d in manifest.dirs}
         assert level1.as_posix() in dir_paths
         assert level2.as_posix() in dir_paths
@@ -535,7 +447,6 @@ class TestCollectManifestDirectoryHandling:
         manifest = collect_manifest(
             [dir1, dir2],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         paths = {p.path for p in manifest.paths}
@@ -555,11 +466,10 @@ class TestCollectManifestMetadata:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        entry = manifest.paths[0]
-        assert entry.size == len(content)
+        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        assert file_entries[0].size == len(content)
 
     def test_mtime_captured(self, tmp_path: Path) -> None:
         """File mtime is captured correctly."""
@@ -571,11 +481,10 @@ class TestCollectManifestMetadata:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        entry = manifest.paths[0]
-        assert entry.mtime == expected_mtime
+        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        assert file_entries[0].mtime == expected_mtime
 
     def test_hash_is_empty_string(self, tmp_path: Path) -> None:
         """Hash is set to empty string (to be filled by hash_manifest)."""
@@ -585,11 +494,10 @@ class TestCollectManifestMetadata:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        entry = manifest.paths[0]
-        assert entry.hash == ""
+        file_entries = [p for p in manifest.paths if "file.txt" in p.path]
+        assert file_entries[0].hash == ""
 
     @pytest.mark.skipif(os.name == "nt", reason="Execute bit not meaningful on Windows")
     def test_runnable_flag_captured(self, tmp_path: Path) -> None:
@@ -601,11 +509,10 @@ class TestCollectManifestMetadata:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
-        entry = manifest.paths[0]
-        assert entry.runnable is True
+        file_entries = [p for p in manifest.paths if "script.sh" in p.path]
+        assert file_entries[0].runnable is True
 
     def test_total_size_calculated(self, tmp_path: Path) -> None:
         """Total size is sum of all file sizes."""
@@ -617,7 +524,6 @@ class TestCollectManifestMetadata:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         assert manifest.totalSize == 15
@@ -639,7 +545,6 @@ class TestCollectManifestFilenamesParameter:
         manifest = collect_manifest(
             [],
             [file1, file2],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         paths = {p.path for p in manifest.paths}
@@ -659,9 +564,499 @@ class TestCollectManifestFilenamesParameter:
         manifest = collect_manifest(
             [subdir],
             [extra_file],
-            version=ManifestVersion.v2025_12_04_beta,
         )
 
         paths = {p.path for p in manifest.paths}
         assert (subdir / "in_dir.txt").as_posix() in paths
         assert extra_file.as_posix() in paths
+
+
+class TestCollectManifestCollapseEscaping:
+    """Tests for COLLAPSE_ESCAPING symlink policy.
+
+    COLLAPSE_ESCAPING preserves symlinks whose targets are within the collected
+    paths, and collapses symlinks whose targets are outside (escaping symlinks).
+    """
+
+    def test_non_escaping_symlink_preserved(self, tmp_path: Path) -> None:
+        """Symlink to file within collected paths is preserved as symlink."""
+        target = tmp_path / "target.txt"
+        target.write_text("content")
+        link = tmp_path / "link.txt"
+        link.symlink_to("target.txt")
+
+        manifest = collect_manifest(
+            [tmp_path],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # Both should exist
+        assert target.as_posix() in paths_by_name
+        assert link.as_posix() in paths_by_name
+
+        # Link should be preserved as symlink (target is in collected set)
+        link_entry = paths_by_name[link.as_posix()]
+        assert link_entry.symlink_target == target.as_posix()
+
+    def test_escaping_file_symlink_collapsed(self, tmp_path: Path) -> None:
+        """Symlink to file outside collected paths is collapsed to file.
+
+        Structure:
+            tmp_path/
+                outside.txt     <- outside root (not collected)
+                root/
+                    link.txt    <- symlink to outside.txt (escaping, absolute path)
+        """
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside content")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        link = root / "link.txt"
+        link.symlink_to(outside)  # Absolute path symlink
+
+        manifest = collect_manifest(
+            [root],  # Only collect root, not outside.txt
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # Link should be collapsed (no symlink_target)
+        assert link.as_posix() in paths_by_name
+        link_entry = paths_by_name[link.as_posix()]
+        assert link_entry.symlink_target is None
+        assert link_entry.size == len("outside content")
+
+        # outside.txt should NOT be in manifest (it's outside collected paths)
+        assert outside.as_posix() not in paths_by_name
+
+    def test_escaping_dir_symlink_collapsed(self, tmp_path: Path) -> None:
+        """Symlink to directory outside collected paths is collapsed.
+
+        Structure:
+            tmp_path/
+                outside_dir/
+                    file.txt
+                root/
+                    link_dir    <- symlink to outside_dir (escaping, absolute path)
+        """
+        outside_dir = tmp_path / "outside_dir"
+        outside_dir.mkdir()
+        (outside_dir / "file.txt").write_text("content")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        link_dir = root / "link_dir"
+        link_dir.symlink_to(outside_dir)  # Absolute path symlink
+
+        manifest = collect_manifest(
+            [root],  # Only collect root
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths = {p.path for p in manifest.paths}
+        dir_paths = {d.path for d in manifest.dirs}
+
+        # The symlink dir should be collapsed - its contents appear under link_dir path
+        assert f"{link_dir.as_posix()}/file.txt" in paths
+
+        # The directory entry should exist
+        assert link_dir.as_posix() in dir_paths
+
+        # outside_dir should NOT be in manifest
+        assert outside_dir.as_posix() not in dir_paths
+        assert f"{outside_dir.as_posix()}/file.txt" not in paths
+
+    def test_mixed_escaping_and_non_escaping(self, tmp_path: Path) -> None:
+        """Mix of escaping and non-escaping symlinks handled correctly.
+
+        Structure:
+            tmp_path/
+                outside.txt         <- outside root
+                root/
+                    internal.txt    <- regular file
+                    link_internal   <- symlink to internal.txt (non-escaping)
+                    link_outside    <- symlink to outside.txt (escaping)
+        """
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        internal = root / "internal.txt"
+        internal.write_text("internal")
+        link_internal = root / "link_internal.txt"
+        link_internal.symlink_to("internal.txt")
+        link_outside = root / "link_outside.txt"
+        link_outside.symlink_to(outside)  # Absolute path to outside
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # Internal file should exist
+        assert internal.as_posix() in paths_by_name
+
+        # Non-escaping symlink should be preserved
+        assert link_internal.as_posix() in paths_by_name
+        assert paths_by_name[link_internal.as_posix()].symlink_target == internal.as_posix()
+
+        # Escaping symlink should be collapsed
+        assert link_outside.as_posix() in paths_by_name
+        assert paths_by_name[link_outside.as_posix()].symlink_target is None
+        assert paths_by_name[link_outside.as_posix()].size == len("outside")
+
+    def test_symlink_to_sibling_directory_preserved(self, tmp_path: Path) -> None:
+        """Symlink to sibling directory (both collected) is preserved.
+
+        Structure:
+            tmp_path/
+                dir1/
+                    file1.txt
+                dir2/
+                    link_to_dir1    <- symlink to ../dir1 (non-escaping)
+        """
+        dir1 = tmp_path / "dir1"
+        dir1.mkdir()
+        (dir1 / "file1.txt").write_text("content1")
+
+        dir2 = tmp_path / "dir2"
+        dir2.mkdir()
+        link_to_dir1 = dir2 / "link_to_dir1"
+        link_to_dir1.symlink_to(dir1)  # Absolute symlink
+
+        manifest = collect_manifest(
+            [dir1, dir2],  # Both directories collected
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # Symlink should be preserved (target dir1 is in collected set)
+        assert link_to_dir1.as_posix() in paths_by_name
+        assert paths_by_name[link_to_dir1.as_posix()].symlink_target == dir1.as_posix()
+
+    def test_symlink_chain_partial_escape(self, tmp_path: Path) -> None:
+        """Symlink chain where intermediate link is non-escaping but final target escapes.
+
+        Structure:
+            tmp_path/
+                outside.txt
+                root/
+                    link1.txt   <- symlink to link2.txt (non-escaping)
+                    link2.txt   <- symlink to ../outside.txt (escaping)
+
+        With COLLAPSE_ESCAPING:
+        - link1 points to link2 (which is in collected set) -> preserved
+        - link2 points to outside.txt (not in collected set) -> collapsed
+        """
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        link2 = root / "link2.txt"
+        link2.symlink_to(outside)  # Absolute path
+        link1 = root / "link1.txt"
+        link1.symlink_to("link2.txt")
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # link1 points to link2 which IS in collected set -> preserved as symlink
+        assert link1.as_posix() in paths_by_name
+        assert paths_by_name[link1.as_posix()].symlink_target == link2.as_posix()
+
+        # link2 points to outside which is NOT in collected set -> collapsed
+        assert link2.as_posix() in paths_by_name
+        assert paths_by_name[link2.as_posix()].symlink_target is None
+
+    def test_no_symlinks_works(self, tmp_path: Path) -> None:
+        """COLLAPSE_ESCAPING works correctly when there are no symlinks."""
+        (tmp_path / "file.txt").write_text("content")
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "nested.txt").write_text("nested")
+
+        manifest = collect_manifest(
+            [tmp_path],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths = {p.path for p in manifest.paths}
+        assert (tmp_path / "file.txt").as_posix() in paths
+        assert (subdir / "nested.txt").as_posix() in paths
+
+
+class TestCollectManifestCollapseEscapingChains:
+    """Tests for COLLAPSE_ESCAPING with symlink chains.
+
+    Legend:
+    - IN = path is inside the collected dataset
+    - OUT = path is outside the collected dataset (escaping)
+
+    For COLLAPSE_ESCAPING:
+    - Symlinks pointing to IN targets are preserved as symlinks
+    - Symlinks pointing to OUT targets are collapsed
+    """
+
+    def test_chain_in_in_file_in(self, tmp_path: Path) -> None:
+        """Chain: symlink [IN] -> symlink [IN] -> file [IN]
+
+        All symlinks point to targets within the collected set.
+        Both symlinks should be preserved.
+
+        Structure:
+            root/
+                file.txt        <- target file [IN]
+                link1.txt       <- symlink to file.txt [IN]
+                link2.txt       <- symlink to link1.txt [IN]
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        target_file = root / "file.txt"
+        target_file.write_text("content")
+        link1 = root / "link1.txt"
+        link1.symlink_to(target_file)
+        link2 = root / "link2.txt"
+        link2.symlink_to(link1)
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # All three should exist
+        assert target_file.as_posix() in paths_by_name
+        assert link1.as_posix() in paths_by_name
+        assert link2.as_posix() in paths_by_name
+
+        # Both symlinks should be preserved (targets are IN)
+        assert paths_by_name[link1.as_posix()].symlink_target == target_file.as_posix()
+        assert paths_by_name[link2.as_posix()].symlink_target == link1.as_posix()
+
+    def test_chain_in_in_dir_in(self, tmp_path: Path) -> None:
+        """Chain: symlink [IN] -> symlink [IN] -> directory [IN]
+
+        All symlinks point to targets within the collected set.
+        Both symlinks should be preserved.
+
+        Structure:
+            root/
+                subdir/
+                    file.txt
+                link1           <- symlink to subdir [IN]
+                link2           <- symlink to link1 [IN]
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        subdir = root / "subdir"
+        subdir.mkdir()
+        (subdir / "file.txt").write_text("content")
+        link1 = root / "link1"
+        link1.symlink_to(subdir)
+        link2 = root / "link2"
+        link2.symlink_to(link1)
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # Both symlinks should be preserved (targets are IN)
+        assert link1.as_posix() in paths_by_name
+        assert link2.as_posix() in paths_by_name
+        assert paths_by_name[link1.as_posix()].symlink_target == subdir.as_posix()
+        assert paths_by_name[link2.as_posix()].symlink_target == link1.as_posix()
+
+    def test_chain_in_in_file_out(self, tmp_path: Path) -> None:
+        """Chain: symlink [IN] -> symlink [IN] -> file [OUT]
+
+        link2 -> link1 -> outside_file
+        - link1 points to outside_file (OUT) -> collapsed
+        - link2 points to link1 (IN) -> preserved
+
+        Structure:
+            outside.txt         <- target file [OUT]
+            root/
+                link1.txt       <- symlink to outside.txt [OUT -> collapsed]
+                link2.txt       <- symlink to link1.txt [IN -> preserved]
+        """
+        outside_file = tmp_path / "outside.txt"
+        outside_file.write_text("outside content")
+        root = tmp_path / "root"
+        root.mkdir()
+        link1 = root / "link1.txt"
+        link1.symlink_to(outside_file)
+        link2 = root / "link2.txt"
+        link2.symlink_to(link1)
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # link1 points to OUT -> collapsed (no symlink_target)
+        assert link1.as_posix() in paths_by_name
+        assert paths_by_name[link1.as_posix()].symlink_target is None
+        assert paths_by_name[link1.as_posix()].size == len("outside content")
+
+        # link2 points to link1 (IN) -> preserved as symlink
+        assert link2.as_posix() in paths_by_name
+        assert paths_by_name[link2.as_posix()].symlink_target == link1.as_posix()
+
+    def test_chain_in_in_dir_out(self, tmp_path: Path) -> None:
+        """Chain: symlink [IN] -> symlink [IN] -> directory [OUT]
+
+        link2 -> link1 -> outside_dir
+        - link1 points to outside_dir (OUT) -> collapsed
+        - link2 points to link1 (IN) -> preserved
+
+        Structure:
+            outside_dir/
+                file.txt
+            root/
+                link1           <- symlink to outside_dir [OUT -> collapsed]
+                link2           <- symlink to link1 [IN -> preserved]
+        """
+        outside_dir = tmp_path / "outside_dir"
+        outside_dir.mkdir()
+        (outside_dir / "file.txt").write_text("content")
+        root = tmp_path / "root"
+        root.mkdir()
+        link1 = root / "link1"
+        link1.symlink_to(outside_dir)
+        link2 = root / "link2"
+        link2.symlink_to(link1)
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+        dir_paths = {d.path for d in manifest.dirs}
+
+        # link1 points to OUT dir -> collapsed (contents inlined)
+        assert link1.as_posix() in dir_paths
+        assert f"{link1.as_posix()}/file.txt" in paths_by_name
+
+        # link2 points to link1 (IN) -> preserved as symlink
+        assert link2.as_posix() in paths_by_name
+        assert paths_by_name[link2.as_posix()].symlink_target == link1.as_posix()
+
+    def test_chain_in_out_file_in(self, tmp_path: Path) -> None:
+        """Chain: symlink [IN] -> symlink [OUT] -> file [IN]
+
+        link2 -> outside_link -> target_file
+        - outside_link is OUT, so link2 (pointing to it) is collapsed
+        - target_file is IN and collected normally
+
+        Structure:
+            outside_link.txt    <- symlink to root/file.txt [OUT]
+            root/
+                file.txt        <- target file [IN]
+                link2.txt       <- symlink to outside_link.txt [OUT -> collapsed]
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        target_file = root / "file.txt"
+        target_file.write_text("content")
+        outside_link = tmp_path / "outside_link.txt"
+        outside_link.symlink_to(target_file)
+        link2 = root / "link2.txt"
+        link2.symlink_to(outside_link)
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+
+        # target_file is IN -> collected normally
+        assert target_file.as_posix() in paths_by_name
+        assert paths_by_name[target_file.as_posix()].symlink_target is None
+
+        # link2 points to outside_link (OUT) -> collapsed
+        # When collapsed, it follows the symlink chain to get the actual content
+        assert link2.as_posix() in paths_by_name
+        assert paths_by_name[link2.as_posix()].symlink_target is None
+        assert paths_by_name[link2.as_posix()].size == len("content")
+
+        # outside_link should NOT be in manifest
+        assert outside_link.as_posix() not in paths_by_name
+
+    def test_chain_in_out_dir_in(self, tmp_path: Path) -> None:
+        """Chain: symlink [IN] -> symlink [OUT] -> directory [IN]
+
+        link2 -> outside_link -> subdir
+        - outside_link is OUT, so link2 (pointing to it) is collapsed
+        - subdir is IN and collected normally
+
+        Structure:
+            outside_link        <- symlink to root/subdir [OUT]
+            root/
+                subdir/
+                    file.txt
+                link2           <- symlink to outside_link [OUT -> collapsed]
+        """
+        root = tmp_path / "root"
+        root.mkdir()
+        subdir = root / "subdir"
+        subdir.mkdir()
+        (subdir / "file.txt").write_text("content")
+        outside_link = tmp_path / "outside_link"
+        outside_link.symlink_to(subdir)
+        link2 = root / "link2"
+        link2.symlink_to(outside_link)
+
+        manifest = collect_manifest(
+            [root],
+            [],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+
+        paths_by_name = {p.path: p for p in manifest.paths}
+        dir_paths = {d.path for d in manifest.dirs}
+
+        # subdir is IN -> collected normally
+        assert subdir.as_posix() in dir_paths
+        assert f"{subdir.as_posix()}/file.txt" in paths_by_name
+
+        # link2 points to outside_link (OUT) -> collapsed
+        # Contents should be inlined under link2 path
+        assert link2.as_posix() in dir_paths
+        assert f"{link2.as_posix()}/file.txt" in paths_by_name
+
+        # outside_link should NOT be in manifest
+        assert outside_link.as_posix() not in paths_by_name
+        assert outside_link.as_posix() not in dir_paths

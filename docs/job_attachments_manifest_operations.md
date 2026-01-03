@@ -144,6 +144,19 @@ This section tracks progress on unifying the in-memory manifest representation.
 
 **After:** There is one memory manifest format (unversioned, matches the current v2025 memory format), and there are two on-disk manifest formats.
 
+### Design Principles
+
+1. **All composable operations use v2025 structure and semantics internally.** Operations work with the unified manifest classes (`AbsSnapshotManifest`, `RelSnapshotManifest`, etc.) which support all v2025 features: symlinks, directories, deletions, chunked hashes, and runnable flags.
+
+2. **v2023 on-disk format support via lossy conversion.** When serializing to v2023 format, a conversion function drops v2025-only features:
+   - Symlink entries are dropped (or collapsed to files)
+   - Directory entries are dropped
+   - Deletion markers are dropped
+   - Chunked hashes are not supported (large files fail)
+   - Runnable flags are dropped
+
+3. **Operations no longer accept a `version` parameter.** Since all operations use v2025 semantics internally, there's no need to specify a version. The version only matters at serialization time (encode/decode).
+
 ### Constraint
 
 We must maintain backwards compatibility on all `Base*` classes and the v2023 interface.
@@ -227,7 +240,7 @@ Operations are refactored in waves. Each wave contains operations that have no u
 
 | Wave | Operation | Impl Depends On | Test Depends On | Status |
 |------|-----------|-----------------|-----------------|--------|
-| 1 | COLLECT | - | - | ☐ Not started |
+| 1 | COLLECT | - | - | ✓ Done |
 | 1 | FILTER | - | - | ☐ Not started |
 | 1 | JOIN | - | - | ☐ Not started |
 | 1 | COMPOSE | - | - | ☐ Not started |
@@ -351,39 +364,35 @@ def collect_manifest(
     filenames: List[Path | str],
     *,
     optional_filenames: Optional[List[Path | str]] = None,
-    version: ManifestVersion,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> AbsSnapshotManifest:
 ```
 
 **Parameters:**
 
 | Parameter | Description |
 |-----------|-------------|
-| `directories` | (positional) List of directory paths whose full contents are collected. All paths must exist and be directories. Empty directories are included in the manifest (v2025 only). |
+| `directories` | (positional) List of directory paths whose full contents are collected. All paths must exist and be directories. Empty directories are included in the manifest. |
 | `filenames` | (positional) List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
 | `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
-| `version` | Manifest version to create (determines features) |
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
 | `print_function_callback` | Progress callback for status messages |
 
 **Symlink Policy Options (for `collect_manifest`):**
 
-| Policy | Description | v2023 Support |
-|--------|-------------|---------------|
-| `PRESERVE` | Keep all symlinks as symlink entries with absolute targets. (default) | ✗ (v2025 only) |
-| `COLLAPSE` | Follow all symlinks, treating them as files/directories. | ✓ |
-| `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. | ✗ (v2025 only) |
-| `EXCLUDE` | Skip all symlinks entirely. | ✓ |
-
-**Note:** `COLLAPSE_ESCAPING` is not supported by `collect_manifest` because there is no root path to determine what "escaping" means.
+| Policy | Description |
+|--------|-------------|
+| `PRESERVE` | Keep all symlinks as symlink entries with absolute targets. (default) |
+| `COLLAPSE` | Follow all symlinks, treating them as files/directories. |
+| `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. |
+| `EXCLUDE` | Skip all symlinks entirely. |
+| `COLLAPSE_ESCAPING` | Preserve symlinks whose targets are within the collected paths; collapse symlinks whose targets are outside (escaping symlinks) to files/directories. |
 
 **Validation Rules:**
 
 | Condition | Behavior |
 |-----------|----------|
-| `symlink_policy=COLLAPSE_ESCAPING` | Raises `ValueError` |
 | File in `filenames` does not exist | Raises `FileNotFoundError` |
 | File in `optional_filenames` does not exist | Silently ignored |
 | Directory in `directories` does not exist | Raises `FileNotFoundError` |
@@ -395,6 +404,7 @@ def collect_manifest(
 - Files have `hash=""` (empty string) to indicate hashing is needed
 - Symlinks have `symlink_target` set as absolute paths (no hash needed)
 - All paths in the manifest are absolute
+- Directories are included in the manifest
 - Useful for intermediate in-memory processing or collecting from multiple locations
 
 **Example - Collecting from multiple directories:**
@@ -403,14 +413,13 @@ def collect_manifest(
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion, SymlinkPolicy
+from deadline.job_attachments.asset_manifests.versions import SymlinkPolicy
 
 # Collect files from different locations using absolute paths (default: PRESERVE symlinks)
 manifest = collect_manifest(
     ["/data/shared/models", "/data/shared/textures"],  # directories (positional)
     ["/home/user/project/scene.blend"],                 # filenames (positional)
     optional_filenames=["/home/user/project/cache.bin"],  # Included if exists
-    version=ManifestVersion.v2025_12_04_beta,
 )
 
 # Paths in manifest are absolute
@@ -424,13 +433,11 @@ for entry in manifest.paths[:2]:
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 
 # Collect with symlinks preserved (default behavior)
 manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames (empty list)
-    version=ManifestVersion.v2025_12_04_beta,
 )
 
 # Symlinks have absolute targets
@@ -443,7 +450,7 @@ for entry in manifest.paths:
 **Helper functions:**
 
 - `_create_unhashed_file_entry()` - Creates file entry with `hash=""` and metadata
-- `_create_symlink_entry()` - Creates symlink entry with validated target
+- `_handle_symlink()` - Handles symlink according to policy
 
 ### 2. HASH: `hash_manifest()`
 

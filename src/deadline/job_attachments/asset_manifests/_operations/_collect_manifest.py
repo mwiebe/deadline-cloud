@@ -4,7 +4,7 @@
 Module for collecting directory structure into manifest objects WITHOUT computing hashes.
 
 This module implements the COLLECT operation from the composable manifest operations design:
-    COLLECT: Paths → Manifest (with hash="" for files, absolute paths)
+    COLLECT: Paths → AbsSnapshotManifest (with hash="" for files, absolute paths)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
@@ -12,6 +12,10 @@ The separation of collection from hashing enables:
 - Deferred hashing - collect structure first, hash only what's needed
 - Remove redundant reads - Can read file to memory, then hash + upload instead of
   separate reads for hash and upload.
+
+All composable operations use v2025 structure and semantics internally. Support for
+v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
+deletions, and other v2025-only features.
 """
 
 from __future__ import annotations
@@ -21,18 +25,9 @@ from pathlib import Path
 import stat
 from typing import Any, Callable, List, Optional, Set
 
-from ..base_manifest import BaseAssetManifest
 from ..hash_algorithms import HashAlgorithm
-from ..versions import ManifestType, ManifestVersion, SymlinkPolicy
-from ..v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
-)
-from ..v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
+from ..manifest import AbsSnapshotManifest, ManifestDirectoryPath, ManifestFilePath
+from ..versions import SymlinkPolicy
 
 
 def collect_manifest(
@@ -40,10 +35,9 @@ def collect_manifest(
     filenames: List[Path | str],
     *,
     optional_filenames: Optional[List[Path | str]] = None,
-    version: ManifestVersion,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> AbsSnapshotManifest:
     """
     Collect provided lists of paths into a manifest with absolute paths.
 
@@ -51,52 +45,40 @@ def collect_manifest(
     1. Collects the specified directories and filenames
     2. Captures metadata (mtime, size, permissions)
     3. Sets hash="" (empty string) for all file entries
-    4. Returns a manifest with absolute paths
+    4. Returns an AbsSnapshotManifest with absolute paths
 
     Args:
         directories: List of directory paths whose full contents are collected.
             All paths must exist and be directories. Empty directories are
-            included in the manifest (v2025 only).
+            included in the manifest.
         filenames: List of file/symlink paths that must exist. Raises an
             exception if any file from this list does not exist on the filesystem.
         optional_filenames: List of file/symlink paths to include if they exist.
             Missing files are silently ignored.
-        version: Manifest version to create (determines features)
         symlink_policy: How to handle symlinks during collection:
             - COLLAPSE: Follow all symlinks, treating them as files/directories.
-            - PRESERVE: Keep all symlinks with absolute targets. (v2025 only, default)
-            - TRANSITIVE_INCLUDE_TARGETS: Keep symlinks and add their targets. (v2025 only)
+            - PRESERVE: Keep all symlinks with absolute targets. (default)
+            - TRANSITIVE_INCLUDE_TARGETS: Keep symlinks and add their targets.
             - EXCLUDE: Skip all symlinks entirely.
-            Note: COLLAPSE_ESCAPING is not supported (no root to escape from).
+            - COLLAPSE_ESCAPING: Preserve symlinks whose targets are within the
+              collected paths; collapse symlinks whose targets are outside
+              (escaping symlinks) to files/directories.
         print_function_callback: Progress callback
 
     Returns:
-        A manifest with absolute paths and hash="" for files
+        An AbsSnapshotManifest with absolute paths and hash="" for files
 
     Raises:
-        ValueError: If symlink_policy is COLLAPSE_ESCAPING (not supported without root).
-        ValueError: If v2023 version is used with symlink_policy other than
-            COLLAPSE or EXCLUDE.
         FileNotFoundError: If any directory does not exist.
         FileNotFoundError: If any file in filenames does not exist.
         ValueError: If any path in directories is not a directory.
         ValueError: If any path in filenames is not a file or symlink.
 
     Note:
-        - For v2023-03-03: Only COLLAPSE and EXCLUDE policies are supported.
-        - For v2025-12-04-beta: COLLAPSE, PRESERVE, TRANSITIVE_INCLUDE_TARGETS,
-          and EXCLUDE are supported.
         - Use hash_manifest() to fill in file hashes
+        - All composable operations use v2025 structure internally
+        - For v2023 on-disk format, use lossy conversion after processing
     """
-
-    # COLLAPSE_ESCAPING requires a root path to determine what "escaping" means
-    if symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
-        raise ValueError(
-            "symlink_policy=COLLAPSE_ESCAPING is not supported by collect_manifest() "
-            "because there is no root path to escape from. Use COLLAPSE, PRESERVE, "
-            "TRANSITIVE_INCLUDE_TARGETS, or EXCLUDE instead."
-        )
-
     # Validate and normalize input paths
     validated_directories: List[Path] = []
     validated_filenames: List[Path] = []
@@ -125,29 +107,13 @@ def collect_manifest(
             if abs_path.exists() and (abs_path.is_file() or abs_path.is_symlink()):
                 validated_optional.append(abs_path)
 
-    # Dispatch to version-specific implementation
-    if version == ManifestVersion.v2023_03_03:
-        return _collect_manifest_v2023(
-            root_path=None,
-            print_function_callback=print_function_callback,
-            absolute_paths=True,
-            symlink_policy=symlink_policy,
-            filenames=validated_filenames,
-            optional_filenames=validated_optional,
-            directories=validated_directories,
-        )
-    elif version == ManifestVersion.v2025_12_04_beta:
-        return _collect_manifest_v2025(
-            root_path=None,
-            print_function_callback=print_function_callback,
-            absolute_paths=True,
-            symlink_policy=symlink_policy,
-            filenames=validated_filenames,
-            optional_filenames=validated_optional,
-            directories=validated_directories,
-        )
-    else:
-        raise ValueError(f"Unsupported manifest version: {version}")
+    return _collect_manifest_impl(
+        print_function_callback=print_function_callback,
+        symlink_policy=symlink_policy,
+        filenames=validated_filenames,
+        optional_filenames=validated_optional,
+        directories=validated_directories,
+    )
 
 
 # =============================================================================
@@ -155,338 +121,86 @@ def collect_manifest(
 # =============================================================================
 
 
-def _collect_manifest_v2023(
-    root_path: Optional[Path],
+def _collect_manifest_impl(
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     *,
-    absolute_paths: bool = False,
-    symlink_policy: SymlinkPolicy,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     filenames: List[Path],
     optional_filenames: List[Path],
     directories: List[Path],
-) -> AssetManifest2023:
+) -> AbsSnapshotManifest:
+    """Collect files and directories into a manifest WITHOUT hashes.
+
+    For COLLAPSE_ESCAPING policy, this uses a two-pass approach:
+    1. First pass: Collect all non-symlink paths to build the "collected set"
+    2. Second pass: Process symlinks - preserve if target is in collected set,
+       collapse if target is outside (escaping)
     """
-    Collect files into a v2023-03-03 manifest WITHOUT hashes.
-
-    This function:
-    1. Collects specified files and walks specified directories
-    2. Collects regular files (symlinks are handled according to symlink_policy)
-    3. Captures metadata (mtime, size)
-    4. Sets hash="" for all file entries (to be filled by _hash_manifest)
-
-    Note: v2023 format does not support symlink entries. Only COLLAPSE and EXCLUDE
-    policies are allowed. COLLAPSE follows symlinks during directory walk (so symlink
-    targets are collected as files), EXCLUDE skips symlinks entirely.
-
-    Args:
-        root_path: Root directory path (for relative path calculation). Can be None
-            if absolute_paths=True.
-        print_function_callback: Progress callback
-        absolute_paths: If True, store absolute paths
-        symlink_policy: Required. Must be COLLAPSE or EXCLUDE.
-        filenames: List of required file paths (already validated)
-        optional_filenames: List of optional file paths (already validated/filtered)
-        directories: List of directory paths to walk (already validated)
-
-    Raises:
-        ValueError: If symlink_policy is not COLLAPSE or EXCLUDE.
-    """
-    # v2023 only supports COLLAPSE and EXCLUDE - both result in no symlinks in manifest
-    if symlink_policy not in (SymlinkPolicy.COLLAPSE, SymlinkPolicy.EXCLUDE):
-        raise ValueError(
-            f"v2023-03-03 manifest format only supports symlink_policy COLLAPSE or EXCLUDE, "
-            f"got {symlink_policy.value}. Other policies require symlink entries which v2023 "
-            "cannot represent."
-        )
-
-    # COLLAPSE means follow symlinks during walk, EXCLUDE means skip them
+    file_entries: List[ManifestFilePath] = []
+    dir_entries: List[ManifestDirectoryPath] = []
+    total_size = 0
     followlinks = symlink_policy == SymlinkPolicy.COLLAPSE
-
-    file_entries: List[ManifestPath2023] = []
-    total_size = 0
     collected_paths: Set[str] = set()
-
-    # On Windows, directory symlinks may appear in filenames instead of being followed
-    # by os.walk. Track them for manual walking.
-    # Each entry is (symlink_path_relative_to_root, target_absolute_path)
-    dir_symlinks_to_walk: List[tuple[str, Path]] = []
-
-    # Helper to collect a single file
-    def collect_file(full_path: Path) -> None:
-        nonlocal total_size
-
-        # Handle symlinks according to policy
-        if full_path.is_symlink():
-            if symlink_policy == SymlinkPolicy.EXCLUDE:
-                print_function_callback(f"Excluding symlink: {full_path}")
-                return
-            # COLLAPSE mode: check if it's a directory symlink
-            if _symlink_target_is_directory(full_path):
-                # Directory symlink - skip for individual file collection
-                return
-            # File symlink - fall through to collect as a file
-
-        # Skip if not a regular file (after following symlinks if COLLAPSE)
-        if not full_path.is_file():
-            return
-
-        if absolute_paths:
-            entry_path = full_path.absolute().as_posix()
-        else:
-            assert root_path is not None
-            entry_path = full_path.relative_to(root_path).as_posix()
-
-        if entry_path in collected_paths:
-            return
-        collected_paths.add(entry_path)
-
-        try:
-            stat_info = full_path.stat()
-        except OSError as e:
-            print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
-            return
-
-        file_size = stat_info.st_size
-        mtime_us = stat_info.st_mtime_ns // 1000  # nanoseconds to microseconds
-
-        file_entries.append(
-            ManifestPath2023(
-                path=entry_path,
-                hash="",  # Empty string - to be filled by hash_manifest()
-                size=file_size,
-                mtime=mtime_us,
-            )
-        )
-        total_size += file_size
-        print_function_callback(f"Collected: {entry_path}")
-
-    # Collect required and optional files
-    for full_path in filenames:
-        collect_file(full_path)
-
-    for full_path in optional_filenames:
-        collect_file(full_path)
-
-    # Walk directories
-    for dir_path in directories:
-        for dirpath, _, walk_filenames in os.walk(dir_path, followlinks=followlinks):
-            for name in walk_filenames:
-                full_path = Path(dirpath) / name
-
-                # Handle symlinks according to policy
-                if full_path.is_symlink():
-                    if symlink_policy == SymlinkPolicy.EXCLUDE:
-                        print_function_callback(f"Excluding symlink: {full_path}")
-                        continue
-                    # COLLAPSE mode: check if it's a directory symlink (Windows edge case)
-                    if _symlink_target_is_directory(full_path):
-                        # Directory symlink appeared in filenames (Windows behavior)
-                        # Queue it for manual walking
-                        if absolute_paths:
-                            rel_path = full_path.absolute().as_posix()
-                        else:
-                            assert root_path is not None
-                            rel_path = full_path.relative_to(root_path).as_posix()
-                        target = _get_symlink_absolute_target(full_path)
-                        dir_symlinks_to_walk.append((rel_path, target))
-                        continue
-                    # File symlink - fall through to collect as a file
-
-                collect_file(full_path)
-
-    # Walk directory symlinks that appeared in filenames (Windows edge case)
-    for symlink_rel_path, target_abs_path in dir_symlinks_to_walk:
-        entries, size = _collect_dir_symlink_v2023(
-            symlink_rel_path=symlink_rel_path,
-            target_abs_path=target_abs_path,
-            absolute_paths=absolute_paths,
-            root_path=root_path,
-            print_function_callback=print_function_callback,
-        )
-        for entry in entries:
-            if entry.path not in collected_paths:
-                file_entries.append(entry)
-                collected_paths.add(entry.path)
-                total_size += entry.size or 0
-
-    return AssetManifest2023(
-        hash_alg=HashAlgorithm.XXH128,
-        paths=file_entries,
-        total_size=total_size,
-    )
-
-
-def _collect_dir_symlink_v2023(
-    symlink_rel_path: str,
-    target_abs_path: Path,
-    absolute_paths: bool,
-    root_path: Optional[Path],
-    print_function_callback: Callable[[Any], None],
-) -> tuple[List[ManifestPath2023], int]:
-    """
-    Collect contents of a directory symlink for v2023 COLLAPSE mode.
-
-    This handles the Windows edge case where directory symlinks appear in
-    os.walk's filenames list instead of being followed automatically.
-
-    Args:
-        symlink_rel_path: Relative path of the symlink from root (e.g., "link_dir")
-        target_abs_path: Absolute path to the symlink target directory
-        absolute_paths: Whether to use absolute paths in manifest
-        root_path: Root directory path of the manifest (can be None if absolute_paths=True)
-        print_function_callback: Progress callback
-
-    Returns:
-        Tuple of (file_entries, total_size)
-    """
-    file_entries: List[ManifestPath2023] = []
-    total_size = 0
-
-    if not target_abs_path.exists() or not target_abs_path.is_dir():
-        print_function_callback(f"Skipping broken or non-directory symlink: {symlink_rel_path}")
-        return (file_entries, total_size)
-
-    # Walk the target directory with followlinks=True to continue following symlinks
-    for dirpath, _, filenames in os.walk(target_abs_path, followlinks=True):
-        # Calculate the relative path within the target
-        rel_within_target = Path(dirpath).relative_to(target_abs_path)
-
-        for name in filenames:
-            full_path = Path(dirpath) / name
-
-            # Skip if not a regular file
-            if not full_path.is_file():
-                continue
-
-            # Build manifest path
-            if rel_within_target == Path("."):
-                manifest_file_rel = f"{symlink_rel_path}/{name}"
-            else:
-                manifest_file_rel = f"{symlink_rel_path}/{rel_within_target.as_posix()}/{name}"
-
-            if absolute_paths:
-                assert root_path is not None  # For absolute_paths with symlink, we need root
-                entry_path = (root_path / manifest_file_rel).as_posix()
-            else:
-                entry_path = manifest_file_rel
-
-            try:
-                stat_info = full_path.stat()
-            except OSError as e:
-                print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
-                continue
-
-            file_size = stat_info.st_size
-            mtime_us = stat_info.st_mtime_ns // 1000
-
-            file_entries.append(
-                ManifestPath2023(
-                    path=entry_path,
-                    hash="",
-                    size=file_size,
-                    mtime=mtime_us,
-                )
-            )
-            total_size += file_size
-            print_function_callback(f"Collected: {entry_path}")
-
-    return (file_entries, total_size)
-
-
-def _collect_manifest_v2025(
-    root_path: Optional[Path],
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
-    *,
-    absolute_paths: bool = False,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    filenames: List[Path],
-    optional_filenames: List[Path],
-    directories: List[Path],
-) -> AssetManifest2025:
-    """
-    Collect files and directories into a v2025-12-04-beta manifest WITHOUT hashes.
-
-    This function:
-    1. Collects specified files and walks specified directories
-    2. Collects files, symlinks, and directories
-    3. Captures metadata (mtime, size, permissions)
-    4. Sets hash="" for all file entries (to be filled by _hash_manifest)
-    5. Handles symlinks according to symlink_policy
-
-    Note: Does NOT compute file hashes. Use hash_manifest() to fill in hashes.
-
-    Args:
-        root_path: Root directory path (for relative path calculation). Can be None
-            if absolute_paths=True.
-        print_function_callback: Progress callback
-        absolute_paths: If True, store absolute paths
-        symlink_policy: How to handle symlinks during collection
-        filenames: List of required file paths (already validated)
-        optional_filenames: List of optional file paths (already validated/filtered)
-        directories: List of directory paths to walk (already validated)
-    """
-    file_entries: List[ManifestFilePath2025] = []
-    dir_entries: List[ManifestDirectoryPath2025] = []
-    total_size = 0
-
-    # For COLLAPSE policy, follow all symlinks during walk
-    followlinks = symlink_policy == SymlinkPolicy.COLLAPSE
-
-    # Track paths we've already collected (for TRANSITIVE_INCLUDE_TARGETS)
-    collected_paths: Set[str] = set()
-
-    # Paths to collect transitively (symlink targets outside root)
     transitive_targets: List[Path] = []
 
-    # Escaping directory symlinks to manually walk (for COLLAPSE_ESCAPING)
-    # Each entry is (symlink_path_relative_to_root, target_absolute_path)
+    # For COLLAPSE_ESCAPING, we need to track symlinks for deferred processing
+    deferred_symlinks: List[tuple[Path, str, bool]] = []  # (full_path, entry_path, is_dir)
     escaping_dir_symlinks: List[tuple[str, Path]] = []
 
-    # Helper to collect a single file
-    def collect_file(full_path: Path) -> None:
-        nonlocal total_size
+    def is_path_in_collected_set(target_path: Path) -> bool:
+        """Check if a path or any of its parents is in the collected set."""
+        target_posix = target_path.as_posix()
+        # Direct match
+        if target_posix in collected_paths:
+            return True
+        # Check if target is under any collected directory
+        for collected in collected_paths:
+            if target_posix.startswith(collected + "/"):
+                return True
+        return False
 
+    def collect_file(full_path: Path, defer_symlinks: bool = False) -> None:
+        """Collect a single file entry."""
+        nonlocal total_size
         stat_info = full_path.stat(follow_symlinks=False)
-        if absolute_paths:
-            entry_path = full_path.absolute().as_posix()
-        else:
-            assert root_path is not None
-            entry_path = full_path.relative_to(root_path).as_posix()
+        entry_path = full_path.absolute().as_posix()
 
         if entry_path in collected_paths:
             return
 
         if stat.S_ISLNK(stat_info.st_mode):
-            # Handle symlink
-            symlink_target_is_dir = _symlink_target_is_directory(full_path)
-            result = _handle_symlink_v2025(
-                full_path=full_path,
-                root_path=root_path,
-                absolute_paths=absolute_paths,
-                symlink_policy=symlink_policy,
-                print_function_callback=print_function_callback,
-                is_directory=symlink_target_is_dir,
-            )
-            if result is not None:
-                entry, should_follow, transitive_target = result
-                if entry is not None:
-                    file_entries.append(entry)
-                    collected_paths.add(entry.path)
-                if transitive_target is not None:
-                    transitive_targets.append(transitive_target)
-                if should_follow and not symlink_target_is_dir:
-                    # For file symlinks with COLLAPSE, collect the target as a file
-                    try:
-                        target_stat = full_path.stat(follow_symlinks=True)
-                        file_entry = _create_unhashed_file_entry(full_path, entry_path, target_stat)
-                        file_entries.append(file_entry)
-                        collected_paths.add(entry_path)
-                        total_size += file_entry.size or 0
-                        print_function_callback(f"Collected (collapsed symlink): {entry_path}")
-                    except OSError as e:
-                        print_function_callback(f"Skipping broken symlink {entry_path}: {e}")
+            if defer_symlinks:
+                # For COLLAPSE_ESCAPING, defer symlink processing
+                symlink_target_is_dir = _symlink_target_is_directory(full_path)
+                deferred_symlinks.append((full_path, entry_path, symlink_target_is_dir))
+            else:
+                symlink_target_is_dir = _symlink_target_is_directory(full_path)
+                result = _handle_symlink(
+                    full_path=full_path,
+                    symlink_policy=symlink_policy,
+                    print_function_callback=print_function_callback,
+                    is_directory=symlink_target_is_dir,
+                )
+                if result is not None:
+                    entry, should_follow, transitive_target = result
+                    if entry is not None:
+                        file_entries.append(entry)
+                        collected_paths.add(entry.path)
+                    if transitive_target is not None:
+                        transitive_targets.append(transitive_target)
+                    if should_follow and not symlink_target_is_dir:
+                        try:
+                            target_stat = full_path.stat(follow_symlinks=True)
+                            file_entry = _create_unhashed_file_entry(
+                                full_path, entry_path, target_stat
+                            )
+                            file_entries.append(file_entry)
+                            collected_paths.add(entry_path)
+                            total_size += file_entry.size or 0
+                            print_function_callback(f"Collected (collapsed symlink): {entry_path}")
+                        except OSError as e:
+                            print_function_callback(f"Skipping broken symlink {entry_path}: {e}")
         else:
-            # Regular file
             try:
                 entry = _create_unhashed_file_entry(full_path, entry_path, stat_info)
                 file_entries.append(entry)
@@ -496,151 +210,149 @@ def _collect_manifest_v2025(
             except OSError as e:
                 print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
 
-    # Collect required and optional files
+    def process_deferred_symlink(
+        full_path: Path, entry_path: str, is_directory: bool
+    ) -> None:
+        """Process a deferred symlink for COLLAPSE_ESCAPING policy."""
+        nonlocal total_size
+
+        if entry_path in collected_paths:
+            return
+
+        target = _get_symlink_absolute_target(full_path)
+        target_in_set = is_path_in_collected_set(target)
+
+        if target_in_set:
+            # Target is within collected paths - preserve as symlink
+            entry = ManifestFilePath(
+                path=entry_path,
+                symlink_target=target.as_posix(),
+            )
+            file_entries.append(entry)
+            collected_paths.add(entry_path)
+            kind = "symlink dir" if is_directory else "symlink"
+            print_function_callback(f"Collected {kind} (non-escaping): {entry_path}")
+        else:
+            # Target is outside collected paths - collapse
+            if is_directory:
+                # Queue for directory symlink collection
+                escaping_dir_symlinks.append((entry_path, target))
+                print_function_callback(f"Collapsing escaping dir symlink: {entry_path}")
+            else:
+                # Collapse file symlink
+                try:
+                    target_stat = full_path.stat(follow_symlinks=True)
+                    file_entry = _create_unhashed_file_entry(full_path, entry_path, target_stat)
+                    file_entries.append(file_entry)
+                    collected_paths.add(entry_path)
+                    total_size += file_entry.size or 0
+                    print_function_callback(f"Collected (collapsed escaping symlink): {entry_path}")
+                except OSError as e:
+                    print_function_callback(f"Skipping broken symlink {entry_path}: {e}")
+
+    # Determine if we need two-pass processing
+    use_two_pass = symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING
+
+    # =========================================================================
+    # Pass 1: Collect all paths (defer symlinks for COLLAPSE_ESCAPING)
+    # =========================================================================
+
     for full_path in filenames:
-        collect_file(full_path)
-
+        collect_file(full_path, defer_symlinks=use_two_pass)
     for full_path in optional_filenames:
-        collect_file(full_path)
+        collect_file(full_path, defer_symlinks=use_two_pass)
 
-    # Walk directories
     for dir_to_walk in directories:
         for dirpath, dirnames, walk_filenames in os.walk(dir_to_walk, followlinks=followlinks):
             current_dir = Path(dirpath)
+            dir_path = current_dir.absolute().as_posix()
+            if dir_path not in collected_paths:
+                dir_entries.append(ManifestDirectoryPath(path=dir_path))
+                collected_paths.add(dir_path)
+                print_function_callback(f"Collected dir: {dir_path}")
 
-            # Record directory (except the directory itself if it's the only one and equals root)
-            if root_path is not None:
-                try:
-                    rel_dir = current_dir.relative_to(root_path)
-                    if rel_dir != Path("."):
-                        if absolute_paths:
-                            dir_path = current_dir.absolute().as_posix()
-                        else:
-                            dir_path = rel_dir.as_posix()
-                        if dir_path not in collected_paths:
-                            dir_entries.append(ManifestDirectoryPath2025(path=dir_path))
-                            collected_paths.add(dir_path)
-                            print_function_callback(f"Collected dir: {dir_path}")
-                except ValueError:
-                    # Directory is not under root_path (shouldn't happen with validation)
-                    pass
-            else:
-                # absolute_paths mode without root
-                dir_path = current_dir.absolute().as_posix()
-                if dir_path not in collected_paths:
-                    dir_entries.append(ManifestDirectoryPath2025(path=dir_path))
-                    collected_paths.add(dir_path)
-                    print_function_callback(f"Collected dir: {dir_path}")
-
-            # Check for symlinks to directories (they appear in dirnames)
             for name in list(dirnames):
                 full_path = Path(dirpath) / name
                 if full_path.is_symlink():
-                    result = _handle_symlink_v2025(
-                        full_path=full_path,
-                        root_path=root_path,
-                        absolute_paths=absolute_paths,
-                        symlink_policy=symlink_policy,
-                        print_function_callback=print_function_callback,
-                        is_directory=True,
-                    )
-                    if result is not None:
-                        entry, should_follow, transitive_target = result
-                        if entry is not None:
-                            file_entries.append(entry)
-                            collected_paths.add(entry.path)
-                        if transitive_target is not None:
-                            transitive_targets.append(transitive_target)
-                        if should_follow:
-                            # For COLLAPSE mode, let os.walk follow the symlink
-                            if symlink_policy == SymlinkPolicy.COLLAPSE:
-                                pass  # Let os.walk handle it with followlinks=True
-                            elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
-                                # For COLLAPSE_ESCAPING, manually walk escaping dir symlinks
-                                if absolute_paths:
-                                    rel_path = full_path.absolute().as_posix()
+                    if use_two_pass:
+                        # Defer symlink processing, but don't follow it in os.walk
+                        entry_path = full_path.absolute().as_posix()
+                        deferred_symlinks.append((full_path, entry_path, True))
+                        dirnames.remove(name)
+                    else:
+                        result = _handle_symlink(
+                            full_path=full_path,
+                            symlink_policy=symlink_policy,
+                            print_function_callback=print_function_callback,
+                            is_directory=True,
+                        )
+                        if result is not None:
+                            entry, should_follow, transitive_target = result
+                            if entry is not None:
+                                file_entries.append(entry)
+                                collected_paths.add(entry.path)
+                            if transitive_target is not None:
+                                transitive_targets.append(transitive_target)
+                            if should_follow:
+                                if symlink_policy == SymlinkPolicy.COLLAPSE:
+                                    pass  # os.walk will follow it
                                 else:
-                                    assert root_path is not None
-                                    rel_path = full_path.relative_to(root_path).as_posix()
-                                target = _get_symlink_absolute_target(full_path)
-                                escaping_dir_symlinks.append((rel_path, target))
-                                dirnames.remove(name)
+                                    dirnames.remove(name)
                             else:
                                 dirnames.remove(name)
                         else:
                             dirnames.remove(name)
-                    else:
-                        dirnames.remove(name)
 
-            # Process files
             for name in walk_filenames:
                 full_path = Path(dirpath) / name
                 stat_info = full_path.stat(follow_symlinks=False)
-                if absolute_paths:
-                    entry_path = full_path.absolute().as_posix()
-                else:
-                    assert root_path is not None
-                    entry_path = full_path.relative_to(root_path).as_posix()
+                entry_path = full_path.absolute().as_posix()
 
                 if entry_path in collected_paths:
                     continue
 
                 if stat.S_ISLNK(stat_info.st_mode):
-                    symlink_target_is_dir = _symlink_target_is_directory(full_path)
-
-                    result = _handle_symlink_v2025(
-                        full_path=full_path,
-                        root_path=root_path,
-                        absolute_paths=absolute_paths,
-                        symlink_policy=symlink_policy,
-                        print_function_callback=print_function_callback,
-                        is_directory=symlink_target_is_dir,
-                    )
-                    if result is not None:
-                        entry, should_follow, transitive_target = result
-                        if entry is not None:
-                            file_entries.append(entry)
-                            collected_paths.add(entry.path)
-                        if transitive_target is not None:
-                            transitive_targets.append(transitive_target)
-                        if should_follow:
-                            if symlink_target_is_dir:
-                                # Directory symlink - need to manually walk it
-                                if symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
-                                    if absolute_paths:
+                    if use_two_pass:
+                        symlink_target_is_dir = _symlink_target_is_directory(full_path)
+                        deferred_symlinks.append((full_path, entry_path, symlink_target_is_dir))
+                    else:
+                        symlink_target_is_dir = _symlink_target_is_directory(full_path)
+                        result = _handle_symlink(
+                            full_path=full_path,
+                            symlink_policy=symlink_policy,
+                            print_function_callback=print_function_callback,
+                            is_directory=symlink_target_is_dir,
+                        )
+                        if result is not None:
+                            entry, should_follow, transitive_target = result
+                            if entry is not None:
+                                file_entries.append(entry)
+                                collected_paths.add(entry.path)
+                            if transitive_target is not None:
+                                transitive_targets.append(transitive_target)
+                            if should_follow:
+                                if symlink_target_is_dir:
+                                    if symlink_policy == SymlinkPolicy.COLLAPSE:
                                         rel_path = full_path.absolute().as_posix()
-                                    else:
-                                        assert root_path is not None
-                                        rel_path = full_path.relative_to(root_path).as_posix()
-                                    target = _get_symlink_absolute_target(full_path)
-                                    escaping_dir_symlinks.append((rel_path, target))
-                                elif symlink_policy == SymlinkPolicy.COLLAPSE:
-                                    if absolute_paths:
-                                        rel_path = full_path.absolute().as_posix()
-                                    else:
-                                        assert root_path is not None
-                                        rel_path = full_path.relative_to(root_path).as_posix()
-                                    target = _get_symlink_absolute_target(full_path)
-                                    escaping_dir_symlinks.append((rel_path, target))
-                            else:
-                                # For file symlinks with COLLAPSE, collect the target as a file
-                                try:
-                                    target_stat = full_path.stat(follow_symlinks=True)
-                                    file_entry = _create_unhashed_file_entry(
-                                        full_path, entry_path, target_stat
-                                    )
-                                    file_entries.append(file_entry)
-                                    collected_paths.add(entry_path)
-                                    total_size += file_entry.size or 0
-                                    print_function_callback(
-                                        f"Collected (collapsed symlink): {entry_path}"
-                                    )
-                                except OSError as e:
-                                    print_function_callback(
-                                        f"Skipping broken symlink {entry_path}: {e}"
-                                    )
+                                        target = _get_symlink_absolute_target(full_path)
+                                        escaping_dir_symlinks.append((rel_path, target))
+                                else:
+                                    try:
+                                        target_stat = full_path.stat(follow_symlinks=True)
+                                        file_entry = _create_unhashed_file_entry(
+                                            full_path, entry_path, target_stat
+                                        )
+                                        file_entries.append(file_entry)
+                                        collected_paths.add(entry_path)
+                                        total_size += file_entry.size or 0
+                                        print_function_callback(
+                                            f"Collected (collapsed symlink): {entry_path}"
+                                        )
+                                    except OSError as e:
+                                        print_function_callback(
+                                            f"Skipping broken symlink {entry_path}: {e}"
+                                        )
                 else:
-                    # Create file entry WITHOUT hash
                     try:
                         entry = _create_unhashed_file_entry(full_path, entry_path, stat_info)
                         file_entries.append(entry)
@@ -650,13 +362,22 @@ def _collect_manifest_v2025(
                     except OSError as e:
                         print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
 
-    # Handle escaping directory symlinks (for COLLAPSE_ESCAPING policy)
-    for symlink_rel_path, target_abs_path in escaping_dir_symlinks:
+    # =========================================================================
+    # Pass 2: Process deferred symlinks (COLLAPSE_ESCAPING only)
+    # =========================================================================
+
+    if use_two_pass:
+        for full_path, entry_path, is_dir in deferred_symlinks:
+            process_deferred_symlink(full_path, entry_path, is_dir)
+
+    # =========================================================================
+    # Post-processing: Handle escaping directory symlinks and transitive targets
+    # =========================================================================
+
+    for symlink_path, target_abs_path in escaping_dir_symlinks:
         entries, dirs, size = _collect_escaping_dir_symlink(
-            symlink_rel_path=symlink_rel_path,
+            symlink_path=symlink_path,
             target_abs_path=target_abs_path,
-            root_path=root_path,
-            absolute_paths=absolute_paths,
             collected_paths=collected_paths,
             print_function_callback=print_function_callback,
         )
@@ -664,7 +385,6 @@ def _collect_manifest_v2025(
         dir_entries.extend(dirs)
         total_size += size
 
-    # Handle transitive targets (for TRANSITIVE_INCLUDE_TARGETS policy)
     for target_path in transitive_targets:
         entries, dirs, size = _collect_transitive_target(
             target_path=target_path,
@@ -675,12 +395,11 @@ def _collect_manifest_v2025(
         dir_entries.extend(dirs)
         total_size += size
 
-    return AssetManifest2025(
+    return AbsSnapshotManifest(
         hash_alg=HashAlgorithm.XXH128,
         dirs=dir_entries,
         paths=file_entries,
         total_size=total_size,
-        manifest_type=ManifestType.SNAPSHOT,
     )
 
 
@@ -691,39 +410,18 @@ def _collect_manifest_v2025(
 
 def _create_unhashed_file_entry(
     full_path: Path,
-    rel_path: str,
+    entry_path: str,
     stat_info: Optional[os.stat_result] = None,
-) -> ManifestFilePath2025:
-    """
-    Create a ManifestFilePath entry for a regular file WITHOUT computing hash.
-
-    Sets hash="" (empty string) to indicate hash needs to be computed.
-    Captures mtime, size, and runnable (POSIX execute bit).
-
-    Args:
-        full_path: Absolute path to the file
-        rel_path: Relative path from root (for manifest entry)
-        stat_info: If the stat() of the path was already collected, provide it here to
-            avoid redundant retrieval.
-
-    Returns:
-        ManifestFilePath with hash="" and metadata populated
-
-    Raises:
-        OSError: If file cannot be accessed
-    """
+) -> ManifestFilePath:
+    """Create a ManifestFilePath entry for a regular file WITHOUT computing hash."""
     if stat_info is None:
         stat_info = full_path.stat()
-    file_size = stat_info.st_size
-    mtime_us = stat_info.st_mtime_ns // 1000  # microseconds
-    # Check if any execute bit is set (owner, group, or other)
     runnable = bool(stat_info.st_mode & 0o111)
-
-    return ManifestFilePath2025(
-        path=rel_path,
-        hash="",  # Empty string - to be filled by hash_manifest()
-        size=file_size,
-        mtime=mtime_us,
+    return ManifestFilePath(
+        path=entry_path,
+        hash="",
+        size=stat_info.st_size,
+        mtime=stat_info.st_mtime_ns // 1000,
         runnable=runnable if runnable else False,
     )
 
@@ -732,118 +430,18 @@ def _remove_longpath_prefix(path: Path) -> Path:
     """Returns a copy with '\\\\?\\' longpath prefix removed if the path has it."""
     if os.name == "nt" and path.parts[0].startswith("\\\\?\\"):
         return Path(path.parts[0][4:], *path.parts[1:])
-    else:
-        return path
-
-
-def _create_symlink_entry(
-    full_path: Path,
-    entry_path: str,
-    root_path: Path,
-    *,
-    absolute_paths: bool = False,
-) -> ManifestFilePath2025:
-    """
-    Create a ManifestFilePath entry for a symlink.
-
-    Args:
-        full_path: Absolute path to the symlink
-        entry_path: Path for the manifest entry (relative or absolute depending on mode)
-        root_path: Root directory path (for validation)
-        absolute_paths: If True, store absolute symlink target. If False, store
-            target relative to root_path. Note: original symlink relative paths cannot
-            be preserved because they are rooted at the symlink location, not at the
-            manifest root.
-
-    Returns:
-        ManifestFilePath with symlink_target set
-
-    Raises:
-        ValueError: If the symlink target is not a subpath of root_path
-    """
-    # Get the symlink target as an absolute path
-    target = full_path.parent / os.readlink(full_path)
-
-    # absolute() doesn't remove Windows "\\?" prefixes, remove them manually if needed
-    root_path_clean = _remove_longpath_prefix(root_path)
-    target_clean = _remove_longpath_prefix(target)
-
-    # Convert to absolute path and normalize it (collapse .. components) without
-    # resolving symlinks. We use os.path.normpath() to collapse .. while keeping
-    # symlink chains intact, unlike resolve() which would follow symlinks.
-    absolute_target = Path(os.path.normpath(target_clean.absolute()))
-    absolute_root = Path(os.path.normpath(root_path_clean.absolute()))
-
-    # Validate that the target is within root_path.
-    # This will raise a ValueError if target is not a subpath of root_path.
-    absolute_target.relative_to(absolute_root)
-
-    if absolute_paths:
-        # Store absolute path to the target
-        symlink_target = absolute_target.as_posix()
-    else:
-        # Store path relative to manifest root
-        symlink_target = absolute_target.relative_to(absolute_root).as_posix()
-
-    return ManifestFilePath2025(
-        path=entry_path,
-        symlink_target=symlink_target,
-    )
-
-
-def _is_symlink_within_root(full_path: Path, root_path: Path) -> bool:
-    """
-    Check if a symlink's target is within the root path.
-
-    Args:
-        full_path: Absolute path to the symlink
-        root_path: Root directory path
-
-    Returns:
-        True if the symlink target is within root_path, False otherwise
-    """
-    try:
-        target = full_path.parent / os.readlink(full_path)
-        root_path_clean = _remove_longpath_prefix(root_path)
-        target_clean = _remove_longpath_prefix(target)
-
-        absolute_target = Path(os.path.normpath(target_clean.absolute()))
-        absolute_root = Path(os.path.normpath(root_path_clean.absolute()))
-
-        absolute_target.relative_to(absolute_root)
-        return True
-    except ValueError:
-        return False
+    return path
 
 
 def _get_symlink_absolute_target(full_path: Path) -> Path:
-    """
-    Get the absolute path of a symlink's target without resolving symlink chains.
-
-    Args:
-        full_path: Absolute path to the symlink
-
-    Returns:
-        Absolute path to the symlink target (normalized but not resolved)
-    """
+    """Get the absolute path of a symlink's target without resolving symlink chains."""
     target = full_path.parent / os.readlink(full_path)
     target_clean = _remove_longpath_prefix(target)
     return Path(os.path.normpath(target_clean.absolute()))
 
 
 def _symlink_target_is_directory(full_path: Path) -> bool:
-    """
-    Check if a symlink's target is a directory.
-
-    This is needed because on Windows, directory symlinks may appear in
-    os.walk's filenames list rather than dirnames when followlinks=False.
-
-    Args:
-        full_path: Absolute path to the symlink
-
-    Returns:
-        True if the symlink target is a directory, False otherwise
-    """
+    """Check if a symlink's target is a directory."""
     try:
         target = full_path.parent / os.readlink(full_path)
         return target.is_dir()
@@ -851,83 +449,36 @@ def _symlink_target_is_directory(full_path: Path) -> bool:
         return False
 
 
-def _handle_symlink_v2025(
+def _handle_symlink(
     full_path: Path,
-    root_path: Optional[Path],
-    absolute_paths: bool,
     symlink_policy: SymlinkPolicy,
     print_function_callback: Callable[[Any], None],
     is_directory: bool,
-) -> Optional[tuple[Optional[ManifestFilePath2025], bool, Optional[Path]]]:
-    """
-    Handle a symlink according to the symlink policy.
-
-    Args:
-        full_path: Absolute path to the symlink
-        root_path: Root directory path (can be None if absolute_paths=True)
-        absolute_paths: Whether to use absolute paths in manifest
-        symlink_policy: The symlink handling policy
-        print_function_callback: Progress callback
-        is_directory: Whether the symlink points to a directory
+) -> Optional[tuple[Optional[ManifestFilePath], bool, Optional[Path]]]:
+    """Handle a symlink according to the symlink policy.
 
     Returns:
-        A tuple of (entry, should_follow, transitive_target) where:
-        - entry: The manifest entry to add (or None if no entry)
-        - should_follow: Whether os.walk should follow this symlink
-        - transitive_target: Path to collect transitively (for TRANSITIVE_INCLUDE_TARGETS)
-        Returns None if the symlink should be skipped entirely.
+        None if symlink should be skipped entirely.
+        Otherwise a tuple of:
+        - entry: ManifestFilePath to add (or None if no entry)
+        - should_follow: Whether to follow the symlink (for COLLAPSE)
+        - transitive_target: Path to add transitively (for TRANSITIVE_INCLUDE_TARGETS)
     """
-    if absolute_paths:
-        entry_path = full_path.absolute().as_posix()
-    else:
-        assert root_path is not None
-        entry_path = full_path.relative_to(root_path).as_posix()
-
-    # For policies that need to check if symlink is within root
-    is_within_root = False
-    if root_path is not None:
-        is_within_root = _is_symlink_within_root(full_path, root_path)
+    entry_path = full_path.absolute().as_posix()
 
     if symlink_policy == SymlinkPolicy.EXCLUDE:
         print_function_callback(f"Excluding symlink: {entry_path}")
         return None
 
     elif symlink_policy == SymlinkPolicy.COLLAPSE:
-        # Follow all symlinks - collect them as files/directories
         if is_directory:
             print_function_callback(f"Following symlink dir: {entry_path}")
-            return (None, True, None)  # Let os.walk follow it or caller will walk manually
-        else:
-            # File symlink - signal to caller to collect as a file
-            # Return should_follow=True to indicate the symlink should be followed
             return (None, True, None)
-
-    elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
-        if is_within_root and root_path is not None:
-            # Preserve as symlink entry
-            try:
-                entry = _create_symlink_entry(
-                    full_path, entry_path, root_path, absolute_paths=absolute_paths
-                )
-                kind = "symlink dir" if is_directory else "symlink"
-                print_function_callback(f"Collected {kind}: {entry_path}")
-                return (entry, False, None)
-            except ValueError as e:
-                print_function_callback(f"Skipping invalid symlink {entry_path}: {e}")
-                return None
-        else:
-            # Escaping symlink - follow it (collapse)
-            if is_directory:
-                print_function_callback(f"Following escaping symlink dir: {entry_path}")
-                return (None, True, None)
-            else:
-                # File symlink - will be collected as a file by caller
-                return (None, True, None)
+        return (None, True, None)
 
     elif symlink_policy == SymlinkPolicy.PRESERVE:
-        # Keep all symlinks (absolute_paths must be True, validated earlier)
         target = _get_symlink_absolute_target(full_path)
-        entry = ManifestFilePath2025(
+        entry = ManifestFilePath(
             path=entry_path,
             symlink_target=target.as_posix(),
         )
@@ -936,18 +487,20 @@ def _handle_symlink_v2025(
         return (entry, False, None)
 
     elif symlink_policy == SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS:
-        # Keep symlink and add target to manifest
         target = _get_symlink_absolute_target(full_path)
-        entry = ManifestFilePath2025(
+        entry = ManifestFilePath(
             path=entry_path,
             symlink_target=target.as_posix(),
         )
         kind = "symlink dir" if is_directory else "symlink"
         print_function_callback(f"Collected {kind}: {entry_path}")
+        return (entry, False, target)
 
-        # Only add transitive target if it's outside root (inside root is already collected)
-        transitive_target = None if is_within_root else target
-        return (entry, False, transitive_target)
+    elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
+        # This should not be called for COLLAPSE_ESCAPING - it uses two-pass
+        raise ValueError(
+            "COLLAPSE_ESCAPING should use two-pass processing, not _handle_symlink"
+        )
 
     else:
         raise ValueError(f"Unknown symlink policy: {symlink_policy}")
@@ -957,23 +510,10 @@ def _collect_transitive_target(
     target_path: Path,
     collected_paths: Set[str],
     print_function_callback: Callable[[Any], None],
-) -> tuple[List[ManifestFilePath2025], List[ManifestDirectoryPath2025], int]:
-    """
-    Collect a symlink target that is outside the root path.
-
-    This is used for TRANSITIVE_INCLUDE_TARGETS policy to add the actual
-    content that escaping symlinks point to.
-
-    Args:
-        target_path: Absolute path to the target (file or directory)
-        collected_paths: Set of paths already collected (to avoid duplicates)
-        print_function_callback: Progress callback
-
-    Returns:
-        Tuple of (file_entries, dir_entries, total_size)
-    """
-    file_entries: List[ManifestFilePath2025] = []
-    dir_entries: List[ManifestDirectoryPath2025] = []
+) -> tuple[List[ManifestFilePath], List[ManifestDirectoryPath], int]:
+    """Collect a symlink target that is outside the root path."""
+    file_entries: List[ManifestFilePath] = []
+    dir_entries: List[ManifestDirectoryPath] = []
     total_size = 0
 
     if not target_path.exists():
@@ -981,7 +521,6 @@ def _collect_transitive_target(
         return (file_entries, dir_entries, total_size)
 
     if target_path.is_file() and not target_path.is_symlink():
-        # Single file target
         entry_path = target_path.as_posix()
         if entry_path not in collected_paths:
             try:
@@ -996,36 +535,27 @@ def _collect_transitive_target(
                 )
 
     elif target_path.is_dir():
-        # Directory target - collect entire subtree
         for dirpath, dirnames, filenames in os.walk(target_path, followlinks=False):
             dir_abs = Path(dirpath).absolute()
-
-            # Record directory (except the target root itself, which is the symlink)
             if dir_abs != target_path:
                 dir_path = dir_abs.as_posix()
                 if dir_path not in collected_paths:
-                    dir_entries.append(ManifestDirectoryPath2025(path=dir_path))
+                    dir_entries.append(ManifestDirectoryPath(path=dir_path))
                     collected_paths.add(dir_path)
                     print_function_callback(f"Collected transitive dir: {dir_path}")
 
-            # Skip symlinks in dirnames (don't follow nested symlinks transitively)
             for name in list(dirnames):
                 full_path = Path(dirpath) / name
                 if full_path.is_symlink():
                     dirnames.remove(name)
 
-            # Process files
             for name in filenames:
                 full_path = Path(dirpath) / name
                 entry_path = full_path.absolute().as_posix()
-
                 if entry_path in collected_paths:
                     continue
-
                 if full_path.is_symlink():
-                    # Skip symlinks in transitive collection
                     continue
-
                 try:
                     stat_info = full_path.stat(follow_symlinks=False)
                     entry = _create_unhashed_file_entry(full_path, entry_path, stat_info)
@@ -1042,96 +572,60 @@ def _collect_transitive_target(
 
 
 def _collect_escaping_dir_symlink(
-    symlink_rel_path: str,
+    symlink_path: str,
     target_abs_path: Path,
-    root_path: Optional[Path],
-    absolute_paths: bool,
     collected_paths: Set[str],
     print_function_callback: Callable[[Any], None],
-) -> tuple[List[ManifestFilePath2025], List[ManifestDirectoryPath2025], int]:
+) -> tuple[List[ManifestFilePath], List[ManifestDirectoryPath], int]:
+    """Collect contents of an escaping directory symlink.
+
+    The contents are collected with paths under the symlink path, not the target path.
+    This effectively "inlines" the target directory contents at the symlink location.
     """
-    Collect contents of an escaping directory symlink for COLLAPSE_ESCAPING policy.
-
-    This walks the target directory and collects all files and directories,
-    using paths relative to the symlink location within the manifest root.
-
-    Args:
-        symlink_rel_path: Relative path of the symlink from root (e.g., "link_dir")
-        target_abs_path: Absolute path to the symlink target directory
-        root_path: Root directory path of the manifest (can be None if absolute_paths=True)
-        absolute_paths: Whether to use absolute paths in manifest
-        collected_paths: Set of paths already collected (to avoid duplicates)
-        print_function_callback: Progress callback
-
-    Returns:
-        Tuple of (file_entries, dir_entries, total_size)
-    """
-    file_entries: List[ManifestFilePath2025] = []
-    dir_entries: List[ManifestDirectoryPath2025] = []
+    file_entries: List[ManifestFilePath] = []
+    dir_entries: List[ManifestDirectoryPath] = []
     total_size = 0
 
     if not target_abs_path.exists():
-        print_function_callback(f"Skipping broken escaping symlink: {symlink_rel_path}")
+        print_function_callback(f"Skipping broken escaping symlink: {symlink_path}")
         return (file_entries, dir_entries, total_size)
 
     if not target_abs_path.is_dir():
         print_function_callback(
-            f"Skipping non-directory escaping symlink target: {symlink_rel_path}"
+            f"Skipping non-directory escaping symlink target: {symlink_path}"
         )
         return (file_entries, dir_entries, total_size)
 
-    # Walk the target directory
     for dirpath, dirnames, filenames in os.walk(target_abs_path, followlinks=False):
-        # Calculate the relative path within the target
         rel_within_target = Path(dirpath).relative_to(target_abs_path)
 
-        # Build the path as it appears in the manifest (under the symlink)
         if rel_within_target == Path("."):
-            manifest_dir_rel = symlink_rel_path
+            dir_entry_path = symlink_path
         else:
-            manifest_dir_rel = f"{symlink_rel_path}/{rel_within_target.as_posix()}"
-
-        # Record directory (the symlink itself is recorded as a directory)
-        if absolute_paths:
-            assert root_path is not None  # For absolute_paths with symlink, we need root
-            dir_entry_path = (root_path / manifest_dir_rel).as_posix()
-        else:
-            dir_entry_path = manifest_dir_rel
+            dir_entry_path = f"{symlink_path}/{rel_within_target.as_posix()}"
 
         if dir_entry_path not in collected_paths:
-            dir_entries.append(ManifestDirectoryPath2025(path=dir_entry_path))
+            dir_entries.append(ManifestDirectoryPath(path=dir_entry_path))
             collected_paths.add(dir_entry_path)
             print_function_callback(f"Collected dir (escaping): {dir_entry_path}")
 
-        # Skip symlinks in dirnames (don't follow nested symlinks within escaping target)
         for name in list(dirnames):
             full_path = Path(dirpath) / name
             if full_path.is_symlink():
                 print_function_callback(
-                    f"Skipping nested symlink in escaping target: {manifest_dir_rel}/{name}"
+                    f"Skipping nested symlink in escaping target: {dir_entry_path}/{name}"
                 )
                 dirnames.remove(name)
 
-        # Process files
         for name in filenames:
             full_path = Path(dirpath) / name
-
-            # Build manifest path
             if rel_within_target == Path("."):
-                manifest_file_rel = f"{symlink_rel_path}/{name}"
+                entry_path = f"{symlink_path}/{name}"
             else:
-                manifest_file_rel = f"{symlink_rel_path}/{rel_within_target.as_posix()}/{name}"
-
-            if absolute_paths:
-                assert root_path is not None  # For absolute_paths with symlink, we need root
-                entry_path = (root_path / manifest_file_rel).as_posix()
-            else:
-                entry_path = manifest_file_rel
+                entry_path = f"{symlink_path}/{rel_within_target.as_posix()}/{name}"
 
             if entry_path in collected_paths:
                 continue
-
-            # Skip symlinks
             if full_path.is_symlink():
                 print_function_callback(f"Skipping nested symlink in escaping target: {entry_path}")
                 continue
