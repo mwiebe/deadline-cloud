@@ -224,7 +224,9 @@ class TestJoinManifestRelSnapshot:
     def test_preserves_runnable_flag(self) -> None:
         """Runnable flag is preserved."""
         manifest = self._create_manifest(
-            files=[{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
+            files=[
+                {"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}
+            ]
         )
 
         result = join_manifest(manifest, "prefix")

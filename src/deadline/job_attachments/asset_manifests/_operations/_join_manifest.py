@@ -153,9 +153,12 @@ def _is_absolute_path(path: str) -> bool:
 
 def _get_output_manifest_type(
     manifest: RelManifest, prefix: str
-) -> type[AbsSnapshotManifest] | type[AbsDiffManifest] | type[RelSnapshotManifest] | type[
-    RelDiffManifest
-]:
+) -> (
+    type[AbsSnapshotManifest]
+    | type[AbsDiffManifest]
+    | type[RelSnapshotManifest]
+    | type[RelDiffManifest]
+):
     """Determine the output manifest type based on input type and prefix.
 
     - If prefix is absolute: output is Abs*Manifest

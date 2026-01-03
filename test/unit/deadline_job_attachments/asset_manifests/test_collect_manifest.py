@@ -290,8 +290,6 @@ class TestCollectManifestInputValidation:
             )
 
 
-
-
 class TestCollectManifestOptionalFilenames:
     """Tests for optional_filenames parameter."""
 

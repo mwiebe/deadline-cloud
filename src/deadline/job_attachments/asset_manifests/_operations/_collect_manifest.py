@@ -210,9 +210,7 @@ def _collect_manifest_impl(
             except OSError as e:
                 print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
 
-    def process_deferred_symlink(
-        full_path: Path, entry_path: str, is_directory: bool
-    ) -> None:
+    def process_deferred_symlink(full_path: Path, entry_path: str, is_directory: bool) -> None:
         """Process a deferred symlink for COLLAPSE_ESCAPING policy."""
         nonlocal total_size
 
@@ -498,9 +496,7 @@ def _handle_symlink(
 
     elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
         # This should not be called for COLLAPSE_ESCAPING - it uses two-pass
-        raise ValueError(
-            "COLLAPSE_ESCAPING should use two-pass processing, not _handle_symlink"
-        )
+        raise ValueError("COLLAPSE_ESCAPING should use two-pass processing, not _handle_symlink")
 
     else:
         raise ValueError(f"Unknown symlink policy: {symlink_policy}")
@@ -591,9 +587,7 @@ def _collect_escaping_dir_symlink(
         return (file_entries, dir_entries, total_size)
 
     if not target_abs_path.is_dir():
-        print_function_callback(
-            f"Skipping non-directory escaping symlink target: {symlink_path}"
-        )
+        print_function_callback(f"Skipping non-directory escaping symlink target: {symlink_path}")
         return (file_entries, dir_entries, total_size)
 
     for dirpath, dirnames, filenames in os.walk(target_abs_path, followlinks=False):

@@ -15,8 +15,7 @@ These tests cover:
 - Custom filter callables
 """
 
-import pytest
-from typing import List, Union
+from typing import List
 
 from deadline.job_attachments.asset_manifests._operations import (
     filter_manifest,
@@ -29,7 +28,6 @@ from deadline.job_attachments.asset_manifests._operations._filter_manifest impor
 from deadline.job_attachments.asset_manifests.versions import ManifestType
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.manifest import (
-    Manifest,
     ManifestFilePath,
     ManifestDirectoryPath,
     AbsSnapshotManifest,
@@ -718,9 +716,7 @@ class TestCustomFilterCallables:
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             paths=[
-                ManifestFilePath(
-                    path="/script.sh", hash="h1", size=100, mtime=1000, runnable=True
-                ),
+                ManifestFilePath(path="/script.sh", hash="h1", size=100, mtime=1000, runnable=True),
                 ManifestFilePath(path="/data.txt", hash="h2", size=200, mtime=2000),
             ],
             total_size=300,
