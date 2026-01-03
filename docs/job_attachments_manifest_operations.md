@@ -292,8 +292,8 @@ For example, if a manifest contains a file at `a/b/c/file.txt` but no explicit d
 | Create `v2025_12_04/decode.py` with `decode_v2025()` | ✓ Done |
 | Update `validate.py` for `specificationVersion` | ✓ Done |
 | Auto-collect parent directories in `encode_v2025()` | ✓ Done |
-| Update `decode.py` to use `decode_v2025()` | Not started |
-| Update tests | Not started |
+| Update `decode.py` to use `decode_v2025()` | ✓ Done |
+| Update tests | ✓ Done |
 | Remove old `AssetManifest` class | Not started |
 
 ## Path Separator Convention

@@ -480,3 +480,63 @@ class TestRoundTrip:
         deleted_dirs = [d for d in decoded.dirs if d.deleted]
         assert len(deleted_dirs) == 1
         assert deleted_dirs[0].path == "project"
+
+
+class TestDecodeManifestIntegration:
+    """Tests for decode_manifest() integration with v2025 format."""
+
+    def test_decode_manifest_v2025_format(self) -> None:
+        """decode_manifest() handles v2025 specificationVersion format."""
+        from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+        json_str = json.dumps({
+            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "hashAlg": "xxh128",
+            "totalSize": 100,
+            "dirs": [
+                {"name": "project"},
+            ],
+            "files": [
+                {"name": "$0/file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
+            ],
+        })
+
+        result = decode_manifest(json_str)
+
+        assert isinstance(result, RelSnapshotManifest)
+        assert result.paths[0].path == "project/file.txt"
+
+    def test_decode_manifest_v2023_format(self) -> None:
+        """decode_manifest() still handles v2023 manifestVersion format."""
+        from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+        json_str = json.dumps({
+            "manifestVersion": "2023-03-03",
+            "hashAlg": "xxh128",
+            "totalSize": 100,
+            "paths": [
+                {"path": "file.txt", "hash": "abc123", "size": 100, "mtime": 1000}
+            ],
+        })
+
+        result = decode_manifest(json_str)
+
+        # Returns BaseAssetManifest for v2023 format
+        assert result.paths[0].path == "file.txt"
+
+    def test_decode_manifest_invalid_hash(self) -> None:
+        """decode_manifest() validates hashes are alphanumeric for v2025."""
+        from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+        json_str = json.dumps({
+            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "hashAlg": "xxh128",
+            "totalSize": 100,
+            "dirs": [],
+            "files": [
+                {"name": "file.txt", "hash": "abc!@#123", "size": 100, "mtime": 1000}
+            ],
+        })
+
+        with pytest.raises(ManifestDecodeValidationError, match="not alphanumeric"):
+            decode_manifest(json_str)

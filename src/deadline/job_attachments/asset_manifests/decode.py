@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 from ..exceptions import ManifestDecodeValidationError
 from .base_manifest import BaseAssetManifest
+from .manifest import Manifest
 from .manifest_model import ManifestModelRegistry
 from .versions import ManifestVersion
 from .v2023_03_03.validate import validate_manifest_2023_03_03
 from .v2025_12_04.validate import validate_manifest_2025_12_04
+from .v2025_12_04.decode import decode_v2025, SUPPORTED_SPEC_VERSIONS
 
 alphanum_regex = re.compile("[a-zA-Z0-9]+")
 
@@ -33,14 +35,24 @@ def validate_manifest(
         return False, f"Version {version} is not supported"
 
 
-def decode_manifest(manifest: str) -> BaseAssetManifest:
+def decode_manifest(manifest: str) -> Union[BaseAssetManifest, Manifest]:
     """
     Takes in a manifest string and returns an Asset Manifest object.
     A ManifestDecodeValidationError will be raised if the manifest version is unknown or
     the manifest is not valid.
+
+    For v2025 manifests with specificationVersion, returns a unified Manifest class.
+    For v2023 manifests with manifestVersion, returns a BaseAssetManifest subclass.
     """
     document: dict[str, Any] = json.loads(manifest)
 
+    # Check for new v2025 format with specificationVersion
+    if "specificationVersion" in document:
+        decoded = decode_v2025(manifest)
+        _validate_hashes(decoded)
+        return decoded
+
+    # Legacy format with manifestVersion
     try:
         version = ManifestVersion(document["manifestVersion"])
     except ValueError:
@@ -54,7 +66,7 @@ def decode_manifest(manifest: str) -> BaseAssetManifest:
         )
     except KeyError:
         raise ManifestDecodeValidationError(
-            'Manifest is missing the required "manifestVersion" field'
+            'Manifest is missing the required "manifestVersion" or "specificationVersion" field'
         )
 
     manifest_valid, error_string = validate_manifest(document, version)
@@ -65,7 +77,13 @@ def decode_manifest(manifest: str) -> BaseAssetManifest:
     manifest_model = ManifestModelRegistry.get_manifest_model(version=version)
     decoded_manifest = manifest_model.AssetManifest.decode(manifest_data=document)
 
-    # Validate hashes are alphanumeric
+    _validate_hashes(decoded_manifest)
+
+    return decoded_manifest
+
+
+def _validate_hashes(decoded_manifest: Union[BaseAssetManifest, Manifest]) -> None:
+    """Validate that all hashes in the manifest are alphanumeric."""
     for path in decoded_manifest.paths:
         # Skip validation for entries without hash (symlinks, chunked files, deleted)
         if path.hash is not None and alphanum_regex.fullmatch(path.hash) is None:
@@ -79,5 +97,3 @@ def decode_manifest(manifest: str) -> BaseAssetManifest:
                     raise ManifestDecodeValidationError(
                         f"The chunk hash {chunk_hash} for path {path.path} is not alphanumeric"
                     )
-
-    return decoded_manifest
