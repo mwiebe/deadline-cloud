@@ -237,11 +237,13 @@ Phase 2 (Operations) is complete. All operations now use unified manifest classe
 | HASH_UPLOAD | ✓ Done |
 | PARTITION | ✓ Done |
 
-Phase 3 (Serialization) is in progress. This phase creates standalone encode/decode functions for the v2025 format that work with unified manifest classes.
+Phase 3 (Serialization) is in progress. This phase creates standalone encode/decode functions for the EXPERIMENTAL v2025 format that work with unified manifest classes.
 
 ### Phase 3: Standalone Encode/Decode Functions
 
 **Goal:** Create standalone `encode_v2025()` and `decode_v2025()` functions that work with unified manifest classes, replacing the v2025-specific `AssetManifest` class.
+
+**Note:** The v2025-12 format is EXPERIMENTAL and subject to change. Do not use in production.
 
 **On-Disk Format Change:**
 
@@ -276,13 +278,20 @@ def encode_v2025(manifest: Manifest) -> str: ...
 def decode_v2025(manifest_str: str) -> Manifest: ...
 ```
 
+**Auto-Collection of Parent Directories:**
+
+The `encode_v2025()` function automatically collects all parent directories needed for `$N/` compression, even if they weren't explicitly included in `manifest.dirs`. This ensures the encoded manifest always has a complete directory index for path compression.
+
+For example, if a manifest contains a file at `a/b/c/file.txt` but no explicit directories, `encode_v2025()` will automatically add `a`, `a/b`, and `a/b/c` to the directory list. Explicit directories take precedence (preserving their `deleted` flag).
+
 **Tasks:**
 
 | Task | Status |
 |------|--------|
-| Create `v2025_12_04/encode.py` with `encode_v2025()` | Not started |
-| Create `v2025_12_04/decode.py` with `decode_v2025()` | Not started |
-| Update `validate.py` for `specificationVersion` | Not started |
+| Create `v2025_12_04/encode.py` with `encode_v2025()` | ✓ Done |
+| Create `v2025_12_04/decode.py` with `decode_v2025()` | ✓ Done |
+| Update `validate.py` for `specificationVersion` | ✓ Done |
+| Auto-collect parent directories in `encode_v2025()` | ✓ Done |
 | Update `decode.py` to use `decode_v2025()` | Not started |
 | Update tests | Not started |
 | Remove old `AssetManifest` class | Not started |
