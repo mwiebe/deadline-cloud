@@ -8,7 +8,6 @@ from deadline.job_attachments.asset_manifests import (
     BaseManifestModel,
     ManifestModelRegistry,
     v2023_03_03,
-    v2025_12_04,
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 
@@ -17,7 +16,6 @@ from deadline.job_attachments.asset_manifests.versions import ManifestVersion
     "version,expected_model",
     [
         (ManifestVersion.v2023_03_03, v2023_03_03.ManifestModel),
-        (ManifestVersion.v2025_12_04_beta, v2025_12_04.ManifestModel),
     ],
 )
 def test_get_manifest_model(version: ManifestVersion, expected_model: BaseManifestModel):

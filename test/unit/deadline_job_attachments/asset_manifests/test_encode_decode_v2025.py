@@ -39,7 +39,7 @@ class TestEncodeV2025:
         result = encode_v2025(manifest)
         data = json.loads(result)
 
-        assert data["specificationVersion"] == "absolute-manifest-snapshot-2025-12"
+        assert data["specificationVersion"] == "absolute-manifest-snapshot-beta-2025-12"
         assert data["hashAlg"] == "xxh128"
         assert data["totalSize"] == 100
         assert len(data["files"]) == 1
@@ -60,7 +60,7 @@ class TestEncodeV2025:
         result = encode_v2025(manifest)
         data = json.loads(result)
 
-        assert data["specificationVersion"] == "relative-manifest-snapshot-2025-12"
+        assert data["specificationVersion"] == "relative-manifest-snapshot-beta-2025-12"
 
     def test_encode_abs_diff(self) -> None:
         """Encodes AbsDiffManifest with correct specificationVersion."""
@@ -76,7 +76,7 @@ class TestEncodeV2025:
         result = encode_v2025(manifest)
         data = json.loads(result)
 
-        assert data["specificationVersion"] == "absolute-manifest-diff-2025-12"
+        assert data["specificationVersion"] == "absolute-manifest-diff-beta-2025-12"
         assert data["parentManifestHash"] == "parent123"
 
     def test_encode_rel_diff(self) -> None:
@@ -93,7 +93,7 @@ class TestEncodeV2025:
         result = encode_v2025(manifest)
         data = json.loads(result)
 
-        assert data["specificationVersion"] == "relative-manifest-diff-2025-12"
+        assert data["specificationVersion"] == "relative-manifest-diff-beta-2025-12"
 
 
     def test_encode_directory_index_compression(self) -> None:
@@ -256,7 +256,7 @@ class TestDecodeV2025:
     def test_decode_abs_snapshot(self) -> None:
         """Decodes to AbsSnapshotManifest based on specificationVersion."""
         json_str = json.dumps({
-            "specificationVersion": "absolute-manifest-snapshot-2025-12",
+            "specificationVersion": "absolute-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "dirs": [
@@ -278,7 +278,7 @@ class TestDecodeV2025:
     def test_decode_rel_snapshot(self) -> None:
         """Decodes to RelSnapshotManifest based on specificationVersion."""
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "dirs": [
@@ -296,7 +296,7 @@ class TestDecodeV2025:
     def test_decode_abs_diff(self) -> None:
         """Decodes to AbsDiffManifest based on specificationVersion."""
         json_str = json.dumps({
-            "specificationVersion": "absolute-manifest-diff-2025-12",
+            "specificationVersion": "absolute-manifest-diff-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "parentManifestHash": "parent123",
@@ -316,7 +316,7 @@ class TestDecodeV2025:
     def test_decode_rel_diff(self) -> None:
         """Decodes to RelDiffManifest based on specificationVersion."""
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-diff-2025-12",
+            "specificationVersion": "relative-manifest-diff-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "parentManifestHash": "parent123",
@@ -336,7 +336,7 @@ class TestDecodeV2025:
     def test_decode_directory_index_expansion(self) -> None:
         """Decodes $N/ directory references to full paths."""
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "dirs": [
@@ -357,7 +357,7 @@ class TestDecodeV2025:
     def test_decode_symlink(self) -> None:
         """Decodes symlink entries correctly."""
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 0,
             "dirs": [{"name": "project"}],
@@ -374,7 +374,7 @@ class TestDecodeV2025:
     def test_decode_deleted_entry(self) -> None:
         """Decodes deleted entries in diff manifests."""
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-diff-2025-12",
+            "specificationVersion": "relative-manifest-diff-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 0,
             "dirs": [],
@@ -408,7 +408,7 @@ class TestDecodeV2025:
     def test_decode_missing_required_field(self) -> None:
         """Raises error for missing required fields."""
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             # Missing totalSize, dirs, files
         })
@@ -490,7 +490,7 @@ class TestDecodeManifestIntegration:
         from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "dirs": [
@@ -529,7 +529,7 @@ class TestDecodeManifestIntegration:
         from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
         json_str = json.dumps({
-            "specificationVersion": "relative-manifest-snapshot-2025-12",
+            "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
             "hashAlg": "xxh128",
             "totalSize": 100,
             "dirs": [],

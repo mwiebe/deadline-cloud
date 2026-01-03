@@ -27,10 +27,10 @@ from ...exceptions import ManifestDecodeValidationError
 
 
 # Specification version strings
-SPEC_ABS_SNAPSHOT = "absolute-manifest-snapshot-2025-12"
-SPEC_ABS_DIFF = "absolute-manifest-diff-2025-12"
-SPEC_REL_SNAPSHOT = "relative-manifest-snapshot-2025-12"
-SPEC_REL_DIFF = "relative-manifest-diff-2025-12"
+SPEC_ABS_SNAPSHOT = "absolute-manifest-snapshot-beta-2025-12"
+SPEC_ABS_DIFF = "absolute-manifest-diff-beta-2025-12"
+SPEC_REL_SNAPSHOT = "relative-manifest-snapshot-beta-2025-12"
+SPEC_REL_DIFF = "relative-manifest-diff-beta-2025-12"
 
 
 def encode_v2025(manifest: Manifest) -> str:

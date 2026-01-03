@@ -14,14 +14,10 @@ class ManifestVersion(str, Enum):
 
     Versions:
       v2023_03_03 - First version.
-      v2025_12_04_beta - EXPERIMENTAL: Second version with directory compression,
-                         chunked files, diff manifests, empty directories, symlinks,
-                         and execute bit. Format is subject to change.
     """
 
     UNDEFINED = "UNDEFINED"
     v2023_03_03 = "2023-03-03"
-    v2025_12_04_beta = "2025-12-04-beta"
 
 
 class ManifestType(str, Enum):
@@ -35,15 +31,6 @@ class ManifestType(str, Enum):
 
     SNAPSHOT = "snapshot"
     DIFF = "diff"
-
-
-class ManifestContentType(str, Enum):
-    """
-    Content-Type values for manifest storage in S3.
-    """
-
-    SNAPSHOT_2025_12_04_BETA = "application/x-deadline-manifest-2025-12-04-beta"
-    DIFF_2025_12_04_BETA = "application/x-deadline-manifest-diff-2025-12-04-beta"
 
 
 class SymlinkPolicy(str, Enum):

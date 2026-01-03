@@ -3,9 +3,6 @@
 """
 EXPERIMENTAL: Contains functions validating Asset Manifests for v2025-12 format.
 
-Supports both the legacy format (manifestVersion + manifestType) and
-the new format (specificationVersion).
-
 This format is under development and subject to change. Do not use in production.
 """
 
@@ -15,32 +12,23 @@ from typing import Any, Optional, Tuple
 
 # New specificationVersion values
 _SPEC_VERSIONS_2025_12: set[str] = {
-    "absolute-manifest-snapshot-2025-12",
-    "absolute-manifest-diff-2025-12",
-    "relative-manifest-snapshot-2025-12",
-    "relative-manifest-diff-2025-12",
+    "absolute-manifest-snapshot-beta-2025-12",
+    "absolute-manifest-diff-beta-2025-12",
+    "relative-manifest-snapshot-beta-2025-12",
+    "relative-manifest-diff-beta-2025-12",
 }
 
 _DIFF_SPEC_VERSIONS: set[str] = {
-    "absolute-manifest-diff-2025-12",
-    "relative-manifest-diff-2025-12",
+    "absolute-manifest-diff-beta-2025-12",
+    "relative-manifest-diff-beta-2025-12",
 }
 
-# Required fields for new format
+# Required fields
 _REQUIRED_FIELDS_2025_12: list[str] = [
     "hashAlg",
     "dirs",
     "files",
     "specificationVersion",
-    "totalSize",
-]
-
-# Required fields for legacy format
-_REQUIRED_FIELDS_2025_12_04_LEGACY: list[str] = [
-    "hashAlg",
-    "dirs",
-    "files",
-    "manifestVersion",
     "totalSize",
 ]
 
@@ -163,56 +151,6 @@ def validate_manifest_2025_12(manifest: dict[str, Any]) -> Tuple[bool, Optional[
 
     # Validate parentManifestHash
     if "parentManifestHash" in manifest:
-        parent_hash = manifest["parentManifestHash"]
-        if not isinstance(parent_hash, str):
-            return False, "parentManifestHash must be a string"
-
-    # Validate dirs
-    dirs = manifest["dirs"]
-    if not isinstance(dirs, list):
-        return False, "dirs must be a list"
-    for dir_object in dirs:
-        ok, message = _validate_dir(dir_object, is_diff)
-        if not ok:
-            return False, message
-
-    # Validate files
-    files = manifest["files"]
-    if not isinstance(files, list):
-        return False, "files must be a list"
-    for file_object in files:
-        ok, message = _validate_file(file_object, is_diff)
-        if not ok:
-            return False, message
-
-    return True, None
-
-
-def validate_manifest_2025_12_04(manifest: dict[str, Any]) -> Tuple[bool, Optional[str]]:
-    """
-    Validate a legacy v2025-12-04-beta manifest with manifestVersion field.
-
-    This function is kept for backwards compatibility with the old format.
-    """
-    missing = _get_missing_fields(manifest, _REQUIRED_FIELDS_2025_12_04_LEGACY)
-    if len(missing) > 0:
-        return False, f"manifest is missing required field(s) {missing}"
-
-    manifest_version = manifest["manifestVersion"]
-    if not isinstance(manifest_version, str) or manifest_version != "2025-12-04-beta":
-        return False, 'manifestVersion must be "2025-12-04-beta"'
-
-    hash_alg = manifest["hashAlg"]
-    if not isinstance(hash_alg, str) or hash_alg not in _HASH_ALGS_2025_12:
-        return False, f"hashAlg must be one of {_HASH_ALGS_2025_12}"
-
-    total_size = manifest["totalSize"]
-    if not isinstance(total_size, int):
-        return False, "totalSize must be an integer"
-
-    # Determine if this is a diff manifest
-    is_diff = "parentManifestHash" in manifest
-    if is_diff:
         parent_hash = manifest["parentManifestHash"]
         if not isinstance(parent_hash, str):
             return False, "parentManifestHash must be a string"

@@ -294,7 +294,7 @@ For example, if a manifest contains a file at `a/b/c/file.txt` but no explicit d
 | Auto-collect parent directories in `encode_v2025()` | ✓ Done |
 | Update `decode.py` to use `decode_v2025()` | ✓ Done |
 | Update tests | ✓ Done |
-| Remove old `AssetManifest` class | Not started |
+| Remove old `AssetManifest` class | ✓ Done |
 
 ## Path Separator Convention
 

@@ -8,13 +8,12 @@ from .base_manifest import (
 )
 from .hash_algorithms import HashAlgorithm, hash_data, hash_file
 from .manifest_model import BaseManifestModel, ManifestModelRegistry
-from .versions import ManifestContentType, ManifestType, ManifestVersion
+from .versions import ManifestType, ManifestVersion
 
 __all__ = [
     "FILE_CHUNK_SIZE_BYTES",
     "ManifestVersion",
     "ManifestType",
-    "ManifestContentType",
     "ManifestModelRegistry",
     "BaseAssetManifest",
     "BaseManifestModel",

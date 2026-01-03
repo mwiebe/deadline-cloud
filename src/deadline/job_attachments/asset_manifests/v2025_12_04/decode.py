@@ -30,10 +30,10 @@ from .validate import validate_manifest_2025_12
 
 # Specification version to manifest class mapping
 SPEC_VERSION_MAP: Dict[str, Type[Manifest]] = {
-    "absolute-manifest-snapshot-2025-12": AbsSnapshotManifest,
-    "absolute-manifest-diff-2025-12": AbsDiffManifest,
-    "relative-manifest-snapshot-2025-12": RelSnapshotManifest,
-    "relative-manifest-diff-2025-12": RelDiffManifest,
+    "absolute-manifest-snapshot-beta-2025-12": AbsSnapshotManifest,
+    "absolute-manifest-diff-beta-2025-12": AbsDiffManifest,
+    "relative-manifest-snapshot-beta-2025-12": RelSnapshotManifest,
+    "relative-manifest-diff-beta-2025-12": RelDiffManifest,
 }
 
 SUPPORTED_SPEC_VERSIONS = set(SPEC_VERSION_MAP.keys())
