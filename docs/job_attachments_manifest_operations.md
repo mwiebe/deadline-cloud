@@ -223,48 +223,69 @@ Phase 1 (Foundation) is complete:
 | Verify v2023/v2025 module compatibility | ✓ Done |
 | Verify backwards compatibility (512 tests) | ✓ Done |
 
-Phase 2 (Operations) is in progress. Operations are refactored in dependency order:
+Phase 2 (Operations) is complete. All operations now use unified manifest classes:
 
-### Operation Dependency Analysis
+| Operation | Status |
+|-----------|--------|
+| COLLECT | ✓ Done |
+| FILTER | ✓ Done |
+| JOIN | ✓ Done |
+| COMPOSE | ✓ Done |
+| DIFF | ✓ Done |
+| SUBTREE | ✓ Done |
+| HASH | ✓ Done |
+| HASH_UPLOAD | ✓ Done |
+| PARTITION | ✓ Done |
 
-**Implementation dependencies** (operation A imports from operation B):
-- PARTITION depends on SUBTREE
+Phase 3 (Serialization) is in progress. This phase creates standalone encode/decode functions for the v2025 format that work with unified manifest classes.
 
-**Test dependencies** (test file A uses operation B to set up test data):
-- `test_hash_manifest.py` uses `collect_manifest`
-- `test_hash_upload_manifest.py` uses `collect_manifest`
+### Phase 3: Standalone Encode/Decode Functions
 
-### Refactoring Order
+**Goal:** Create standalone `encode_v2025()` and `decode_v2025()` functions that work with unified manifest classes, replacing the v2025-specific `AssetManifest` class.
 
-Operations are refactored in waves. Each wave contains operations that have no unrefactored dependencies.
+**On-Disk Format Change:**
 
-| Wave | Operation | Impl Depends On | Test Depends On | Status |
-|------|-----------|-----------------|-----------------|--------|
-| 1 | COLLECT | - | - | ✓ Done |
-| 1 | FILTER | - | - | ✓ Done |
-| 1 | JOIN | - | - | ✓ Done |
-| 1 | COMPOSE | - | - | ✓ Done |
-| 1 | DIFF | - | - | ✓ Done |
-| 1 | SUBTREE | - | - | ✓ Done |
-| 2 | HASH | - | COLLECT | ✓ Done |
-| 2 | HASH_UPLOAD | - | COLLECT | ✓ Done |
-| 2 | PARTITION | SUBTREE | - | ✓ Done |
+Replace `manifestVersion` and `manifestType` with a single `specificationVersion` field:
 
-**Wave 1** operations are isolated - they can be refactored in any order.
+| specificationVersion | Class |
+|---------------------|-------|
+| `absolute-manifest-snapshot-2025-12` | `AbsSnapshotManifest` |
+| `absolute-manifest-diff-2025-12` | `AbsDiffManifest` |
+| `relative-manifest-snapshot-2025-12` | `RelSnapshotManifest` |
+| `relative-manifest-diff-2025-12` | `RelDiffManifest` |
 
-**Wave 2** operations depend on Wave 1:
-- HASH and HASH_UPLOAD tests use `collect_manifest` to create test manifests
-- PARTITION implementation imports `subtree_manifest`
+**Example:**
 
-### Per-Operation Refactoring Checklist
+```json
+{
+  "specificationVersion": "relative-manifest-snapshot-2025-12",
+  "hashAlg": "xxh128",
+  "totalSize": 12345,
+  "dirs": [...],
+  "files": [...]
+}
+```
 
-For each operation:
-1. Update operation module to use unified `Manifest`/`ManifestFilePath`/`ManifestDirectoryPath` classes
-2. Update type hints to use unified classes where appropriate
-3. Update tests to use unified classes
-4. Run operation-specific tests: `hatch run test -- -k test_<operation> --numprocesses=1`
-5. Run full asset manifest test suite: `hatch run test -- test/unit/deadline_job_attachments/asset_manifests/`
-6. Run mypy: `hatch run typing`
+**API:**
+
+```python
+# v2025_12_04/encode.py
+def encode_v2025(manifest: Manifest) -> str: ...
+
+# v2025_12_04/decode.py  
+def decode_v2025(manifest_str: str) -> Manifest: ...
+```
+
+**Tasks:**
+
+| Task | Status |
+|------|--------|
+| Create `v2025_12_04/encode.py` with `encode_v2025()` | Not started |
+| Create `v2025_12_04/decode.py` with `decode_v2025()` | Not started |
+| Update `validate.py` for `specificationVersion` | Not started |
+| Update `decode.py` to use `decode_v2025()` | Not started |
+| Update tests | Not started |
+| Remove old `AssetManifest` class | Not started |
 
 ## Path Separator Convention
 
