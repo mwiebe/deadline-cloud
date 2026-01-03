@@ -21,22 +21,20 @@ deletions, and other v2025-only features.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from ..manifest import (
     AbsDiffManifest,
     AbsSnapshotManifest,
+    DiffManifest,
     Manifest,
     ManifestDirectoryPath,
     ManifestFilePath,
     RelDiffManifest,
     RelSnapshotManifest,
+    SnapshotManifest,
 )
 from ..versions import ManifestType
-
-# Type aliases for manifest categories
-SnapshotManifest = Union[AbsSnapshotManifest, RelSnapshotManifest]
-DiffManifest = Union[AbsDiffManifest, RelDiffManifest]
 
 
 @dataclass

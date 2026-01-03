@@ -4,11 +4,11 @@
 Tests for subtree_manifest and related functions.
 
 These tests cover:
-- Basic subtree extraction for both v2023 and v2025 formats
+- Basic subtree extraction using unified manifest classes
 - Path rebasing (stripping subtree prefix)
 - Path style validation (relative vs absolute)
 - Symlink handling with different policies
-- Directory handling (v2025 only)
+- Directory handling
 - Edge cases (empty subtree, non-existent subtree, etc.)
 """
 
@@ -30,14 +30,13 @@ from deadline.job_attachments.asset_manifests.versions import (
     SymlinkPolicy,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
-)
-from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
+from deadline.job_attachments.asset_manifests.manifest import (
+    AbsSnapshotManifest,
+    AbsDiffManifest,
+    RelSnapshotManifest,
+    RelDiffManifest,
+    ManifestFilePath,
+    ManifestDirectoryPath,
 )
 
 
@@ -107,118 +106,23 @@ class TestHelperFunctions:
         assert _normalize_subtree_path("assets/./textures") == "assets/textures"
 
 
-class TestSubtreeManifestV2023:
-    """Tests for v2023-03-03 subtree extraction."""
+class TestSubtreeManifestRelative:
+    """Tests for subtree extraction with relative paths."""
 
-    def _create_v2023_manifest(self, paths: List[tuple[str, str, int, int]]) -> AssetManifest2023:
-        """Helper to create a v2023 manifest.
-
-        Args:
-            paths: List of (path, hash, size, mtime) tuples
-        """
-        entries = [ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
-        total_size = sum(s for _, _, s, _ in paths)
-        return AssetManifest2023(
-            hash_alg=HashAlgorithm.XXH128,
-            paths=entries,
-            total_size=total_size,
-        )
-
-    def test_basic_subtree_extraction(self) -> None:
-        """Basic subtree extraction works."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("assets/textures/wood.png", "hash1", 100, 1000),
-                ("assets/textures/metal.png", "hash2", 200, 2000),
-                ("assets/models/chair.blend", "hash3", 300, 3000),
-                ("scripts/render.py", "hash4", 50, 4000),
-            ]
-        )
-
-        result = subtree_manifest(manifest, "assets/textures")
-
-        assert len(result.paths) == 2
-        paths = {p.path for p in result.paths}
-        assert paths == {"wood.png", "metal.png"}
-
-    def test_preserves_file_metadata(self) -> None:
-        """File metadata is preserved after rebasing."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("assets/textures/wood.png", "hash1", 100, 1000),
-            ]
-        )
-
-        result = subtree_manifest(manifest, "assets/textures")
-
-        assert len(result.paths) == 1
-        entry = result.paths[0]
-        assert entry.path == "wood.png"
-        assert entry.hash == "hash1"
-        assert entry.size == 100
-        assert entry.mtime == 1000
-
-    def test_total_size_recalculated(self) -> None:
-        """Total size is recalculated for subtree."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("assets/textures/wood.png", "hash1", 100, 1000),
-                ("assets/textures/metal.png", "hash2", 200, 2000),
-                ("assets/models/chair.blend", "hash3", 300, 3000),
-            ]
-        )
-
-        result = subtree_manifest(manifest, "assets/textures")
-
-        assert result.totalSize == 300  # 100 + 200
-
-    def test_nested_subtree(self) -> None:
-        """Nested subtree extraction works."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("a/b/c/d/file.txt", "hash1", 100, 1000),
-                ("a/b/c/other.txt", "hash2", 200, 2000),
-                ("a/b/outside.txt", "hash3", 300, 3000),
-            ]
-        )
-
-        result = subtree_manifest(manifest, "a/b/c")
-
-        assert len(result.paths) == 2
-        paths = {p.path for p in result.paths}
-        assert paths == {"d/file.txt", "other.txt"}
-
-    def test_empty_result(self) -> None:
-        """Subtree with no matching entries returns empty manifest."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("assets/models/chair.blend", "hash1", 100, 1000),
-            ]
-        )
-
-        result = subtree_manifest(manifest, "assets/textures")
-
-        assert len(result.paths) == 0
-        assert result.totalSize == 0
-
-
-class TestSubtreeManifestV2025:
-    """Tests for v2025-12-04-beta subtree extraction."""
-
-    def _create_v2025_manifest(
+    def _create_rel_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -227,7 +131,7 @@ class TestSubtreeManifestV2025:
 
     def test_basic_subtree_extraction(self) -> None:
         """Basic subtree extraction works."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "assets/textures/metal.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -242,12 +146,13 @@ class TestSubtreeManifestV2025:
 
         result = subtree_manifest(manifest, "assets/textures")
 
+        assert isinstance(result, RelSnapshotManifest)
         file_paths = {p.path for p in result.paths}
         assert file_paths == {"wood.png", "metal.png"}
 
     def test_directories_rebased(self) -> None:
         """Directories are rebased correctly."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/sub/file.png", "hash": "h1", "size": 100, "mtime": 1000},
             ],
@@ -263,9 +168,69 @@ class TestSubtreeManifestV2025:
         dir_paths = {d.path for d in result.dirs}
         assert dir_paths == {"sub"}
 
+    def test_preserves_file_metadata(self) -> None:
+        """File metadata is preserved after rebasing."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "assets/textures/wood.png", "hash": "hash1", "size": 100, "mtime": 1000},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "assets/textures")
+
+        assert len(result.paths) == 1
+        entry = result.paths[0]
+        assert entry.path == "wood.png"
+        assert entry.hash == "hash1"
+        assert entry.size == 100
+        assert entry.mtime == 1000
+
+    def test_total_size_recalculated(self) -> None:
+        """Total size is recalculated for subtree."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "assets/textures/metal.png", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "assets/models/chair.blend", "hash": "h3", "size": 300, "mtime": 3000},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "assets/textures")
+
+        assert result.totalSize == 300  # 100 + 200
+
+    def test_nested_subtree(self) -> None:
+        """Nested subtree extraction works."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "a/b/c/d/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "a/b/c/other.txt", "hash": "h2", "size": 200, "mtime": 2000},
+                {"path": "a/b/outside.txt", "hash": "h3", "size": 300, "mtime": 3000},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "a/b/c")
+
+        assert len(result.paths) == 2
+        paths = {p.path for p in result.paths}
+        assert paths == {"d/file.txt", "other.txt"}
+
+    def test_empty_result(self) -> None:
+        """Subtree with no matching entries returns empty manifest."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "assets/models/chair.blend", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "assets/textures")
+
+        assert len(result.paths) == 0
+        assert result.totalSize == 0
+
     def test_preserves_runnable_flag(self) -> None:
         """Runnable flag is preserved."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {
                     "path": "scripts/bin/run.sh",
@@ -284,7 +249,7 @@ class TestSubtreeManifestV2025:
 
     def test_preserves_chunkhashes(self) -> None:
         """Chunkhashes are preserved for large files."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {
                     "path": "data/large/file.bin",
@@ -300,9 +265,35 @@ class TestSubtreeManifestV2025:
 
         assert result.paths[0].chunkhashes == ["c1", "c2"]
 
+
+
+class TestSubtreeManifestDiff:
+    """Tests for subtree extraction with diff manifests."""
+
+    def _create_rel_diff(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> RelDiffManifest:
+        """Helper to create a RelDiffManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=total_size,
+            parent_manifest_hash="parent123",
+        )
+
     def test_deleted_markers_preserved(self) -> None:
         """Deleted markers are preserved and rebased."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_diff(
             files=[
                 {"path": "assets/textures/old.png", "deleted": True},
             ],
@@ -314,28 +305,43 @@ class TestSubtreeManifestV2025:
 
         result = subtree_manifest(manifest, "assets/textures")
 
+        assert isinstance(result, RelDiffManifest)
         assert len(result.paths) == 1
         assert result.paths[0].path == "old.png"
         assert result.paths[0].deleted is True
+
+    def test_discards_parent_manifest_hash(self) -> None:
+        """Parent manifest hash is discarded for diff manifests (subtree changes the root)."""
+        manifest = self._create_rel_diff(
+            files=[
+                {"path": "assets/textures/file.png", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+        )
+
+        result = subtree_manifest(manifest, "assets/textures")
+
+        # Parent manifest hash should be None because the subtree operation changes
+        # the root path, making the original parent manifest hash invalid
+        assert result.parentManifestHash is None
 
 
 class TestSubtreeManifestSymlinks:
     """Tests for symlink handling in subtree extraction."""
 
-    def _create_v2025_manifest(
+    def _create_rel_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -344,7 +350,7 @@ class TestSubtreeManifestSymlinks:
 
     def test_symlink_within_subtree_preserved(self) -> None:
         """Symlinks pointing within subtree are preserved."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 # Target is relative to manifest root, not to symlink location
@@ -364,7 +370,7 @@ class TestSubtreeManifestSymlinks:
 
     def test_escaping_symlink_collapsed(self) -> None:
         """Escaping symlinks are collapsed with COLLAPSE_ESCAPING."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 # Target is relative to manifest root - points outside subtree
@@ -391,7 +397,7 @@ class TestSubtreeManifestSymlinks:
 
     def test_escaping_symlink_excluded(self) -> None:
         """Escaping symlinks are excluded with EXCLUDE policy."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 # Target is relative to manifest root - points outside subtree
@@ -408,7 +414,7 @@ class TestSubtreeManifestSymlinks:
 
     def test_collapse_all_symlinks(self) -> None:
         """All symlinks are collapsed with COLLAPSE policy."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 # Target is relative to manifest root
@@ -427,31 +433,9 @@ class TestSubtreeManifestSymlinks:
         assert paths_by_name["current"].symlink_target is None
         assert paths_by_name["current"].hash == "h1"
 
-    def test_symlink_target_rebased(self) -> None:
-        """Preserved symlink targets are rebased correctly."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "a/b/c/target.txt", "hash": "h1", "size": 100, "mtime": 1000},
-                # Target is relative to manifest root
-                {"path": "a/b/c/sub/link.txt", "symlink_target": "a/b/c/target.txt"},
-            ],
-            dirs=[
-                {"path": "a"},
-                {"path": "a/b"},
-                {"path": "a/b/c"},
-                {"path": "a/b/c/sub"},
-            ],
-        )
-
-        result = subtree_manifest(manifest, "a/b/c", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-
-        link_entry = next(p for p in result.paths if p.path == "sub/link.txt")
-        # Target should be rebased relative to new root
-        assert link_entry.symlink_target == "target.txt"
-
     def test_symlink_to_missing_target_excluded(self) -> None:
         """Symlinks to missing targets are excluded with warning."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 # Symlink to non-existent target (relative to manifest root)
@@ -476,15 +460,30 @@ class TestSubtreeManifestSymlinks:
 class TestSubtreeManifestValidation:
     """Tests for validation and error handling."""
 
-    def _create_v2025_manifest(
+    def _create_rel_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
-        return AssetManifest2025(
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        return RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            paths=file_entries,
+            total_size=0,
+        )
+
+    def _create_abs_snapshot(
+        self,
+        files: List[dict],
+        dirs: List[dict] | None = None,
+    ) -> AbsSnapshotManifest:
+        """Helper to create an AbsSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -493,8 +492,8 @@ class TestSubtreeManifestValidation:
 
     def test_preserve_policy_raises_error(self) -> None:
         """PRESERVE policy raises ValueError."""
-        manifest = self._create_v2025_manifest(
-            files=[{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
+        manifest = self._create_rel_snapshot(
+            files=[{"path": "subdir/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
         with pytest.raises(ValueError, match="preserve.*not supported"):
@@ -502,8 +501,8 @@ class TestSubtreeManifestValidation:
 
     def test_transitive_include_targets_raises_error(self) -> None:
         """TRANSITIVE_INCLUDE_TARGETS policy raises ValueError."""
-        manifest = self._create_v2025_manifest(
-            files=[{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
+        manifest = self._create_rel_snapshot(
+            files=[{"path": "subdir/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
         with pytest.raises(ValueError, match="transitive_include_targets.*not supported"):
@@ -513,7 +512,7 @@ class TestSubtreeManifestValidation:
 
     def test_empty_subtree_raises_error(self) -> None:
         """Empty subtree path raises ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -528,7 +527,7 @@ class TestSubtreeManifestValidation:
         else:
             abs_path = "/home/user/file.txt"
 
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_snapshot(
             files=[{"path": abs_path, "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -537,7 +536,7 @@ class TestSubtreeManifestValidation:
 
     def test_absolute_subtree_with_relative_manifest_raises_error(self) -> None:
         """Absolute subtree with relative manifest paths raises ValueError."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[{"path": "assets/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
@@ -551,23 +550,24 @@ class TestSubtreeManifestValidation:
             subtree_manifest(manifest, abs_subtree)
 
 
+
 class TestSubtreeManifestAbsolutePaths:
     """Tests for subtree extraction with absolute paths."""
 
-    def _create_v2025_manifest(
+    def _create_abs_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> AbsSnapshotManifest:
+        """Helper to create an AbsSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -582,7 +582,7 @@ class TestSubtreeManifestAbsolutePaths:
         else:
             base = "/projects/scene"
 
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_snapshot(
             files=[
                 {
                     "path": f"{base}/assets/textures/wood.png",
@@ -605,7 +605,8 @@ class TestSubtreeManifestAbsolutePaths:
 
         result = subtree_manifest(manifest, f"{base}/assets/textures")
 
-        # Output should have relative paths
+        # Output should be RelSnapshotManifest with relative paths
+        assert isinstance(result, RelSnapshotManifest)
         file_paths = {p.path for p in result.paths}
         assert file_paths == {"wood.png", "metal.png"}
         # Verify paths are relative (don't start with / or drive letter)
@@ -615,10 +616,8 @@ class TestSubtreeManifestAbsolutePaths:
 
     def test_posix_root_subtree(self) -> None:
         """POSIX root '/' subtree extracts all files with paths relative to root."""
-        from unittest.mock import patch
-
         with patch.object(os, "name", "posix"):
-            manifest = self._create_v2025_manifest(
+            manifest = self._create_abs_snapshot(
                 files=[
                     {"path": "/home/user/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
                     {"path": "/var/data/other.txt", "hash": "h2", "size": 200, "mtime": 2000},
@@ -648,20 +647,20 @@ class TestSubtreeManifestAbsolutePaths:
 class TestSubtreeManifestDirectorySymlinks:
     """Tests for collapsing symlinks that point to directories."""
 
-    def _create_v2025_manifest(
+    def _create_rel_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -670,7 +669,7 @@ class TestSubtreeManifestDirectorySymlinks:
 
     def test_directory_symlink_collapsed(self) -> None:
         """Symlink to directory is collapsed to include all directory contents."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 # Target is relative to manifest root - points outside subtree
                 {"path": "assets/textures/link", "symlink_target": "assets/shared/v2"},
@@ -697,7 +696,7 @@ class TestSubtreeManifestDirectorySymlinks:
     def test_directory_symlink_collapsed_with_implicit_dirs(self) -> None:
         """Symlink to directory works even when dirs list doesn't include all parent dirs."""
         # Create manifest WITHOUT explicit dir entries - dirs are implicit from file paths
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 # Target is relative to manifest root - points outside subtree
                 {"path": "assets/textures/link", "symlink_target": "assets/shared/v2"},
@@ -718,7 +717,7 @@ class TestSubtreeManifestDirectorySymlinks:
 
     def test_directory_symlink_with_nested_symlink_collapsed(self) -> None:
         """Symlink to directory containing nested symlinks recursively collapses all symlinks."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_rel_snapshot(
             files=[
                 # Symlink in subtree pointing to a directory outside subtree
                 {"path": "assets/textures/link", "symlink_target": "assets/shared/v2"},
@@ -757,69 +756,24 @@ class TestSubtreeManifestDirectorySymlinks:
         assert paths_by_name["link/nested_link"].size == 200
         assert paths_by_name["link/nested_link"].symlink_target is None
 
-    def test_directory_symlink_with_nested_symlink_to_directory(self) -> None:
-        """Nested symlink pointing to a directory is recursively collapsed."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                # Symlink in subtree pointing to a directory outside subtree
-                {"path": "assets/textures/link", "symlink_target": "assets/shared"},
-                # Directory contains a nested symlink pointing to another directory
-                {"path": "assets/shared/nested_dir_link", "symlink_target": "assets/data"},
-                {"path": "assets/shared/file.png", "hash": "h1", "size": 100, "mtime": 1000},
-                # Files in the nested directory target
-                {"path": "assets/data/a.png", "hash": "h2", "size": 200, "mtime": 2000},
-                {"path": "assets/data/b.png", "hash": "h3", "size": 300, "mtime": 3000},
-            ],
-            dirs=[
-                {"path": "assets"},
-                {"path": "assets/textures"},
-                {"path": "assets/shared"},
-                {"path": "assets/data"},
-            ],
-        )
-
-        result = subtree_manifest(
-            manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
-        )
-
-        paths = {p.path for p in result.paths}
-
-        # Regular file should be collapsed
-        assert "link/file.png" in paths
-
-        # Nested directory symlink should be recursively collapsed
-        # The symlink "nested_dir_link" pointed to "assets/data" which contains a.png and b.png
-        assert "link/nested_dir_link/a.png" in paths
-        assert "link/nested_dir_link/b.png" in paths
-
-        # Verify the files have correct content
-        paths_by_name = {p.path: p for p in result.paths}
-        assert paths_by_name["link/nested_dir_link/a.png"].hash == "h2"
-        assert paths_by_name["link/nested_dir_link/b.png"].hash == "h3"
-
 
 class TestPathSeparatorHandling:
-    """Tests for path separator handling across platforms.
+    """Tests for path separator handling across platforms."""
 
-    These tests verify that:
-    - On Windows: backslashes in input paths are converted to forward slashes
-    - On POSIX: backslashes are preserved as valid filename characters
-    """
-
-    def _create_v2025_manifest(
+    def _create_rel_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -828,8 +782,6 @@ class TestPathSeparatorHandling:
 
     def test_normalize_subtree_path_converts_backslashes_on_windows(self) -> None:
         """On Windows, backslashes in subtree path are converted to forward slashes."""
-        from unittest.mock import patch
-
         with patch(
             "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"
         ):
@@ -839,8 +791,6 @@ class TestPathSeparatorHandling:
 
     def test_normalize_subtree_path_preserves_backslashes_on_posix(self) -> None:
         """On POSIX, backslashes in subtree path are preserved as valid filename characters."""
-        from unittest.mock import patch
-
         with patch(
             "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name",
             "posix",
@@ -851,48 +801,12 @@ class TestPathSeparatorHandling:
             # On POSIX, backslashes should NOT be converted - they're valid filename chars
             assert result == "assets\\textures"
 
-    def test_subtree_with_backslash_filename_on_posix(self) -> None:
-        """On POSIX, files with backslashes in names are handled correctly."""
-        from unittest.mock import patch
-
-        # Patch os.name in both modules - base_manifest (for manifest creation)
-        # and _subtree_manifest (for subtree operation)
-        with patch(
-            "deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"
-        ), patch(
-            "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name",
-            "posix",
-        ):
-            # Create a manifest with a file that has a backslash in its name (valid on POSIX)
-            manifest = self._create_v2025_manifest(
-                files=[
-                    # A file named "file\with\backslashes.txt" (single filename with backslashes)
-                    {
-                        "path": "assets/file\\with\\backslashes.txt",
-                        "hash": "h1",
-                        "size": 100,
-                        "mtime": 1000,
-                    },
-                    {"path": "assets/normal.txt", "hash": "h2", "size": 200, "mtime": 2000},
-                ],
-                dirs=[{"path": "assets"}],
-            )
-
-            result = subtree_manifest(manifest, "assets")
-
-            paths = {p.path for p in result.paths}
-            # The backslash filename should be preserved as-is
-            assert "file\\with\\backslashes.txt" in paths
-            assert "normal.txt" in paths
-
     def test_subtree_with_backslash_in_subtree_param_on_windows(self) -> None:
         """On Windows, backslashes in subtree parameter are normalized."""
-        from unittest.mock import patch
-
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), patch(
+        with patch(
             "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"
-        ):
-            manifest = self._create_v2025_manifest(
+        ), patch("deadline.job_attachments.asset_manifests.manifest.os.name", "nt"):
+            manifest = self._create_rel_snapshot(
                 files=[
                     {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 ],
@@ -907,28 +821,22 @@ class TestPathSeparatorHandling:
 
 
 class TestSubtreeManifestUNCPaths:
-    """Tests for Windows UNC path handling in subtree extraction.
+    """Tests for Windows UNC path handling in subtree extraction."""
 
-    These tests verify that:
-    - UNC paths (//server/share/...) are handled correctly
-    - The dir_lookup building doesn't infinite loop on UNC paths
-    - Subtree extraction works with UNC path roots
-    """
-
-    def _create_v2025_manifest(
+    def _create_abs_snapshot(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    ) -> AbsSnapshotManifest:
+        """Helper to create an AbsSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -938,7 +846,7 @@ class TestSubtreeManifestUNCPaths:
     @patch.object(os, "name", "nt")
     def test_unc_path_subtree_extraction(self) -> None:
         """UNC path subtree extraction works correctly."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_snapshot(
             files=[
                 {
                     "path": "//server/share/assets/textures/wood.png",
@@ -974,12 +882,8 @@ class TestSubtreeManifestUNCPaths:
 
     @patch.object(os, "name", "nt")
     def test_unc_path_deep_nesting_no_infinite_loop(self) -> None:
-        """Deeply nested UNC paths don't cause infinite loop in dir_lookup building.
-
-        This tests the fix for posixpath.dirname("//server") returning "//server",
-        which previously caused an infinite loop.
-        """
-        manifest = self._create_v2025_manifest(
+        """Deeply nested UNC paths don't cause infinite loop in dir_lookup building."""
+        manifest = self._create_abs_snapshot(
             files=[
                 {
                     "path": "//server/share/a/b/c/d/e/f/file.txt",
@@ -998,41 +902,9 @@ class TestSubtreeManifestUNCPaths:
         assert file_paths == {"d/e/f/file.txt"}
 
     @patch.object(os, "name", "nt")
-    def test_unc_path_with_symlink_collapse(self) -> None:
-        """UNC paths with symlinks that need collapsing work correctly."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {
-                    "path": "//server/share/project/link",
-                    "symlink_target": "//server/share/shared/data",
-                },
-                {
-                    "path": "//server/share/shared/data/file.txt",
-                    "hash": "h1",
-                    "size": 100,
-                    "mtime": 1000,
-                },
-            ],
-            dirs=[
-                {"path": "//server/share"},
-                {"path": "//server/share/project"},
-                {"path": "//server/share/shared"},
-                {"path": "//server/share/shared/data"},
-            ],
-        )
-
-        result = subtree_manifest(
-            manifest, "//server/share/project", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
-        )
-
-        file_paths = {p.path for p in result.paths}
-        # The symlink should be collapsed to include the directory contents
-        assert "link/file.txt" in file_paths
-
-    @patch.object(os, "name", "nt")
     def test_unc_path_multiple_servers(self) -> None:
         """Manifest with files from multiple UNC servers works correctly."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_abs_snapshot(
             files=[
                 {
                     "path": "//server1/share/assets/file1.txt",
@@ -1061,215 +933,3 @@ class TestSubtreeManifestUNCPaths:
         file_paths = {p.path for p in result.paths}
         # Only files from server1 should be included
         assert file_paths == {"file1.txt", "file2.txt"}
-
-    @patch.object(os, "name", "nt")
-    def test_unc_path_share_root_subtree(self) -> None:
-        """Extracting subtree at UNC share root level works."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {
-                    "path": "//server/share/file1.txt",
-                    "hash": "h1",
-                    "size": 100,
-                    "mtime": 1000,
-                },
-                {
-                    "path": "//server/share/subdir/file2.txt",
-                    "hash": "h2",
-                    "size": 200,
-                    "mtime": 2000,
-                },
-            ],
-            dirs=[
-                {"path": "//server/share"},
-                {"path": "//server/share/subdir"},
-            ],
-        )
-
-        result = subtree_manifest(manifest, "//server/share")
-
-        file_paths = {p.path for p in result.paths}
-        assert file_paths == {"file1.txt", "subdir/file2.txt"}
-
-
-class TestSubtreeManifestRelativePaths:
-    """Tests for relative path edge cases in subtree extraction.
-
-    These tests verify handling of:
-    - Relative paths with various directory structures
-    - Edge cases that might trip up path manipulation
-    """
-
-    def _create_v2025_manifest(
-        self,
-        files: List[dict],
-        dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
-        total_size = sum(
-            f.get("size", 0) or 0
-            for f in files
-            if not f.get("deleted") and not f.get("symlink_target")
-        )
-        return AssetManifest2025(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=dir_entries,
-            paths=file_entries,
-            total_size=total_size,
-        )
-
-    def test_relative_path_single_component_subtree(self) -> None:
-        """Single component subtree works with relative paths."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "assets/file1.txt", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "assets/sub/file2.txt", "hash": "h2", "size": 200, "mtime": 2000},
-                {"path": "other/file3.txt", "hash": "h3", "size": 300, "mtime": 3000},
-            ],
-            dirs=[
-                {"path": "assets"},
-                {"path": "assets/sub"},
-                {"path": "other"},
-            ],
-        )
-
-        result = subtree_manifest(manifest, "assets")
-
-        file_paths = {p.path for p in result.paths}
-        assert file_paths == {"file1.txt", "sub/file2.txt"}
-
-    def test_relative_path_deep_subtree(self) -> None:
-        """Deeply nested relative subtree works correctly."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "a/b/c/d/e/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "a/b/c/d/other.txt", "hash": "h2", "size": 200, "mtime": 2000},
-                {"path": "a/b/c/outside.txt", "hash": "h3", "size": 300, "mtime": 3000},
-            ],
-            dirs=[],
-        )
-
-        result = subtree_manifest(manifest, "a/b/c/d")
-
-        file_paths = {p.path for p in result.paths}
-        assert file_paths == {"e/file.txt", "other.txt"}
-
-    def test_relative_path_similar_prefixes(self) -> None:
-        """Paths with similar prefixes are correctly distinguished."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "assets/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "assets2/file.txt", "hash": "h2", "size": 200, "mtime": 2000},
-                {"path": "assets_backup/file.txt", "hash": "h3", "size": 300, "mtime": 3000},
-            ],
-            dirs=[],
-        )
-
-        result = subtree_manifest(manifest, "assets")
-
-        file_paths = {p.path for p in result.paths}
-        # Only "assets/file.txt" should match, not "assets2" or "assets_backup"
-        assert file_paths == {"file.txt"}
-
-    def test_relative_path_with_symlink_within_subtree(self) -> None:
-        """Relative paths with symlinks pointing within subtree are preserved."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "project/src/link", "symlink_target": "project/src/main.py"},
-            ],
-            dirs=[
-                {"path": "project"},
-                {"path": "project/src"},
-            ],
-        )
-
-        result = subtree_manifest(
-            manifest, "project/src", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
-        )
-
-        paths_by_name = {p.path: p for p in result.paths}
-        assert "main.py" in paths_by_name
-        assert "link" in paths_by_name
-        # Symlink target should be rebased
-        assert paths_by_name["link"].symlink_target == "main.py"
-
-    def test_relative_path_with_escaping_symlink(self) -> None:
-        """Relative paths with escaping symlinks are collapsed correctly."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "project/src/link", "symlink_target": "shared/data.txt"},
-                {"path": "shared/data.txt", "hash": "h1", "size": 100, "mtime": 1000},
-            ],
-            dirs=[
-                {"path": "project"},
-                {"path": "project/src"},
-                {"path": "shared"},
-            ],
-        )
-
-        result = subtree_manifest(
-            manifest, "project/src", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
-        )
-
-        paths_by_name = {p.path: p for p in result.paths}
-        assert "link" in paths_by_name
-        # Symlink should be collapsed to the target's content
-        assert paths_by_name["link"].symlink_target is None
-        assert paths_by_name["link"].hash == "h1"
-
-    def test_relative_path_empty_result(self) -> None:
-        """Subtree with no matching relative paths returns empty manifest."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "other/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-            ],
-            dirs=[{"path": "other"}],
-        )
-
-        result = subtree_manifest(manifest, "nonexistent")
-
-        assert len(result.paths) == 0
-        assert result.totalSize == 0
-
-    def test_relative_path_preserves_all_metadata(self) -> None:
-        """All file metadata is preserved when extracting relative path subtree."""
-        # 256MB chunk size, so 3 chunks requires > 512MB (2 chunks) and <= 768MB (3 chunks)
-        # Use 700MB = 734003200 bytes
-        large_file_size = 700 * 1024 * 1024
-        manifest = self._create_v2025_manifest(
-            files=[
-                {
-                    "path": "project/data/large.bin",
-                    "chunkhashes": ["c1", "c2", "c3"],
-                    "size": large_file_size,
-                    "mtime": 1234567890,
-                    "runnable": False,
-                },
-                {
-                    "path": "project/bin/script.sh",
-                    "hash": "h1",
-                    "size": 500,
-                    "mtime": 1234567891,
-                    "runnable": True,
-                },
-            ],
-            dirs=[],
-        )
-
-        result = subtree_manifest(manifest, "project")
-
-        paths_by_name = {p.path: p for p in result.paths}
-
-        # Check large file metadata
-        large_file = paths_by_name["data/large.bin"]
-        assert large_file.chunkhashes == ["c1", "c2", "c3"]
-        assert large_file.size == large_file_size
-        assert large_file.mtime == 1234567890
-
-        # Check runnable file metadata
-        script = paths_by_name["bin/script.sh"]
-        assert script.runnable is True
-        assert script.hash == "h1"

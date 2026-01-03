@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os
 import posixpath
-from typing import Any, Callable, List, Union
+from typing import Any, Callable, List
 
 from ..manifest import (
     AbsDiffManifest,
@@ -33,11 +33,9 @@ from ..manifest import (
     ManifestDirectoryPath,
     ManifestFilePath,
     RelDiffManifest,
+    RelManifest,
     RelSnapshotManifest,
 )
-
-# Type alias for relative-path manifests (valid input types)
-RelManifest = Union[RelSnapshotManifest, RelDiffManifest]
 
 
 def join_manifest(

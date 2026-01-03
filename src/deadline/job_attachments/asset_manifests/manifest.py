@@ -523,3 +523,5 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
 # Type aliases for clearer function signatures
 SnapshotManifest = Union[AbsSnapshotManifest, RelSnapshotManifest]
 DiffManifest = Union[AbsDiffManifest, RelDiffManifest]
+AbsManifest = Union[AbsSnapshotManifest, AbsDiffManifest]
+RelManifest = Union[RelSnapshotManifest, RelDiffManifest]

@@ -4,7 +4,7 @@
 Module for extracting a subtree from a manifest.
 
 This module implements the SUBTREE operation from the composable manifest operations design:
-    SUBTREE: (Manifest, subtree_path) → Manifest
+    SUBTREE: (Manifest, subtree_path) → RelManifest
 
 The SUBTREE operation extracts a portion of a manifest rooted at a subdirectory,
 producing a new manifest with paths relative to the new root.
@@ -13,7 +13,7 @@ Key behaviors:
 - Filters to entries within the subtree
 - Rebases paths relative to the new root (strips the subtree prefix)
 - Handles symlinks according to symlink_policy
-- Output always uses relative paths
+- Output always uses relative paths (RelSnapshotManifest or RelDiffManifest)
 
 Path Style Requirements:
 - The subtree path must match the manifest's path style (both relative or both absolute)
@@ -23,34 +23,36 @@ Symlink Handling:
 - Symlinks that were "within root" may now "escape" the new subtree root
 - symlink_policy controls how escaping symlinks are handled
 - PRESERVE and TRANSITIVE_INCLUDE_TARGETS are not supported (output must be relative)
+
+All composable operations use unified manifest classes from manifest.py internally.
 """
 
 from __future__ import annotations
 
 import os
 import posixpath
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ..base_manifest import BaseAssetManifest
-from ..versions import ManifestVersion, SymlinkPolicy
-from ..v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
+from ..manifest import (
+    AbsDiffManifest,
+    AbsSnapshotManifest,
+    Manifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    RelDiffManifest,
+    RelManifest,
+    RelSnapshotManifest,
 )
-from ..v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
+from ..versions import SymlinkPolicy
 
 
 def subtree_manifest(
-    manifest: BaseAssetManifest,
+    manifest: Manifest,
     subtree: str,
     *,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> RelManifest:
     """
     Extract a subtree from a manifest, producing a new manifest rooted at the subdirectory.
 
@@ -66,6 +68,7 @@ def subtree_manifest(
         - Only entries within the subtree
         - Paths rebased relative to the new root
         - Symlinks handled according to symlink_policy
+        - Always returns RelSnapshotManifest or RelDiffManifest (relative paths)
 
     Raises:
         ValueError: If subtree path style doesn't match manifest path style
@@ -88,32 +91,12 @@ def subtree_manifest(
     # Validate path style consistency
     _validate_path_style_consistency(manifest, subtree)
 
-    version = manifest.manifestVersion
-
-    if version == ManifestVersion.v2023_03_03:
-        if not isinstance(manifest, AssetManifest2023):
-            raise TypeError(
-                f"Expected AssetManifest2023 for version {version}, got {type(manifest).__name__}"
-            )
-        return _subtree_manifest_v2023(
-            manifest=manifest,
-            subtree=subtree,
-            symlink_policy=symlink_policy,
-            print_function_callback=print_function_callback,
-        )
-    elif version == ManifestVersion.v2025_12_04_beta:
-        if not isinstance(manifest, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {version}, got {type(manifest).__name__}"
-            )
-        return _subtree_manifest_v2025(
-            manifest=manifest,
-            subtree=subtree,
-            symlink_policy=symlink_policy,
-            print_function_callback=print_function_callback,
-        )
-    else:
-        raise ValueError(f"Unsupported manifest version: {version}")
+    return _subtree_manifest(
+        manifest=manifest,
+        subtree=subtree,
+        symlink_policy=symlink_policy,
+        print_function_callback=print_function_callback,
+    )
 
 
 def _normalize_subtree_path(subtree: str) -> str:
@@ -148,7 +131,7 @@ def _is_absolute_path(path: str) -> bool:
     return False
 
 
-def _validate_path_style_consistency(manifest: BaseAssetManifest, subtree: str) -> None:
+def _validate_path_style_consistency(manifest: Manifest, subtree: str) -> None:
     """
     Validate that the subtree path style matches the manifest's path style.
 
@@ -163,8 +146,8 @@ def _validate_path_style_consistency(manifest: BaseAssetManifest, subtree: str) 
         manifest_is_absolute = _is_absolute_path(entry.path)
         break
 
-    # If no paths, check directories (v2025+)
-    if manifest_is_absolute is None and hasattr(manifest, "dirs"):
+    # If no paths, check directories
+    if manifest_is_absolute is None:
         for dir_entry in manifest.dirs:
             manifest_is_absolute = _is_absolute_path(dir_entry.path)
             break
@@ -215,56 +198,14 @@ def _rebase_path(path: str, subtree: str) -> str:
     return path[len(subtree) + 1 :]
 
 
-def _subtree_manifest_v2023(
-    manifest: AssetManifest2023,
+def _subtree_manifest(
+    manifest: Manifest,
     subtree: str,
     symlink_policy: SymlinkPolicy,
     print_function_callback: Callable[[Any], None],
-) -> AssetManifest2023:
+) -> RelManifest:
     """
-    Extract subtree for v2023-03-03 manifests.
-
-    v2023 format doesn't support symlinks, so symlink_policy only affects
-    validation (COLLAPSE and EXCLUDE are both no-ops since there are no symlinks).
-    """
-    result_paths: List[ManifestPath2023] = []
-    total_size = 0
-
-    for entry in manifest.paths:
-        if not _is_within_subtree(entry.path, subtree):
-            continue
-
-        rebased_path = _rebase_path(entry.path, subtree)
-        if not rebased_path:
-            # Skip the subtree directory itself (shouldn't happen for files)
-            continue
-
-        result_paths.append(
-            ManifestPath2023(
-                path=rebased_path,
-                hash=entry.hash,
-                size=entry.size,
-                mtime=entry.mtime,
-            )
-        )
-        total_size += entry.size
-        print_function_callback(f"Included: {rebased_path}")
-
-    return AssetManifest2023(
-        hash_alg=manifest.hashAlg,
-        paths=result_paths,
-        total_size=total_size,
-    )
-
-
-def _subtree_manifest_v2025(
-    manifest: AssetManifest2025,
-    subtree: str,
-    symlink_policy: SymlinkPolicy,
-    print_function_callback: Callable[[Any], None],
-) -> AssetManifest2025:
-    """
-    Extract subtree for v2025-12-04-beta manifests.
+    Extract subtree from a manifest using unified manifest classes.
 
     Handles:
     - Regular files: rebased if within subtree
@@ -273,7 +214,7 @@ def _subtree_manifest_v2025(
     - Deleted markers: rebased if within subtree
     """
     # Build lookup tables for collapse operations
-    file_lookup: Dict[str, ManifestFilePath2025] = {e.path: e for e in manifest.paths}
+    file_lookup: Dict[str, ManifestFilePath] = {e.path: e for e in manifest.paths}
 
     # Build dir_lookup from explicit dirs AND implicit parent directories of files
     dir_lookup: Set[str] = {d.path for d in manifest.dirs}
@@ -290,8 +231,8 @@ def _subtree_manifest_v2025(
                 break
             parent = new_parent
 
-    result_paths: List[ManifestFilePath2025] = []
-    result_dirs: List[ManifestDirectoryPath2025] = []
+    result_paths: List[ManifestFilePath] = []
+    result_dirs: List[ManifestDirectoryPath] = []
     total_size = 0
 
     # Process directories
@@ -305,7 +246,7 @@ def _subtree_manifest_v2025(
             continue
 
         result_dirs.append(
-            ManifestDirectoryPath2025(
+            ManifestDirectoryPath(
                 path=rebased_path,
                 deleted=dir_entry.deleted,
             )
@@ -338,7 +279,7 @@ def _subtree_manifest_v2025(
         else:
             # Regular file or deleted marker
             result_paths.append(
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=rebased_path,
                     hash=entry.hash,
                     size=entry.size,
@@ -353,26 +294,38 @@ def _subtree_manifest_v2025(
                 total_size += entry.size
             print_function_callback(f"Included: {rebased_path}")
 
-    return AssetManifest2025(
-        hash_alg=manifest.hashAlg,
-        dirs=result_dirs,
-        paths=result_paths,
-        total_size=total_size,
-        manifest_type=manifest.manifestType,
-        parent_manifest_hash=manifest.parentManifestHash,
-    )
+    # Determine output type: always relative, preserve snapshot/diff
+    # Note: parentManifestHash is NOT preserved because the subtree operation
+    # changes the root path, making the original parent manifest hash invalid.
+    is_snapshot = isinstance(manifest, (AbsSnapshotManifest, RelSnapshotManifest))
+
+    if is_snapshot:
+        return RelSnapshotManifest(
+            hash_alg=manifest.hashAlg,
+            dirs=result_dirs,
+            paths=result_paths,
+            total_size=total_size,
+        )
+    else:
+        return RelDiffManifest(
+            hash_alg=manifest.hashAlg,
+            dirs=result_dirs,
+            paths=result_paths,
+            total_size=total_size,
+        )
+
 
 
 def _handle_symlink_in_subtree(
-    entry: ManifestFilePath2025,
+    entry: ManifestFilePath,
     symlink_target: str,
     rebased_path: str,
     subtree: str,
     symlink_policy: SymlinkPolicy,
-    file_lookup: Dict[str, ManifestFilePath2025],
+    file_lookup: Dict[str, ManifestFilePath],
     dir_lookup: Set[str],
     print_function_callback: Callable[[Any], None],
-) -> tuple[List[ManifestFilePath2025], int]:
+) -> Tuple[List[ManifestFilePath], int]:
     """
     Handle a symlink entry when extracting a subtree.
 
@@ -399,7 +352,7 @@ def _handle_symlink_in_subtree(
         print_function_callback(f"Preserved symlink: {rebased_path} -> {rebased_target}")
         return (
             [
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=rebased_path,
                     symlink_target=rebased_target,
                 )
@@ -425,10 +378,10 @@ def _handle_symlink_in_subtree(
 def _collapse_symlink(
     rebased_path: str,
     target: str,
-    file_lookup: Dict[str, ManifestFilePath2025],
+    file_lookup: Dict[str, ManifestFilePath],
     dir_lookup: Set[str],
     print_function_callback: Callable[[Any], None],
-) -> tuple[List[ManifestFilePath2025], int]:
+) -> Tuple[List[ManifestFilePath], int]:
     """
     Collapse a symlink by replacing it with its target's content.
 
@@ -461,7 +414,7 @@ def _collapse_symlink(
         size = target_entry.size if target_entry.size is not None else 0
         return (
             [
-                ManifestFilePath2025(
+                ManifestFilePath(
                     path=rebased_path,
                     hash=target_entry.hash,
                     size=target_entry.size,
@@ -478,7 +431,7 @@ def _collapse_symlink(
     # Check if target is a directory
     if target in dir_lookup:
         # Collect all entries under this directory
-        result_entries: List[ManifestFilePath2025] = []
+        result_entries: List[ManifestFilePath] = []
         total_size = 0
         target_prefix = target + "/"
 
@@ -502,7 +455,7 @@ def _collapse_symlink(
                     total_size += nested_size
                 else:
                     result_entries.append(
-                        ManifestFilePath2025(
+                        ManifestFilePath(
                             path=new_path,
                             hash=entry.hash,
                             size=entry.size,
