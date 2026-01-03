@@ -4,10 +4,11 @@
 Tests for join_manifest and related functions.
 
 These tests cover:
-- Basic prefix joining for both v2023 and v2025 formats
+- Basic prefix joining for unified manifest classes
 - Relative and absolute prefix handling
-- Symlink target prefixing (v2025 only)
-- Directory prefixing (v2025 only)
+- Symlink target prefixing
+- Directory prefixing
+- Output type determination based on prefix (absolute vs relative)
 - Edge cases (empty prefix, special characters, etc.)
 """
 
@@ -22,16 +23,18 @@ from deadline.job_attachments.asset_manifests._operations import (
 from deadline.job_attachments.asset_manifests._operations._join_manifest import (
     _normalize_prefix,
     _join_path,
+    _is_absolute_path,
+    _get_output_manifest_type,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
-)
-from deadline.job_attachments.asset_manifests.v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
+from deadline.job_attachments.asset_manifests.versions import ManifestType
+from deadline.job_attachments.asset_manifests.manifest import (
+    ManifestFilePath,
+    ManifestDirectoryPath,
+    AbsSnapshotManifest,
+    AbsDiffManifest,
+    RelSnapshotManifest,
+    RelDiffManifest,
 )
 
 
@@ -42,11 +45,6 @@ class TestHelperFunctions:
         """Trailing slashes are removed."""
         assert _normalize_prefix("assets/textures/") == "assets/textures"
         assert _normalize_prefix("/projects/scene/") == "/projects/scene"
-
-    def test_normalize_prefix_converts_backslashes(self) -> None:
-        """Backslashes are converted to forward slashes."""
-        assert _normalize_prefix("assets\\textures") == "assets/textures"
-        assert _normalize_prefix("C:\\projects\\scene") == "C:/projects/scene"
 
     def test_normalize_prefix_preserves_leading_slash(self) -> None:
         """Leading slash for absolute paths is preserved."""
@@ -70,103 +68,87 @@ class TestHelperFunctions:
         assert _join_path("C:/a/b", "c/d.txt") == "C:/a/b/c/d.txt"
         assert _join_path("//server/share", "file.txt") == "//server/share/file.txt"
 
+    def test_is_absolute_path_posix(self) -> None:
+        """POSIX absolute paths are detected."""
+        assert _is_absolute_path("/home/user/file.txt") is True
+        assert _is_absolute_path("/") is True
 
-class TestJoinManifestV2023:
-    """Tests for v2023-03-03 manifest joining."""
+    def test_is_absolute_path_windows_drive(self) -> None:
+        """Windows drive letter paths are detected."""
+        assert _is_absolute_path("C:/Users/file.txt") is True
+        assert _is_absolute_path("D:/Projects/file.txt") is True
 
-    def _create_v2023_manifest(self, paths: List[tuple[str, str, int, int]]) -> AssetManifest2023:
-        """Helper to create a v2023 manifest.
+    def test_is_absolute_path_windows_unc(self) -> None:
+        """Windows UNC paths are detected."""
+        assert _is_absolute_path("//server/share/file.txt") is True
 
-        Args:
-            paths: List of (path, hash, size, mtime) tuples
-        """
-        entries = [ManifestPath2023(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
-        total_size = sum(s for _, _, s, _ in paths)
-        return AssetManifest2023(
+    def test_is_absolute_path_relative(self) -> None:
+        """Relative paths are not absolute."""
+        assert _is_absolute_path("assets/file.txt") is False
+        assert _is_absolute_path("file.txt") is False
+        assert _is_absolute_path("./file.txt") is False
+        assert _is_absolute_path("../file.txt") is False
+
+    def test_get_output_manifest_type_rel_snapshot_rel_prefix(self) -> None:
+        """RelSnapshotManifest + relative prefix -> RelSnapshotManifest."""
+        manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
-            paths=entries,
-            total_size=total_size,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
         )
+        result = _get_output_manifest_type(manifest, "prefix")
+        assert result is RelSnapshotManifest
 
-    def test_basic_join_relative_prefix(self) -> None:
-        """Basic join with relative prefix works."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("wood.png", "hash1", 100, 1000),
-                ("metal.png", "hash2", 200, 2000),
-            ]
+    def test_get_output_manifest_type_rel_snapshot_abs_prefix(self) -> None:
+        """RelSnapshotManifest + absolute prefix -> AbsSnapshotManifest."""
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
         )
+        result = _get_output_manifest_type(manifest, "/prefix")
+        assert result is AbsSnapshotManifest
 
-        result = join_manifest(manifest, "assets/textures")
-
-        paths = {p.path for p in result.paths}
-        assert paths == {"assets/textures/wood.png", "assets/textures/metal.png"}
-
-    def test_basic_join_absolute_prefix(self) -> None:
-        """Basic join with absolute prefix produces absolute paths."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("wood.png", "hash1", 100, 1000),
-                ("sub/metal.png", "hash2", 200, 2000),
-            ]
+    def test_get_output_manifest_type_rel_diff_rel_prefix(self) -> None:
+        """RelDiffManifest + relative prefix -> RelDiffManifest."""
+        manifest = RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
         )
+        result = _get_output_manifest_type(manifest, "prefix")
+        assert result is RelDiffManifest
 
-        result = join_manifest(manifest, "/projects/scene/assets")
-
-        paths = {p.path for p in result.paths}
-        assert paths == {
-            "/projects/scene/assets/wood.png",
-            "/projects/scene/assets/sub/metal.png",
-        }
-
-    def test_preserves_file_metadata(self) -> None:
-        """File metadata is preserved after joining."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("wood.png", "hash1", 100, 1000),
-            ]
+    def test_get_output_manifest_type_rel_diff_abs_prefix(self) -> None:
+        """RelDiffManifest + absolute prefix -> AbsDiffManifest."""
+        manifest = RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
         )
-
-        result = join_manifest(manifest, "prefix")
-
-        assert len(result.paths) == 1
-        entry = result.paths[0]
-        assert entry.path == "prefix/wood.png"
-        assert entry.hash == "hash1"
-        assert entry.size == 100
-        assert entry.mtime == 1000
-
-    def test_preserves_total_size(self) -> None:
-        """Total size is preserved."""
-        manifest = self._create_v2023_manifest(
-            [
-                ("a.txt", "h1", 100, 1000),
-                ("b.txt", "h2", 200, 2000),
-            ]
-        )
-
-        result = join_manifest(manifest, "prefix")
-
-        assert result.totalSize == 300
+        result = _get_output_manifest_type(manifest, "/prefix")
+        assert result is AbsDiffManifest
 
 
-class TestJoinManifestV2025:
-    """Tests for v2025-12-04-beta manifest joining."""
+class TestJoinManifestRelSnapshot:
+    """Tests for RelSnapshotManifest joining."""
 
-    def _create_v2025_manifest(
-        self,
-        files: List[dict],
-        dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
+    def _create_manifest(
+        self, files: List[dict], dirs: List[dict] | None = None
+    ) -> RelSnapshotManifest:
+        """Helper to create a RelSnapshotManifest."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AssetManifest2025(
+        return RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             paths=file_entries,
@@ -175,7 +157,7 @@ class TestJoinManifestV2025:
 
     def test_basic_join_relative_prefix(self) -> None:
         """Basic join with relative prefix works."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "metal.png", "hash": "h2", "size": 200, "mtime": 2000},
@@ -191,26 +173,9 @@ class TestJoinManifestV2025:
         dir_paths = {d.path for d in result.dirs}
         assert dir_paths == {"assets/textures/sub"}
 
-    def test_basic_join_absolute_prefix(self) -> None:
-        """Basic join with absolute prefix produces absolute paths."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
-            ],
-            dirs=[{"path": "sub"}],
-        )
-
-        result = join_manifest(manifest, "/projects/scene")
-
-        file_paths = {p.path for p in result.paths}
-        assert file_paths == {"/projects/scene/wood.png"}
-
-        dir_paths = {d.path for d in result.dirs}
-        assert dir_paths == {"/projects/scene/sub"}
-
     def test_symlink_targets_prefixed(self) -> None:
         """Symlink targets are also prefixed."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "current", "symlink_target": "wood.png"},
@@ -228,26 +193,38 @@ class TestJoinManifestV2025:
         assert "assets/textures/current" in paths_by_name
         assert paths_by_name["assets/textures/current"].symlink_target == "assets/textures/wood.png"
 
-    def test_symlink_targets_prefixed_absolute(self) -> None:
-        """Symlink targets are prefixed with absolute prefix."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "current", "symlink_target": "wood.png"},
-            ],
+    def test_preserves_file_metadata(self) -> None:
+        """File metadata is preserved after joining."""
+        manifest = self._create_manifest(
+            files=[{"path": "wood.png", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        result = join_manifest(manifest, "/projects/scene")
+        result = join_manifest(manifest, "prefix")
 
-        paths_by_name = {p.path: p for p in result.paths}
-        assert paths_by_name["/projects/scene/current"].symlink_target == "/projects/scene/wood.png"
+        assert len(result.paths) == 1
+        entry = result.paths[0]
+        assert entry.path == "prefix/wood.png"
+        assert entry.hash == "hash1"
+        assert entry.size == 100
+        assert entry.mtime == 1000
+
+    def test_preserves_total_size(self) -> None:
+        """Total size is preserved."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "a.txt", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "b.txt", "hash": "h2", "size": 200, "mtime": 2000},
+            ]
+        )
+
+        result = join_manifest(manifest, "prefix")
+
+        assert result.totalSize == 300
 
     def test_preserves_runnable_flag(self) -> None:
         """Runnable flag is preserved."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True},
-            ],
+        manifest = self._create_manifest(
+            files=[{"path": "script.sh", "hash": "h1", "size": 100, "mtime": 1000, "runnable": True}]
         )
 
         result = join_manifest(manifest, "prefix")
@@ -256,30 +233,98 @@ class TestJoinManifestV2025:
 
     def test_preserves_chunkhashes(self) -> None:
         """Chunkhashes are preserved for large files."""
-        manifest = self._create_v2025_manifest(
+        manifest = self._create_manifest(
             files=[
                 {
                     "path": "large.bin",
                     "chunkhashes": ["c1", "c2"],
                     "size": 512 * 1024 * 1024,
                     "mtime": 1000,
-                },
-            ],
+                }
+            ]
         )
 
         result = join_manifest(manifest, "prefix")
 
         assert result.paths[0].chunkhashes == ["c1", "c2"]
 
+    def test_returns_rel_snapshot_manifest(self) -> None:
+        """Joining RelSnapshotManifest returns RelSnapshotManifest."""
+        manifest = self._create_manifest(
+            files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
+        )
+
+        result = join_manifest(manifest, "prefix")
+
+        assert isinstance(result, RelSnapshotManifest)
+
+
+class TestJoinManifestAbsSnapshot:
+    """Tests for joining with absolute prefix to produce AbsSnapshotManifest."""
+
+    def test_basic_join_absolute_prefix(self) -> None:
+        """Basic join with absolute prefix produces AbsSnapshotManifest."""
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[ManifestDirectoryPath(path="old/sub")],
+            paths=[ManifestFilePath(path="old/wood.png", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+        )
+
+        result = join_manifest(manifest, "/projects/scene")
+
+        file_paths = {p.path for p in result.paths}
+        assert file_paths == {"/projects/scene/old/wood.png"}
+
+        dir_paths = {d.path for d in result.dirs}
+        assert dir_paths == {"/projects/scene/old/sub"}
+
+        assert isinstance(result, AbsSnapshotManifest)
+
+    def test_symlink_targets_prefixed_absolute(self) -> None:
+        """Symlink targets are prefixed with absolute prefix."""
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[
+                ManifestFilePath(path="data/wood.png", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="data/current", symlink_target="data/wood.png"),
+            ],
+            total_size=100,
+        )
+
+        result = join_manifest(manifest, "/projects/scene")
+
+        paths_by_name = {p.path: p for p in result.paths}
+        assert (
+            paths_by_name["/projects/scene/data/current"].symlink_target
+            == "/projects/scene/data/wood.png"
+        )
+
+    def test_returns_abs_snapshot_manifest(self) -> None:
+        """Joining with absolute prefix returns AbsSnapshotManifest."""
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
+        )
+
+        result = join_manifest(manifest, "/prefix")
+
+        assert isinstance(result, AbsSnapshotManifest)
+
+
+class TestJoinManifestDiff:
+    """Tests for diff manifest joining."""
+
     def test_preserves_deleted_markers(self) -> None:
         """Deleted markers are preserved and prefixed."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "old.txt", "deleted": True},
-            ],
-            dirs=[
-                {"path": "old_dir", "deleted": True},
-            ],
+        manifest = RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[ManifestDirectoryPath(path="old_dir", deleted=True)],
+            paths=[ManifestFilePath(path="old.txt", deleted=True)],
+            total_size=0,
         )
 
         result = join_manifest(manifest, "prefix")
@@ -290,47 +335,59 @@ class TestJoinManifestV2025:
         assert result.dirs[0].path == "prefix/old_dir"
         assert result.dirs[0].deleted is True
 
-    def test_preserves_manifest_type(self) -> None:
-        """Manifest type is preserved."""
-        from deadline.job_attachments.asset_manifests.versions import ManifestType
-
-        manifest = AssetManifest2025(
+    def test_preserves_parent_manifest_hash(self) -> None:
+        """Parent manifest hash is preserved."""
+        manifest = RelDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
-            paths=[ManifestFilePath2025(path="file.txt", hash="h1", size=100, mtime=1000)],
+            paths=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
-            manifest_type=ManifestType.DIFF,
             parent_manifest_hash="parent_hash_123",
         )
 
         result = join_manifest(manifest, "prefix")
 
-        assert result.manifestType == ManifestType.DIFF
         assert result.parentManifestHash == "parent_hash_123"
+
+    def test_returns_rel_diff_manifest_with_rel_prefix(self) -> None:
+        """Joining RelDiffManifest with relative prefix returns RelDiffManifest."""
+        manifest = RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
+        )
+
+        result = join_manifest(manifest, "prefix")
+
+        assert isinstance(result, RelDiffManifest)
+        assert result.manifestType == ManifestType.DIFF
+
+    def test_returns_abs_diff_manifest_with_abs_prefix(self) -> None:
+        """Joining RelDiffManifest with absolute prefix returns AbsDiffManifest."""
+        manifest = RelDiffManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
+            total_size=10,
+        )
+
+        result = join_manifest(manifest, "/prefix")
+
+        assert isinstance(result, AbsDiffManifest)
+        assert result.manifestType == ManifestType.DIFF
 
 
 class TestJoinManifestValidation:
     """Tests for validation and error handling."""
 
-    def _create_v2025_manifest(
-        self,
-        files: List[dict],
-        dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
-        return AssetManifest2025(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=dir_entries,
-            paths=file_entries,
-            total_size=0,
-        )
-
     def test_empty_prefix_raises_error(self) -> None:
         """Empty prefix raises ValueError."""
-        manifest = self._create_v2025_manifest(
-            files=[{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
         )
 
         with pytest.raises(ValueError, match="cannot be empty"):
@@ -340,27 +397,13 @@ class TestJoinManifestValidation:
 class TestJoinManifestWindowsPaths:
     """Tests for Windows-style paths."""
 
-    def _create_v2025_manifest(
-        self,
-        files: List[dict],
-        dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
-        return AssetManifest2025(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=dir_entries,
-            paths=file_entries,
-            total_size=0,
-        )
-
     def test_windows_absolute_prefix(self) -> None:
         """Windows-style absolute prefix works."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
-            ],
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
+            total_size=100,
         )
 
         result = join_manifest(manifest, "C:/projects/scene")
@@ -369,10 +412,11 @@ class TestJoinManifestWindowsPaths:
 
     def test_windows_backslash_prefix_normalized(self) -> None:
         """Windows backslash prefix is normalized to forward slashes."""
-        manifest = self._create_v2025_manifest(
-            files=[
-                {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
-            ],
+        manifest = RelSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            paths=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
+            total_size=100,
         )
 
         result = join_manifest(manifest, "C:\\projects\\scene")
@@ -382,114 +426,20 @@ class TestJoinManifestWindowsPaths:
 
 
 class TestPathSeparatorHandling:
-    """Tests for path separator handling across platforms.
-
-    These tests verify that:
-    - On Windows: backslashes in prefix are converted to forward slashes
-    - On POSIX: backslashes are preserved as valid filename characters
-    """
-
-    def _create_v2025_manifest(
-        self,
-        files: List[dict],
-        dirs: List[dict] | None = None,
-    ) -> AssetManifest2025:
-        """Helper to create a v2025 manifest."""
-        file_entries = [ManifestFilePath2025(**f) for f in files]
-        dir_entries = [ManifestDirectoryPath2025(**d) for d in (dirs or [])]
-        return AssetManifest2025(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=dir_entries,
-            paths=file_entries,
-            total_size=0,
-        )
+    """Tests for path separator handling across platforms."""
 
     def test_normalize_prefix_converts_backslashes_on_windows(self) -> None:
         """On Windows, backslashes in prefix are converted to forward slashes."""
-        from unittest.mock import patch
-
         with patch(
             "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"
         ):
             result = _normalize_prefix("C:\\projects\\scene")
-            # On Windows, backslashes should be converted to forward slashes
             assert result == "C:/projects/scene"
 
     def test_normalize_prefix_preserves_backslashes_on_posix(self) -> None:
         """On POSIX, backslashes in prefix are preserved as valid filename characters."""
-        from unittest.mock import patch
-
         with patch(
             "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"
         ):
-            # On POSIX, a backslash is a valid filename character
-            # "dir\\name" is a single directory name containing a backslash
             result = _normalize_prefix("dir\\name")
-            # On POSIX, backslashes should NOT be converted - they're valid filename chars
             assert result == "dir\\name"
-
-    def test_join_with_backslash_prefix_on_windows(self) -> None:
-        """On Windows, backslashes in prefix are normalized to forward slashes."""
-        from unittest.mock import patch
-
-        with patch("deadline.job_attachments.asset_manifests.base_manifest.os.name", "nt"), patch(
-            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "nt"
-        ):
-            manifest = self._create_v2025_manifest(
-                files=[
-                    {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
-                ],
-            )
-
-            result = join_manifest(manifest, "C:\\projects\\scene")
-
-            assert result.paths[0].path == "C:/projects/scene/wood.png"
-
-    def test_join_with_backslash_prefix_on_posix(self) -> None:
-        """On POSIX, backslashes in prefix are preserved as valid directory name characters."""
-        from unittest.mock import patch
-
-        with patch(
-            "deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"
-        ), patch(
-            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"
-        ):
-            manifest = self._create_v2025_manifest(
-                files=[
-                    {"path": "wood.png", "hash": "h1", "size": 100, "mtime": 1000},
-                ],
-            )
-
-            # On POSIX, "dir\\name" is a single directory name containing a backslash
-            result = join_manifest(manifest, "dir\\name")
-
-            # The backslash should be preserved - it's part of the directory name
-            assert result.paths[0].path == "dir\\name/wood.png"
-
-    def test_join_preserves_backslash_filenames_on_posix(self) -> None:
-        """On POSIX, files with backslashes in names are handled correctly."""
-        from unittest.mock import patch
-
-        # Patch os.name in base_manifest for manifest creation
-        with patch(
-            "deadline.job_attachments.asset_manifests.base_manifest.os.name", "posix"
-        ), patch(
-            "deadline.job_attachments.asset_manifests._operations._join_manifest.os.name", "posix"
-        ):
-            # Create a manifest with a file that has a backslash in its name (valid on POSIX)
-            manifest = self._create_v2025_manifest(
-                files=[
-                    # A file named "file\with\backslashes.txt" (single filename with backslashes)
-                    {
-                        "path": "file\\with\\backslashes.txt",
-                        "hash": "h1",
-                        "size": 100,
-                        "mtime": 1000,
-                    },
-                ],
-            )
-
-            result = join_manifest(manifest, "prefix")
-
-            # The backslash filename should be preserved as-is
-            assert result.paths[0].path == "prefix/file\\with\\backslashes.txt"

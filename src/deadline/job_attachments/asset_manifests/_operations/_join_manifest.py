@@ -4,55 +4,61 @@
 Module for joining a prefix to all paths in a manifest.
 
 This module implements the JOIN operation from the composable manifest operations design:
-    JOIN: (Manifest, prefix) → Manifest
+    JOIN: (RelManifest, prefix) → Manifest
 
 The JOIN operation adds a prefix to all paths in a manifest, producing a new manifest
 with prefixed paths. This is the inverse of the SUBTREE operation.
 
 Key behaviors:
+- Input must be a relative-path manifest (RelSnapshotManifest or RelDiffManifest)
 - Joins prefix to all file paths, directory paths, and symlink targets
-- If prefix is absolute, output paths are absolute
-- If prefix is relative, output paths remain relative (but prefixed)
+- If prefix is absolute, output is an absolute-path manifest (AbsSnapshotManifest or AbsDiffManifest)
+- If prefix is relative, output is a relative-path manifest (RelSnapshotManifest or RelDiffManifest)
+
+All composable operations use v2025 structure and semantics internally. Support for
+v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
+deletions, and other v2025-only features.
 """
 
 from __future__ import annotations
 
 import os
 import posixpath
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Union
 
-from ..base_manifest import BaseAssetManifest
-from ..versions import ManifestVersion
-from ..v2023_03_03.asset_manifest import (
-    AssetManifest as AssetManifest2023,
-    ManifestPath as ManifestPath2023,
+from ..manifest import (
+    AbsDiffManifest,
+    AbsSnapshotManifest,
+    Manifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    RelDiffManifest,
+    RelSnapshotManifest,
 )
-from ..v2025_12_04.asset_manifest import (
-    AssetManifest as AssetManifest2025,
-    ManifestDirectoryPath as ManifestDirectoryPath2025,
-    ManifestFilePath as ManifestFilePath2025,
-)
+
+# Type alias for relative-path manifests (valid input types)
+RelManifest = Union[RelSnapshotManifest, RelDiffManifest]
 
 
 def join_manifest(
-    manifest: BaseAssetManifest,
+    manifest: RelManifest,
     prefix: str,
     *,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> Manifest:
     """
     Join a prefix to all paths in a manifest.
 
     Args:
-        manifest: The source manifest to transform
+        manifest: The source manifest to transform (must be RelSnapshotManifest or RelDiffManifest)
         prefix: Path prefix to join to all paths (relative or absolute)
         print_function_callback: Progress callback for status messages
 
     Returns:
-        A new manifest with:
-        - All file paths prefixed
-        - All directory paths prefixed
-        - All symlink targets prefixed
+        A new manifest with all paths prefixed:
+        - If prefix is absolute: AbsSnapshotManifest or AbsDiffManifest
+        - If prefix is relative: RelSnapshotManifest or RelDiffManifest
+        The snapshot/diff type is preserved from the input.
 
     Raises:
         ValueError: If prefix is empty
@@ -62,104 +68,14 @@ def join_manifest(
     if not prefix:
         raise ValueError("prefix cannot be empty")
 
-    version = manifest.manifestVersion
-
-    if version == ManifestVersion.v2023_03_03:
-        if not isinstance(manifest, AssetManifest2023):
-            raise TypeError(
-                f"Expected AssetManifest2023 for version {version}, got {type(manifest).__name__}"
-            )
-        return _join_manifest_v2023(
-            manifest=manifest,
-            prefix=prefix,
-            print_function_callback=print_function_callback,
-        )
-    elif version == ManifestVersion.v2025_12_04_beta:
-        if not isinstance(manifest, AssetManifest2025):
-            raise TypeError(
-                f"Expected AssetManifest2025 for version {version}, got {type(manifest).__name__}"
-            )
-        return _join_manifest_v2025(
-            manifest=manifest,
-            prefix=prefix,
-            print_function_callback=print_function_callback,
-        )
-    else:
-        raise ValueError(f"Unsupported manifest version: {version}")
-
-
-def _normalize_prefix(prefix: str) -> str:
-    """Normalize the prefix path, removing trailing slashes and normalizing separators.
-
-    On Windows, backslashes are converted to forward slashes (they are directory separators).
-    On POSIX, backslashes are preserved (they are valid filename characters).
-    """
-    # Only convert backslashes to forward slashes on Windows
-    if os.name == "nt":
-        prefix = prefix.replace("\\", "/")
-    # Remove trailing slash (but preserve leading slash for absolute paths)
-    prefix = prefix.rstrip("/")
-    return prefix
-
-
-def _join_path(prefix: str, path: str) -> str:
-    """Join prefix to a path using posixpath."""
-    return posixpath.join(prefix, path)
-
-
-def _join_manifest_v2023(
-    manifest: AssetManifest2023,
-    prefix: str,
-    print_function_callback: Callable[[Any], None],
-) -> AssetManifest2023:
-    """
-    Join prefix for v2023-03-03 manifests.
-
-    v2023 format doesn't support symlinks or directories, so only file paths are prefixed.
-    """
-    result_paths: List[ManifestPath2023] = []
-
-    for entry in manifest.paths:
-        joined_path = _join_path(prefix, entry.path)
-        result_paths.append(
-            ManifestPath2023(
-                path=joined_path,
-                hash=entry.hash,
-                size=entry.size,
-                mtime=entry.mtime,
-            )
-        )
-        print_function_callback(f"Joined: {entry.path} -> {joined_path}")
-
-    return AssetManifest2023(
-        hash_alg=manifest.hashAlg,
-        paths=result_paths,
-        total_size=manifest.totalSize,
-    )
-
-
-def _join_manifest_v2025(
-    manifest: AssetManifest2025,
-    prefix: str,
-    print_function_callback: Callable[[Any], None],
-) -> AssetManifest2025:
-    """
-    Join prefix for v2025-12-04-beta manifests.
-
-    Handles:
-    - File paths: prefixed
-    - Directory paths: prefixed
-    - Symlink targets: prefixed
-    - Deleted markers: prefixed
-    """
-    result_paths: List[ManifestFilePath2025] = []
-    result_dirs: List[ManifestDirectoryPath2025] = []
+    result_paths: List[ManifestFilePath] = []
+    result_dirs: List[ManifestDirectoryPath] = []
 
     # Process directories
     for dir_entry in manifest.dirs:
         joined_path = _join_path(prefix, dir_entry.path)
         result_dirs.append(
-            ManifestDirectoryPath2025(
+            ManifestDirectoryPath(
                 path=joined_path,
                 deleted=dir_entry.deleted,
             )
@@ -175,7 +91,7 @@ def _join_manifest_v2025(
             joined_target = _join_path(prefix, entry.symlink_target)
 
         result_paths.append(
-            ManifestFilePath2025(
+            ManifestFilePath(
                 path=joined_path,
                 hash=entry.hash,
                 size=entry.size,
@@ -193,11 +109,68 @@ def _join_manifest_v2025(
         else:
             print_function_callback(f"Joined: {entry.path} -> {joined_path}")
 
-    return AssetManifest2025(
+    # Determine output type based on prefix (absolute vs relative) and input type (snapshot vs diff)
+    output_type = _get_output_manifest_type(manifest, prefix)
+    return output_type(
         hash_alg=manifest.hashAlg,
         dirs=result_dirs,
         paths=result_paths,
         total_size=manifest.totalSize,
-        manifest_type=manifest.manifestType,
         parent_manifest_hash=manifest.parentManifestHash,
     )
+
+
+def _normalize_prefix(prefix: str) -> str:
+    """Normalize the prefix path, removing trailing slashes and normalizing separators.
+
+    On Windows, backslashes are converted to forward slashes (they are directory separators).
+    On POSIX, backslashes are preserved (they are valid filename characters).
+    """
+    # Only convert backslashes to forward slashes on Windows
+    if os.name == "nt":
+        prefix = prefix.replace("\\", "/")
+    # Remove trailing slash (but preserve leading slash for absolute paths)
+    prefix = prefix.rstrip("/")
+    return prefix
+
+
+def _is_absolute_path(path: str) -> bool:
+    """Check if a path is absolute.
+
+    Handles both POSIX and Windows-style absolute paths.
+    """
+    # POSIX absolute
+    if path.startswith("/"):
+        return True
+    # Windows drive letter (e.g., C:/)
+    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
+        return True
+    # Windows UNC path (e.g., //server/share)
+    if path.startswith("//"):
+        return True
+    return False
+
+
+def _get_output_manifest_type(
+    manifest: RelManifest, prefix: str
+) -> type[AbsSnapshotManifest] | type[AbsDiffManifest] | type[RelSnapshotManifest] | type[
+    RelDiffManifest
+]:
+    """Determine the output manifest type based on input type and prefix.
+
+    - If prefix is absolute: output is Abs*Manifest
+    - If prefix is relative: output is Rel*Manifest
+    - Snapshot/Diff type is preserved from input
+    """
+    prefix_is_absolute = _is_absolute_path(prefix)
+    is_snapshot = isinstance(manifest, RelSnapshotManifest)
+
+    if prefix_is_absolute:
+        return AbsSnapshotManifest if is_snapshot else AbsDiffManifest
+    else:
+        return RelSnapshotManifest if is_snapshot else RelDiffManifest
+
+
+def _join_path(prefix: str, path: str) -> str:
+    """Join prefix to a path using posixpath."""
+    return posixpath.join(prefix, path)
