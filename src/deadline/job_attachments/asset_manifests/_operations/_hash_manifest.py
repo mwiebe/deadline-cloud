@@ -32,6 +32,7 @@ from ..manifest import (
     ManifestDirectoryPath,
     ManifestFilePath,
     _is_absolute_path,
+    DEFAULT_FILE_CHUNK_SIZE,
 )
 from ..hash_algorithms import hash_file, HashAlgorithm
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
@@ -41,6 +42,7 @@ def hash_manifest(
     manifest: AbsManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
+    file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsManifest:
     """
@@ -56,6 +58,10 @@ def hash_manifest(
             - AbsDiffManifest (from compute_diff_manifest with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
+        file_chunk_size_bytes: Chunk size for large file hashing.
+            - None: Preserve the chunk size from the input manifest
+            - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
+            - Positive int: Chunk size in bytes for large files
         print_function_callback: Progress callback
 
     Returns:
@@ -79,10 +85,10 @@ def hash_manifest(
           deleted entries are passed through unchanged (no hash needed)
 
     Chunking Behavior:
-        - If manifest.fileChunkSizeBytes is None: all files are hashed as a whole
-          (no chunking regardless of file size)
-        - If manifest.fileChunkSizeBytes is set: files larger than this size use
-          chunked hashing with chunkhashes field
+        - If effective chunk size is WHOLE_FILE_CHUNK_SIZE (-1) or None: all files
+          are hashed as a whole (no chunking regardless of file size)
+        - If effective chunk size is a positive int: files larger than this size
+          use chunked hashing with chunkhashes field
 
     Note:
         - Input manifest must have absolute paths (from collect_manifest or join_manifest)
@@ -94,8 +100,19 @@ def hash_manifest(
     # Validate that manifest has absolute paths
     _validate_absolute_paths(manifest)
 
-    # Get chunk size from manifest (None means no chunking)
-    chunk_size = manifest.fileChunkSizeBytes
+    # Determine output chunk size: use parameter if provided, otherwise preserve from input manifest
+    output_chunk_size = (
+        file_chunk_size_bytes if file_chunk_size_bytes is not None else manifest.fileChunkSizeBytes
+    )
+
+    # Get effective chunk size for hashing decisions
+    # Apply default if input manifest has None
+    effective_chunk_size = manifest.fileChunkSizeBytes
+    if effective_chunk_size is None:
+        effective_chunk_size = DEFAULT_FILE_CHUNK_SIZE
+
+    # WHOLE_FILE_CHUNK_SIZE (-1) means no chunking
+    chunking_enabled = effective_chunk_size > 0
 
     hashed_paths: List[ManifestFilePath] = []
     total_size = 0
@@ -126,9 +143,9 @@ def hash_manifest(
         # Use resolved path as cache key for consistency
         cache_key = str(abs_path.resolve())
 
-        # Check if file needs chunking (only if chunk_size is set and file is larger)
+        # Check if file needs chunking (only if chunking enabled and file is larger)
         needs_chunking = (
-            chunk_size is not None and entry.size is not None and entry.size > chunk_size
+            chunking_enabled and entry.size is not None and entry.size > effective_chunk_size
         )
 
         if needs_chunking:
@@ -151,7 +168,7 @@ def hash_manifest(
                 file_size=entry.size,  # type: ignore[arg-type]
                 mtime=entry.mtime,
                 hash_alg=manifest.hashAlg,
-                chunk_size=chunk_size,  # type: ignore[arg-type]
+                chunk_size=effective_chunk_size,
                 hash_cache=hash_cache,
                 force_rehash=force_rehash,
             )
@@ -220,7 +237,7 @@ def hash_manifest(
         files=hashed_paths,
         total_size=total_size,
         parent_manifest_hash=manifest.parentManifestHash,
-        file_chunk_size_bytes=manifest.fileChunkSizeBytes,
+        file_chunk_size_bytes=output_chunk_size,
     )
 
 

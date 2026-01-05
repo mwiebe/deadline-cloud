@@ -36,7 +36,7 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import (
     hash_file,
 )
 from deadline.job_attachments.asset_manifests.manifest import (
-    FILE_CHUNK_SIZE_BYTES,
+    DEFAULT_FILE_CHUNK_SIZE,
     AbsDiffManifest,
     AbsSnapshotManifest,
     ManifestDirectoryPath,
@@ -559,11 +559,11 @@ class TestLargeFileChunking:
                 ManifestFilePath(
                     path=abs_path,
                     hash=None,  # None for unhashed file
-                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    size=DEFAULT_FILE_CHUNK_SIZE + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
             ],
-            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
+            total_size=DEFAULT_FILE_CHUNK_SIZE + 1000,
         )
 
         # Mock _hash_file_chunked to avoid creating huge file
@@ -649,11 +649,11 @@ class TestInputValidation:
                 ManifestFilePath(
                     path=abs_path,
                     chunkhashes=["a", "b"],  # Correct count for 2 chunks
-                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    size=DEFAULT_FILE_CHUNK_SIZE + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
             ],
-            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
+            total_size=DEFAULT_FILE_CHUNK_SIZE + 1000,
         )
         # Manually set hash (invalid for large file)
         manifest.files[0].hash = "somehash"
@@ -676,11 +676,11 @@ class TestInputValidation:
                 ManifestFilePath(
                     path=abs_path,
                     hash=None,  # Unhashed
-                    size=FILE_CHUNK_SIZE_BYTES + 1000,
+                    size=DEFAULT_FILE_CHUNK_SIZE + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
             ],
-            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
+            total_size=DEFAULT_FILE_CHUNK_SIZE + 1000,
         )
 
         with patch(
@@ -708,11 +708,11 @@ class TestInputValidation:
                 ManifestFilePath(
                     path=abs_path,
                     hash=None,  # Unhashed
-                    size=FILE_CHUNK_SIZE_BYTES * 2 + 1000,
+                    size=DEFAULT_FILE_CHUNK_SIZE * 2 + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
             ],
-            total_size=FILE_CHUNK_SIZE_BYTES * 2 + 1000,
+            total_size=DEFAULT_FILE_CHUNK_SIZE * 2 + 1000,
         )
 
         with patch(

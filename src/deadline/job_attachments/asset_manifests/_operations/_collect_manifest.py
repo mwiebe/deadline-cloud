@@ -36,6 +36,7 @@ def collect_manifest(
     *,
     optional_filenames: Optional[List[Path | str]] = None,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsSnapshotManifest:
     """
@@ -63,6 +64,10 @@ def collect_manifest(
             - COLLAPSE_ESCAPING: Preserve symlinks whose targets are within the
               collected paths; collapse symlinks whose targets are outside
               (escaping symlinks) to files/directories.
+        file_chunk_size_bytes: Chunk size for large file hashing.
+            - None: Not specified (downstream operations will apply default)
+            - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
+            - Positive int: Chunk size in bytes for large files
         print_function_callback: Progress callback
 
     Returns:
@@ -113,6 +118,7 @@ def collect_manifest(
         filenames=validated_filenames,
         optional_filenames=validated_optional,
         directories=validated_directories,
+        file_chunk_size_bytes=file_chunk_size_bytes,
     )
 
 
@@ -128,6 +134,7 @@ def _collect_manifest_impl(
     filenames: List[Path],
     optional_filenames: List[Path],
     directories: List[Path],
+    file_chunk_size_bytes: Optional[int] = None,
 ) -> AbsSnapshotManifest:
     """Collect files and directories into a manifest WITHOUT hashes.
 
@@ -138,6 +145,10 @@ def _collect_manifest_impl(
 
     Files are collected with hash=None to indicate hashes have not been computed.
     Use hash_manifest() or hash_upload_manifest() to fill in hashes.
+
+    Args:
+        file_chunk_size_bytes: Chunk size for large file hashing. If None, uses
+            the default from the Manifest constructor.
     """
     file_entries: List[ManifestFilePath] = []
     dir_entries: List[ManifestDirectoryPath] = []
@@ -401,6 +412,7 @@ def _collect_manifest_impl(
         dirs=dir_entries,
         files=file_entries,
         total_size=total_size,
+        file_chunk_size_bytes=file_chunk_size_bytes,
     )
 
 

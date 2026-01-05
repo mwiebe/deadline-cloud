@@ -47,7 +47,10 @@ def _is_absolute_path(path: str) -> bool:
 
 
 # 256MB chunk size for large files (256 * 2^20 bytes)
-FILE_CHUNK_SIZE_BYTES = 256 * 1024 * 1024
+DEFAULT_FILE_CHUNK_SIZE = 256 * 1024 * 1024
+
+# Sentinel value meaning "hash whole file, no chunking"
+WHOLE_FILE_CHUNK_SIZE = -1
 
 
 # =============================================================================
@@ -209,12 +212,12 @@ class ManifestFilePath:
             raise ManifestDecodeValidationError(
                 f"File '{self.path}' with chunkhashes must have 'size' field"
             )
-        if self.size <= FILE_CHUNK_SIZE_BYTES:
+        if self.size <= DEFAULT_FILE_CHUNK_SIZE:
             raise ManifestDecodeValidationError(
-                f"File '{self.path}' with chunkhashes must have size > {FILE_CHUNK_SIZE_BYTES} "
+                f"File '{self.path}' with chunkhashes must have size > {DEFAULT_FILE_CHUNK_SIZE} "
                 f"(256MB), got {self.size}"
             )
-        expected_chunks = math.ceil(self.size / FILE_CHUNK_SIZE_BYTES)
+        expected_chunks = math.ceil(self.size / DEFAULT_FILE_CHUNK_SIZE)
         if self.chunkhashes is not None and len(self.chunkhashes) != expected_chunks:
             raise ManifestDecodeValidationError(
                 f"File '{self.path}' with size {self.size} should have {expected_chunks} "
@@ -361,8 +364,10 @@ class Manifest:
         totalSize: Total size of all files in the manifest (in bytes).
         dirs: List of directory entries.
         parentManifestHash: Hash of parent snapshot for diff manifests.
-        fileChunkSizeBytes: Chunk size for large file hashing. If None, files are
-            hashed as a whole regardless of size. Default is FILE_CHUNK_SIZE_BYTES (256MB).
+        fileChunkSizeBytes: Chunk size for large file hashing.
+            - None: Not specified (operations will apply default DEFAULT_FILE_CHUNK_SIZE)
+            - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
+            - Positive int: Chunk size in bytes for large files
     """
 
     hashAlg: HashAlgorithm
@@ -380,7 +385,7 @@ class Manifest:
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
+        file_chunk_size_bytes: Optional[int] = None,
     ) -> None:
         self.hashAlg = hash_alg
         self.totalSize = total_size
@@ -419,7 +424,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
+        file_chunk_size_bytes: Optional[int] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -447,7 +452,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
+        file_chunk_size_bytes: Optional[int] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -475,7 +480,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
+        file_chunk_size_bytes: Optional[int] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -503,7 +508,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
+        file_chunk_size_bytes: Optional[int] = None,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,

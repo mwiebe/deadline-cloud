@@ -181,7 +181,8 @@ Manifest Classes (new unified in-memory representation)
 Path/Directory Classes (also in manifest.py)
 ├── ManifestFilePath            # File entry (unified, matches v2025 capabilities)
 ├── ManifestDirectoryPath       # Directory entry
-└── FILE_CHUNK_SIZE_BYTES       # 256MB chunk size constant (default)
+├── DEFAULT_FILE_CHUNK_SIZE     # 256MB chunk size constant (default)
+└── WHOLE_FILE_CHUNK_SIZE       # -1 sentinel meaning "no chunking"
 ```
 
 **Manifest Fields:**
@@ -193,14 +194,15 @@ Path/Directory Classes (also in manifest.py)
 | `totalSize` | `int` | Total size of all files in bytes |
 | `dirs` | `List[ManifestDirectoryPath]` | List of directory entries |
 | `parentManifestHash` | `Optional[str]` | Hash of parent snapshot (for diff manifests) |
-| `fileChunkSizeBytes` | `Optional[int]` | Chunk size for large file hashing. Default: `FILE_CHUNK_SIZE_BYTES` (256MB). If `None`, files are hashed as a whole regardless of size. |
+| `fileChunkSizeBytes` | `Optional[int]` | Chunk size for large file hashing. `None` means "not specified" (operations apply `DEFAULT_FILE_CHUNK_SIZE`). `WHOLE_FILE_CHUNK_SIZE` (-1) means "no chunking". Positive int specifies chunk size in bytes. |
 
 For backwards compatibility in `base_manifest.py`:
 
 ```python
 # Re-export unified manifest classes (can be imported from either module)
 from .manifest import (
-    FILE_CHUNK_SIZE_BYTES,
+    DEFAULT_FILE_CHUNK_SIZE,
+    WHOLE_FILE_CHUNK_SIZE,
     Manifest,
     ManifestFilePath,
     ManifestDirectoryPath,
@@ -492,6 +494,7 @@ def collect_manifest(
     *,
     optional_filenames: Optional[List[Path | str]] = None,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsSnapshotManifest:
 ```
@@ -504,6 +507,7 @@ def collect_manifest(
 | `filenames` | (positional) List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
 | `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
+| `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = not specified (downstream operations apply default). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 
 **Symlink Policy Options (for `collect_manifest`):**
@@ -590,6 +594,7 @@ def hash_manifest(
     manifest: BaseAssetManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
+    file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> BaseAssetManifest:
 ```
@@ -601,6 +606,7 @@ def hash_manifest(
 | `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
+| `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 
 **Returns:** A NEW manifest with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
@@ -619,11 +625,12 @@ def hash_manifest(
 
 | `fileChunkSizeBytes` | File Size | Behavior |
 |---------------------|-----------|----------|
-| `None` | Any | Hash entire file as a whole (no chunking) |
-| Set (e.g., 256MB) | ≤ chunk size | Compute single `hash` |
-| Set (e.g., 256MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
+| `None` | Any | Apply default (`DEFAULT_FILE_CHUNK_SIZE` = 256MB) |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | Hash entire file as a whole (no chunking) |
+| Positive int (e.g., 256MB) | ≤ chunk size | Compute single `hash` |
+| Positive int (e.g., 256MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
 
-When `fileChunkSizeBytes` is set and a file is larger than the chunk size:
+When chunking is enabled and a file is larger than the chunk size:
 - `hash` field is `None`
 - `chunkhashes` contains list of hashes, one per chunk
 - Chunk count equals `ceil(size / fileChunkSizeBytes)`
@@ -733,6 +740,7 @@ def hash_upload_manifest(
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     max_memory_bytes: Optional[int] = None,
+    file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
 ) -> BaseAssetManifest:
@@ -746,7 +754,8 @@ def hash_upload_manifest(
 | `data_cache` | Content-addressable data cache destination. Either `S3DataCache` for cloud storage or `FileSystemDataCache` for local/network storage. |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
-| `max_memory_bytes` | Maximum memory to use for buffering (default: auto-detect from system) |
+| `max_memory_bytes` | Maximum memory to use for buffering (default: auto-detect) |
+| `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
@@ -777,16 +786,18 @@ The operation uses a multi-threaded pipeline with three stages:
 
 | `fileChunkSizeBytes` | File Size | Processing |
 |---------------------|-----------|------------|
-| `None` | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
-| `None` | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
-| Set (e.g., 256MB) | ≤ chunk size | Single chunk: read → hash → upload |
-| Set (e.g., 256MB) | > chunk size | Multiple chunks through pipeline |
+| `None` (applies default) | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
+| `None` (applies default) | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
+| Positive int (e.g., 256MB) | ≤ chunk size | Single chunk: read → hash → upload |
+| Positive int (e.g., 256MB) | > chunk size | Multiple chunks through pipeline |
 
-When `fileChunkSizeBytes` is `None` and a file is larger than `max_memory_bytes`:
+When chunking is disabled (`WHOLE_FILE_CHUNK_SIZE`) and a file is larger than `max_memory_bytes`:
 - **Pass 1:** Stream through file to compute hash (discard data to avoid OOM)
 - **Pass 2:** Stream through file again to upload
 
-When `fileChunkSizeBytes` is set:
+When chunking is enabled (positive `fileChunkSizeBytes`):
 - `max_memory_bytes` must be >= `fileChunkSizeBytes` (raises `ValueError` otherwise)
 - Large files are processed chunk by chunk through the pipeline
 
@@ -1819,7 +1830,8 @@ diff = compute_diff_manifest(
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `FILE_CHUNK_SIZE_BYTES` | 256 MB (256 × 1024 × 1024) | Threshold for chunked hashing |
+| `DEFAULT_FILE_CHUNK_SIZE` | 256 MB (256 × 1024 × 1024) | Default threshold for chunked hashing |
+| `WHOLE_FILE_CHUNK_SIZE` | -1 | Sentinel value meaning "no chunking, hash whole file" |
 
 ## Validation Rules
 
