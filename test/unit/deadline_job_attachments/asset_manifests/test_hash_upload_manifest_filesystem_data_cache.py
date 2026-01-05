@@ -256,10 +256,9 @@ class TestHashUploadManifestFileSystem:
             )
 
             # Verify hash was computed and cached
+            # Whole-file hashes use range_start=0, range_end=-1 (WHOLE_FILE_RANGE_END)
             cache_key = str(test_file.resolve())
-            cached_entry = hash_cache.get_entry(
-                cache_key, HashAlgorithm.XXH128, range_start=0, range_end=file_size
-            )
+            cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
             assert cached_entry.file_hash == result.files[0].hash
 

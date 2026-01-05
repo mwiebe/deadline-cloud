@@ -32,20 +32,19 @@ import threading
 import queue
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import logging
 
 from botocore.exceptions import BotoCoreError, ClientError
 
 from ..manifest import (
-    FILE_CHUNK_SIZE_BYTES,
     AbsManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
     _is_absolute_path,
 )
 from ..hash_algorithms import HashAlgorithm, hash_data
-from ...caches.hash_cache import HashCache, HashCacheEntry
+from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 from ...caches.s3_check_cache import S3CheckCacheEntry
 from ...progress_tracker import ProgressTracker
 from ...exceptions import (
@@ -63,6 +62,9 @@ logger = logging.getLogger("deadline.job_attachments.hash_upload")
 
 # Minimum memory limit: 256MB (one chunk)
 MIN_MEMORY_BYTES = 256 * 1024 * 1024
+
+# Default read buffer size for streaming hash (when fileChunkSizeBytes is None)
+DEFAULT_STREAM_BUFFER_SIZE = 64 * 1024 * 1024  # 64MB
 
 # Sentinel value to signal pipeline shutdown
 _SHUTDOWN_SENTINEL = object()
@@ -147,12 +149,43 @@ class _ChunkWorkItem:
 
 
 @dataclass
+class _StreamingWorkItem:
+    """
+    Work item for large files that don't fit in memory.
+
+    These files are processed with a two-pass approach:
+    - Pass 1: Stream through file to compute hash (discard data)
+    - Pass 2: Stream through file again to upload
+
+    The streaming is done within the pipeline stages, not by loading
+    the entire file into memory.
+    """
+
+    # File identification
+    file_path: Path  # Absolute path to the file
+    cache_key: str  # Cache key (resolved absolute path) for hash cache lookups
+    file_size: int  # Total file size
+    mtime: int  # File modification time in microseconds
+
+    # Hash result (populated by HASH stage via streaming)
+    file_hash: Optional[str] = None
+
+    # Upload status (set by UPLOAD stage)
+    uploaded: bool = False
+    skipped: bool = False  # True if already in data cache
+
+
+# Union type for work items
+WorkItem = Union[_ChunkWorkItem, _StreamingWorkItem]
+
+
+@dataclass
 class _FileResult:
     """Result of processing a single file."""
 
     cache_key: str
-    file_hash: Optional[str]  # For small files
-    chunkhashes: Optional[List[str]]  # For large files (>256MB)
+    file_hash: Optional[str]  # For small files or streaming files
+    chunkhashes: Optional[List[str]]  # For chunked files
     size: int
     mtime: int
     runnable: bool
@@ -273,19 +306,29 @@ class _PipelineStage:
 
 
 class _ReadStage(_PipelineStage):
-    """Pipeline stage that reads file chunks from disk."""
+    """
+    Pipeline stage that reads file data from disk.
+
+    For _ChunkWorkItem: reads chunk data into memory (blocking on memory pool).
+    For _StreamingWorkItem: passes through unchanged (streaming happens in HASH stage).
+    """
 
     def __init__(
         self,
-        input_queue: "queue.Queue[_ChunkWorkItem]",
-        output_queue: "queue.Queue[_ChunkWorkItem]",
+        input_queue: "queue.Queue[WorkItem]",
+        output_queue: "queue.Queue[WorkItem]",
         memory_pool: _MemoryPool,
     ) -> None:
         super().__init__("READ", input_queue, output_queue)
         self._memory_pool = memory_pool
 
-    def _process(self, item: _ChunkWorkItem) -> _ChunkWorkItem:
-        """Read chunk data from disk."""
+    def _process(self, item: WorkItem) -> WorkItem:
+        """Read chunk data from disk or pass through streaming items."""
+        if isinstance(item, _StreamingWorkItem):
+            # Streaming items don't load data into memory here
+            return item
+
+        # _ChunkWorkItem: read chunk data
         chunk_size = item.chunk_end - item.chunk_start
 
         # Block until we have memory available
@@ -304,31 +347,69 @@ class _ReadStage(_PipelineStage):
 
 
 class _HashStage(_PipelineStage):
-    """Pipeline stage that computes hashes of chunks."""
+    """
+    Pipeline stage that computes hashes.
+
+    For _ChunkWorkItem: computes hash of chunk data in memory.
+    For _StreamingWorkItem: streams through file to compute hash (discards data).
+    """
 
     def __init__(
         self,
-        input_queue: "queue.Queue[_ChunkWorkItem]",
-        output_queue: "queue.Queue[_ChunkWorkItem]",
+        input_queue: "queue.Queue[WorkItem]",
+        output_queue: "queue.Queue[WorkItem]",
         hash_alg: HashAlgorithm,
     ) -> None:
         super().__init__("HASH", input_queue, output_queue)
         self._hash_alg = hash_alg
 
-    def _process(self, item: _ChunkWorkItem) -> _ChunkWorkItem:
-        """Compute hash of chunk data."""
+    def _process(self, item: WorkItem) -> WorkItem:
+        """Compute hash of chunk data or stream hash for large files."""
+        if isinstance(item, _StreamingWorkItem):
+            # Stream through file to compute hash
+            item.file_hash = self._stream_hash_file(item.file_path)
+            return item
+
+        # _ChunkWorkItem: hash in-memory data
         if item.data is not None:
             item.chunk_hash = hash_data(item.data, self._hash_alg)
         return item
 
+    def _stream_hash_file(self, file_path: Path) -> str:
+        """
+        Compute hash of a file by streaming through it.
+
+        Reads the file in chunks, updating the hash incrementally,
+        and discards the data to avoid memory issues.
+        """
+        import xxhash
+
+        if self._hash_alg != HashAlgorithm.XXH128:
+            raise ValueError(f"Unsupported hash algorithm for streaming: {self._hash_alg}")
+
+        hasher = xxhash.xxh128()
+        with open(file_path, "rb") as f:
+            while True:
+                chunk = f.read(DEFAULT_STREAM_BUFFER_SIZE)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+
+        return hasher.hexdigest()
+
 
 class _UploadStage(_PipelineStage):
-    """Pipeline stage that writes chunks to a data cache (S3 or filesystem)."""
+    """
+    Pipeline stage that writes data to a data cache (S3 or filesystem).
+
+    For _ChunkWorkItem: uploads chunk data from memory, then releases memory.
+    For _StreamingWorkItem: streams file to data cache (reads file again).
+    """
 
     def __init__(
         self,
-        input_queue: "queue.Queue[_ChunkWorkItem]",
-        output_queue: "queue.Queue[_ChunkWorkItem]",
+        input_queue: "queue.Queue[WorkItem]",
+        output_queue: "queue.Queue[WorkItem]",
         memory_pool: _MemoryPool,
         data_cache: ContentAddressedDataCache,
         hash_alg: HashAlgorithm,
@@ -342,8 +423,14 @@ class _UploadStage(_PipelineStage):
         self._account_id = account_id
         self._progress_tracker = progress_tracker
 
-    def _process(self, item: _ChunkWorkItem) -> _ChunkWorkItem:
-        """Write chunk to data cache."""
+    def _process(self, item: WorkItem) -> WorkItem:
+        """Write data to data cache."""
+        if isinstance(item, _StreamingWorkItem):
+            return self._process_streaming(item)
+        return self._process_chunk(item)
+
+    def _process_chunk(self, item: _ChunkWorkItem) -> _ChunkWorkItem:
+        """Upload chunk data from memory."""
         if item.data is None or item.chunk_hash is None:
             return item
 
@@ -351,9 +438,9 @@ class _UploadStage(_PipelineStage):
 
         try:
             if isinstance(self._data_cache, S3DataCache):
-                self._process_s3(item)
+                self._upload_chunk_to_s3(item)
             elif isinstance(self._data_cache, FileSystemDataCache):
-                self._process_filesystem(item)
+                self._upload_chunk_to_filesystem(item)
             else:
                 raise ValueError(f"Unsupported data cache type: {type(self._data_cache)}")
 
@@ -368,7 +455,34 @@ class _UploadStage(_PipelineStage):
 
         return item
 
-    def _process_s3(self, item: _ChunkWorkItem) -> None:
+    def _process_streaming(self, item: _StreamingWorkItem) -> _StreamingWorkItem:
+        """Stream file to data cache."""
+        if item.file_hash is None:
+            return item
+
+        # Check if already in data cache
+        if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
+            item.skipped = True
+            item.uploaded = False
+            logger.debug(f"Skipping streaming upload (exists): {item.file_path}")
+            # Still report progress for skipped files
+            if self._progress_tracker is not None:
+                self._progress_tracker.track_progress_callback(item.file_size)
+            return item
+
+        # Stream upload
+        if isinstance(self._data_cache, S3DataCache):
+            self._stream_upload_to_s3(item)
+        elif isinstance(self._data_cache, FileSystemDataCache):
+            self._stream_upload_to_filesystem(item)
+        else:
+            raise ValueError(f"Unsupported data cache type: {type(self._data_cache)}")
+
+        item.uploaded = True
+        item.skipped = False
+        return item
+
+    def _upload_chunk_to_s3(self, item: _ChunkWorkItem) -> None:
         """Upload chunk to S3."""
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
@@ -404,7 +518,7 @@ class _UploadStage(_PipelineStage):
                 S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
             )
 
-    def _process_filesystem(self, item: _ChunkWorkItem) -> None:
+    def _upload_chunk_to_filesystem(self, item: _ChunkWorkItem) -> None:
         """Write chunk to filesystem."""
         if not isinstance(self._data_cache, FileSystemDataCache):
             raise TypeError(f"Expected FileSystemDataCache, got {type(self._data_cache).__name__}")
@@ -447,15 +561,8 @@ class _UploadStage(_PipelineStage):
         Uses S3 conditional write (IfNoneMatch='*') to atomically check and upload
         in a single API call, reducing total S3 requests.
 
-        Args:
-            data: The data to upload
-            s3_key: The S3 key to upload to
-
         Returns:
             True if the object was uploaded, False if it already existed
-
-        Raises:
-            TypeError: If data_cache is not an S3DataCache
         """
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
@@ -499,6 +606,196 @@ class _UploadStage(_PipelineStage):
                 error_details=str(bce),
             ) from bce
 
+    def _stream_upload_to_s3(self, item: _StreamingWorkItem) -> None:
+        """
+        Upload a large file to S3 using streaming/multipart upload.
+
+        Computes the hash while streaming and verifies it matches the pre-computed hash.
+        """
+        import xxhash
+
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+        if item.file_hash is None:
+            raise ValueError("File hash is None, cannot determine S3 key")
+        if self._hash_alg != HashAlgorithm.XXH128:
+            raise ValueError(f"Unsupported hash algorithm for streaming: {self._hash_alg}")
+
+        s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
+
+        # We need to stream the file ourselves to compute hash while uploading
+        # Use multipart upload for large files
+        hasher = xxhash.xxh128()
+        multipart_threshold = 8 * 1024 * 1024  # 8MB threshold for multipart
+
+        try:
+            extra_args: Dict[str, Any] = {}
+            if self._account_id is not None:
+                extra_args["ExpectedBucketOwner"] = self._account_id
+
+            if item.file_size <= multipart_threshold:
+                # Small enough for single PUT - read entire file
+                with open(item.file_path, "rb") as f:
+                    data = f.read()
+                hasher.update(data)
+                upload_hash = hasher.hexdigest()
+
+                # Verify hash before uploading
+                if upload_hash != item.file_hash:
+                    raise ValueError(
+                        f"Hash mismatch during streaming upload of '{item.file_path}': "
+                        f"expected {item.file_hash}, got {upload_hash}. "
+                        f"File may have been modified during processing."
+                    )
+
+                put_kwargs: Dict[str, Any] = {
+                    "Bucket": self._data_cache.s3_bucket,
+                    "Key": s3_key,
+                    "Body": data,
+                }
+                put_kwargs.update(extra_args)
+                self._data_cache.s3_client.put_object(**put_kwargs)
+
+                if self._progress_tracker is not None:
+                    self._progress_tracker.track_progress_callback(len(data))
+            else:
+                # Use multipart upload for large files
+                multipart = self._data_cache.s3_client.create_multipart_upload(
+                    Bucket=self._data_cache.s3_bucket,
+                    Key=s3_key,
+                    **extra_args,
+                )
+                upload_id = multipart["UploadId"]
+
+                try:
+                    parts: List[Dict[str, Any]] = []
+                    part_number = 1
+                    part_size = 64 * 1024 * 1024  # 64MB parts
+
+                    with open(item.file_path, "rb") as f:
+                        while True:
+                            chunk = f.read(part_size)
+                            if not chunk:
+                                break
+
+                            hasher.update(chunk)
+
+                            response = self._data_cache.s3_client.upload_part(
+                                Bucket=self._data_cache.s3_bucket,
+                                Key=s3_key,
+                                UploadId=upload_id,
+                                PartNumber=part_number,
+                                Body=chunk,
+                            )
+                            parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
+                            part_number += 1
+
+                            if self._progress_tracker is not None:
+                                self._progress_tracker.track_progress_callback(len(chunk))
+
+                    upload_hash = hasher.hexdigest()
+
+                    # Verify hash before completing upload
+                    if upload_hash != item.file_hash:
+                        # Abort the multipart upload
+                        self._data_cache.s3_client.abort_multipart_upload(
+                            Bucket=self._data_cache.s3_bucket,
+                            Key=s3_key,
+                            UploadId=upload_id,
+                        )
+                        raise ValueError(
+                            f"Hash mismatch during streaming upload of '{item.file_path}': "
+                            f"expected {item.file_hash}, got {upload_hash}. "
+                            f"File may have been modified during processing."
+                        )
+
+                    # Complete the multipart upload
+                    self._data_cache.s3_client.complete_multipart_upload(
+                        Bucket=self._data_cache.s3_bucket,
+                        Key=s3_key,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                    )
+                except Exception:
+                    # Abort multipart upload on any error
+                    try:
+                        self._data_cache.s3_client.abort_multipart_upload(
+                            Bucket=self._data_cache.s3_bucket,
+                            Key=s3_key,
+                            UploadId=upload_id,
+                        )
+                    except Exception:
+                        pass  # Best effort cleanup
+                    raise
+
+            logger.debug(f"Streamed upload (verified): {s3_key}")
+        except ClientError as exc:
+            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
+            raise JobAttachmentsS3ClientError(
+                action="uploading large file",
+                status_code=status_code,
+                bucket_name=self._data_cache.s3_bucket,
+                key_or_prefix=s3_key,
+                message=str(exc),
+            ) from exc
+        except BotoCoreError as bce:
+            raise JobAttachmentS3BotoCoreError(
+                action="uploading large file",
+                error_details=str(bce),
+            ) from bce
+
+    def _stream_upload_to_filesystem(self, item: _StreamingWorkItem) -> None:
+        """
+        Upload a large file to filesystem by streaming copy.
+
+        Computes the hash while streaming and verifies it matches the pre-computed hash.
+        """
+        import xxhash
+
+        if not isinstance(self._data_cache, FileSystemDataCache):
+            raise TypeError(f"Expected FileSystemDataCache, got {type(self._data_cache).__name__}")
+        if item.file_hash is None:
+            raise ValueError("File hash is None, cannot determine file path")
+        if self._hash_alg != HashAlgorithm.XXH128:
+            raise ValueError(f"Unsupported hash algorithm for streaming: {self._hash_alg}")
+
+        dest_path = Path(self._data_cache.get_object_key(item.file_hash, self._hash_alg.value))
+
+        # Ensure parent directory exists
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Copy file in chunks while computing hash
+        temp_path = dest_path.with_suffix(f"{dest_path.suffix}.tmp")
+        hasher = xxhash.xxh128()
+
+        try:
+            with open(item.file_path, "rb") as src, open(temp_path, "wb") as dst:
+                while True:
+                    chunk = src.read(DEFAULT_STREAM_BUFFER_SIZE)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                    dst.write(chunk)
+                    if self._progress_tracker is not None:
+                        self._progress_tracker.track_progress_callback(len(chunk))
+
+            upload_hash = hasher.hexdigest()
+
+            # Verify hash before finalizing
+            if upload_hash != item.file_hash:
+                raise ValueError(
+                    f"Hash mismatch during streaming upload of '{item.file_path}': "
+                    f"expected {item.file_hash}, got {upload_hash}. "
+                    f"File may have been modified during processing."
+                )
+
+            temp_path.rename(dest_path)
+            logger.debug(f"Streamed write (verified): {dest_path}")
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
 
 def hash_upload_manifest(
     manifest: AbsManifest,
@@ -531,6 +828,7 @@ def hash_upload_manifest(
 
     Raises:
         ValueError: If the manifest contains relative paths (paths must be absolute)
+        ValueError: If fileChunkSizeBytes is set and max_memory_bytes is less than chunk size
 
     Pipeline Architecture:
         The operation uses a multi-threaded pipeline with three stages:
@@ -541,34 +839,49 @@ def hash_upload_manifest(
         Memory is bounded by max_memory_bytes. When the limit is reached,
         READ blocks until UPLOAD completes and frees memory.
 
+        All work items (small files, large streaming files, and chunks) are
+        processed through a SINGLE unified pipeline for maximum throughput.
+
+    Chunking Behavior:
+        - If manifest.fileChunkSizeBytes is None: all files are hashed as a whole.
+          For files larger than max_memory_bytes, the file is streamed for hashing
+          (discarding data to avoid OOM), then streamed again for uploading.
+        - If manifest.fileChunkSizeBytes is set: files larger than this size use
+          chunked hashing. max_memory_bytes must be >= fileChunkSizeBytes.
+
     Note:
         - Input manifest must have absolute paths (from collect_manifest)
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
         - Deleted entries are unchanged (they mark deletions, no hash needed)
-        - For large files (>256MB): computes chunkhashes and writes each chunk
         - Returns a NEW manifest (does not mutate input)
     """
     # Validate that manifest has absolute paths
     _validate_absolute_paths(manifest)
 
+    # Get chunk size from manifest (None means no chunking)
+    chunk_size = manifest.fileChunkSizeBytes
+
     # Set up memory limit
     if max_memory_bytes is None:
         max_memory_bytes = _get_default_max_memory_bytes()
 
+    # Validate memory limit against chunk size
+    if chunk_size is not None and max_memory_bytes < chunk_size:
+        raise ValueError(
+            f"max_memory_bytes ({max_memory_bytes}) must be >= fileChunkSizeBytes ({chunk_size}). "
+            f"The pipeline needs at least one chunk's worth of memory to operate."
+        )
+
     # Get account_id for S3DataCache (used for ExpectedBucketOwner)
     account_id: Optional[str] = None
     if isinstance(data_cache, S3DataCache):
-        # Import here to avoid circular dependency and only when needed
         from ..._aws.aws_clients import get_account_id, get_boto3_session
 
-        # Try to get account ID from the S3 client's session
         try:
-            # Create a session from the client's credentials if possible
             session = get_boto3_session()
             account_id = get_account_id(session=session)
         except Exception:
-            # If we can't get account ID, proceed without ExpectedBucketOwner
             logger.warning(
                 "Could not determine AWS account ID, proceeding without ExpectedBucketOwner"
             )
@@ -587,181 +900,260 @@ def hash_upload_manifest(
         else:
             file_entries_to_process.append((idx, entry))
 
-    # Create work items for all file chunks
-    work_items: List[_ChunkWorkItem] = []
-    # Map from cache_key to list of chunk indices in work_items
-    file_chunk_map: Dict[str, List[int]] = {}
+    # Build all work items for a single unified pipeline
+    all_work_items: List[WorkItem] = []
+    entry_map: Dict[str, Tuple[int, ManifestFilePath]] = {}
+    file_chunk_counts: Dict[str, int] = {}  # cache_key -> expected chunk count
 
     for idx, entry in file_entries_to_process:
         abs_path = Path(entry.path)
-        # Use resolved path as cache key for consistency
         cache_key = str(abs_path.resolve())
         file_size = entry.size or 0
+        mtime = entry.mtime or 0
 
-        if file_size > FILE_CHUNK_SIZE_BYTES:
-            # Large file: create multiple chunk work items
-            chunk_indices: List[int] = []
+        entry_map[cache_key] = (idx, entry)
+
+        # Determine how to process this file
+        if chunk_size is not None and file_size > chunk_size:
+            # Chunked file: create work items for each chunk
             offset = 0
             chunk_idx = 0
             while offset < file_size:
-                chunk_end = min(offset + FILE_CHUNK_SIZE_BYTES, file_size)
-                work_items.append(
+                chunk_end = min(offset + chunk_size, file_size)
+                all_work_items.append(
                     _ChunkWorkItem(
                         file_path=abs_path,
                         cache_key=cache_key,
                         file_size=file_size,
-                        mtime=entry.mtime or 0,
+                        mtime=mtime,
                         chunk_index=chunk_idx,
                         chunk_start=offset,
                         chunk_end=chunk_end,
                     )
                 )
-                chunk_indices.append(len(work_items) - 1)
                 offset = chunk_end
                 chunk_idx += 1
-            file_chunk_map[cache_key] = chunk_indices
+            file_chunk_counts[cache_key] = chunk_idx
+        elif file_size > max_memory_bytes:
+            # Large whole file: use streaming work item
+            all_work_items.append(
+                _StreamingWorkItem(
+                    file_path=abs_path,
+                    cache_key=cache_key,
+                    file_size=file_size,
+                    mtime=mtime,
+                )
+            )
+            file_chunk_counts[cache_key] = 0  # 0 means whole file (not chunked)
         else:
-            # Small file: single chunk
-            work_items.append(
+            # Small whole file: single chunk covering entire file
+            all_work_items.append(
                 _ChunkWorkItem(
                     file_path=abs_path,
                     cache_key=cache_key,
                     file_size=file_size,
-                    mtime=entry.mtime or 0,
+                    mtime=mtime,
                     chunk_index=0,
                     chunk_start=0,
                     chunk_end=file_size,
                 )
             )
-            file_chunk_map[cache_key] = [len(work_items) - 1]
+            file_chunk_counts[cache_key] = 0  # 0 means whole file (not chunked)
 
-    # Check caches - for S3DataCache, skip if BOTH hash cache AND s3 check cache hit
-    # For FileSystemDataCache, skip if hash cache hits AND file exists
-    cached_chunk_hashes: Dict[str, Dict[int, str]] = {}  # cache_key -> {chunk_idx -> hash}
-    items_to_process: List[_ChunkWorkItem] = []
+    # Check caches and filter out fully cached items
+    items_to_process: List[WorkItem] = []
+    cached_results: Dict[
+        str, Union[str, Dict[int, str]]
+    ] = {}  # cache_key -> hash or {chunk_idx -> hash}
 
-    for item in work_items:
+    for item in all_work_items:
         skip_pipeline = False
 
         if hash_cache is not None and not force_rehash:
             mtime_str = str(item.mtime) if item.mtime is not None else ""
-            hash_cache_entry = hash_cache.get_entry(
-                item.cache_key,
-                manifest.hashAlg,
-                item.chunk_start,
-                item.chunk_end,
-            )
-            if hash_cache_entry is not None and hash_cache_entry.last_modified_time == mtime_str:
-                cached_hash = hash_cache_entry.file_hash
 
-                # Check if object exists in data cache
-                if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
-                    # Both caches hit - skip the pipeline entirely
-                    skip_pipeline = True
-                    if item.cache_key not in cached_chunk_hashes:
-                        cached_chunk_hashes[item.cache_key] = {}
-                    cached_chunk_hashes[item.cache_key][item.chunk_index] = cached_hash
-                    print_function_callback(
-                        f"Fully cached (hash + data cache): {item.file_path} chunk {item.chunk_index}"
+            if isinstance(item, _StreamingWorkItem):
+                # Whole file hash lookup
+                hash_cache_entry = hash_cache.get_entry(
+                    item.cache_key,
+                    manifest.hashAlg,
+                )
+                if (
+                    hash_cache_entry is not None
+                    and hash_cache_entry.last_modified_time == mtime_str
+                ):
+                    cached_hash = hash_cache_entry.file_hash
+                    if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
+                        skip_pipeline = True
+                        cached_results[item.cache_key] = cached_hash
+                        print_function_callback(
+                            f"Fully cached (hash + data cache): {item.file_path}"
+                        )
+            elif isinstance(item, _ChunkWorkItem):
+                if file_chunk_counts[item.cache_key] == 0:
+                    # Whole file (single chunk)
+                    hash_cache_entry = hash_cache.get_entry(
+                        item.cache_key,
+                        manifest.hashAlg,
                     )
+                else:
+                    # Chunked file
+                    hash_cache_entry = hash_cache.get_entry(
+                        item.cache_key,
+                        manifest.hashAlg,
+                        item.chunk_start,
+                        item.chunk_end,
+                    )
+
+                if (
+                    hash_cache_entry is not None
+                    and hash_cache_entry.last_modified_time == mtime_str
+                ):
+                    cached_hash = hash_cache_entry.file_hash
+                    if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
+                        skip_pipeline = True
+                        if file_chunk_counts[item.cache_key] == 0:
+                            # Whole file
+                            cached_results[item.cache_key] = cached_hash
+                        else:
+                            # Chunked file
+                            if item.cache_key not in cached_results:
+                                cached_results[item.cache_key] = {}
+                            chunk_dict = cached_results[item.cache_key]
+                            if isinstance(chunk_dict, dict):
+                                chunk_dict[item.chunk_index] = cached_hash
+                        print_function_callback(
+                            f"Fully cached (hash + data cache): {item.file_path}"
+                            + (
+                                f" chunk {item.chunk_index}"
+                                if file_chunk_counts[item.cache_key] > 0
+                                else ""
+                            )
+                        )
 
         if not skip_pipeline:
             items_to_process.append(item)
 
-    # Process remaining items through pipeline
-    pipeline_results = _run_pipeline(
-        work_items=items_to_process,
-        hash_alg=manifest.hashAlg,
-        data_cache=data_cache,
-        account_id=account_id,
-        max_memory_bytes=max_memory_bytes,
-        progress_tracker=progress_tracker,
-    )
+    # Run the unified pipeline
+    if items_to_process:
+        pipeline_results = _run_pipeline(
+            work_items=items_to_process,
+            hash_alg=manifest.hashAlg,
+            data_cache=data_cache,
+            account_id=account_id,
+            max_memory_bytes=max_memory_bytes,
+            progress_tracker=progress_tracker,
+        )
 
-    # Collect pipeline results
-    pipeline_chunk_hashes: Dict[str, Dict[int, str]] = {}
-    for item in pipeline_results:
-        if item.chunk_hash is not None:
-            if item.cache_key not in pipeline_chunk_hashes:
-                pipeline_chunk_hashes[item.cache_key] = {}
-            pipeline_chunk_hashes[item.cache_key][item.chunk_index] = item.chunk_hash
+        # Process results and update caches
+        for item in pipeline_results:
+            if isinstance(item, _StreamingWorkItem):
+                if item.file_hash is not None:
+                    cached_results[item.cache_key] = item.file_hash
 
-            # Update hash cache
-            if hash_cache is not None:
-                mtime_str = str(item.mtime) if item.mtime is not None else ""
-                hash_cache.put_entry(
-                    HashCacheEntry(
-                        file_path=item.cache_key,
-                        hash_algorithm=manifest.hashAlg,
-                        file_hash=item.chunk_hash,
-                        last_modified_time=mtime_str,
-                        range_start=item.chunk_start,
-                        range_end=item.chunk_end,
+                    # Update hash cache
+                    if hash_cache is not None:
+                        mtime_str = str(item.mtime) if item.mtime is not None else ""
+                        hash_cache.put_entry(
+                            HashCacheEntry(
+                                file_path=item.cache_key,
+                                hash_algorithm=manifest.hashAlg,
+                                file_hash=item.file_hash,
+                                last_modified_time=mtime_str,
+                                range_start=0,
+                                range_end=WHOLE_FILE_RANGE_END,
+                            )
+                        )
+                    print_function_callback(f"Hashed and uploaded (streaming): {item.file_path}")
+
+            elif isinstance(item, _ChunkWorkItem):
+                if item.chunk_hash is not None:
+                    if file_chunk_counts[item.cache_key] == 0:
+                        # Whole file
+                        cached_results[item.cache_key] = item.chunk_hash
+                        range_start = 0
+                        range_end = WHOLE_FILE_RANGE_END
+                    else:
+                        # Chunked file
+                        if item.cache_key not in cached_results:
+                            cached_results[item.cache_key] = {}
+                        chunk_dict = cached_results[item.cache_key]
+                        if isinstance(chunk_dict, dict):
+                            chunk_dict[item.chunk_index] = item.chunk_hash
+                        range_start = item.chunk_start
+                        range_end = item.chunk_end
+
+                    # Update hash cache
+                    if hash_cache is not None:
+                        mtime_str = str(item.mtime) if item.mtime is not None else ""
+                        hash_cache.put_entry(
+                            HashCacheEntry(
+                                file_path=item.cache_key,
+                                hash_algorithm=manifest.hashAlg,
+                                file_hash=item.chunk_hash,
+                                last_modified_time=mtime_str,
+                                range_start=range_start,
+                                range_end=range_end,
+                            )
+                        )
+                    print_function_callback(
+                        f"Hashed and uploaded: {item.file_path}"
+                        + (
+                            f" chunk {item.chunk_index}"
+                            if file_chunk_counts[item.cache_key] > 0
+                            else ""
+                        )
                     )
-                )
-            print_function_callback(
-                f"Hashed and uploaded: {item.file_path} chunk {item.chunk_index}"
-            )
-
-    # Merge cached and pipeline results
-    all_chunk_hashes: Dict[str, Dict[int, str]] = {}
-    for cache_key in file_chunk_map:
-        all_chunk_hashes[cache_key] = {}
-        if cache_key in cached_chunk_hashes:
-            all_chunk_hashes[cache_key].update(cached_chunk_hashes[cache_key])
-        if cache_key in pipeline_chunk_hashes:
-            all_chunk_hashes[cache_key].update(pipeline_chunk_hashes[cache_key])
 
     # Build result manifest
     hashed_paths: List[ManifestFilePath] = []
     total_size = 0
 
-    # Process file entries
-    for idx, entry in file_entries_to_process:
-        abs_path = Path(entry.path)
-        cache_key = str(abs_path.resolve())
+    for cache_key, (idx, entry) in entry_map.items():
         file_size = entry.size or 0
-        chunk_hashes = all_chunk_hashes.get(cache_key, {})
+        expected_chunks = file_chunk_counts[cache_key]
 
-        if file_size > FILE_CHUNK_SIZE_BYTES:
-            # Large file: use chunkhashes
-            expected_chunks = (file_size + FILE_CHUNK_SIZE_BYTES - 1) // FILE_CHUNK_SIZE_BYTES
-            # All chunks must have been hashed
-            chunkhashes_list: List[str] = []
-            for i in range(expected_chunks):
-                chunk_hash = chunk_hashes.get(i)
-                if chunk_hash is None:
-                    raise ValueError(
-                        f"Internal error: chunk {i} of file '{entry.path}' was not hashed"
-                    )
-                chunkhashes_list.append(chunk_hash)
-            hashed_paths.append(
-                ManifestFilePath(
-                    path=entry.path,
-                    chunkhashes=chunkhashes_list,
-                    size=entry.size,
-                    mtime=entry.mtime,
-                    runnable=entry.runnable,
-                )
-            )
-        else:
-            # Small file: single hash
-            # Hash must have been computed
-            file_hash = chunk_hashes.get(0)
-            if file_hash is None:
+        if expected_chunks == 0:
+            # Whole file (either small or streaming)
+            file_hash = cached_results.get(cache_key)
+            if not isinstance(file_hash, str):
                 raise ValueError(f"Internal error: file '{entry.path}' was not hashed")
             hashed_paths.append(
                 ManifestFilePath(
                     path=entry.path,
                     hash=file_hash,
-                    size=entry.size,
+                    size=file_size,
+                    mtime=entry.mtime,
+                    runnable=entry.runnable,
+                )
+            )
+        else:
+            # Chunked file
+            chunk_dict_result = cached_results.get(cache_key)
+            if not isinstance(chunk_dict_result, dict):
+                raise ValueError(f"Internal error: chunked file '{entry.path}' has no chunk hashes")
+            chunk_dict = chunk_dict_result
+
+            chunkhashes_list: List[str] = []
+            for i in range(expected_chunks):
+                chunk_hash = chunk_dict.get(i)
+                if chunk_hash is None:
+                    raise ValueError(
+                        f"Internal error: chunk {i} of file '{entry.path}' was not hashed"
+                    )
+                chunkhashes_list.append(chunk_hash)
+
+            hashed_paths.append(
+                ManifestFilePath(
+                    path=entry.path,
+                    chunkhashes=chunkhashes_list,
+                    size=file_size,
                     mtime=entry.mtime,
                     runnable=entry.runnable,
                 )
             )
 
-        if entry.size is not None:
-            total_size += entry.size
+        total_size += file_size
 
     # Add symlink entries unchanged
     for idx, entry in symlink_entries:
@@ -799,22 +1191,26 @@ def hash_upload_manifest(
         files=hashed_paths,
         total_size=total_size,
         parent_manifest_hash=manifest.parentManifestHash,
+        file_chunk_size_bytes=manifest.fileChunkSizeBytes,
     )
 
 
 def _run_pipeline(
-    work_items: List[_ChunkWorkItem],
+    work_items: List[WorkItem],
     hash_alg: HashAlgorithm,
     data_cache: ContentAddressedDataCache,
     account_id: Optional[str],
     max_memory_bytes: int,
     progress_tracker: Optional[ProgressTracker],
-) -> List[_ChunkWorkItem]:
+) -> List[WorkItem]:
     """
     Run the READ -> HASH -> UPLOAD pipeline on work items.
 
+    Handles both _ChunkWorkItem (in-memory processing) and _StreamingWorkItem
+    (streaming processing for large files) in a single unified pipeline.
+
     Args:
-        work_items: List of chunk work items to process
+        work_items: List of work items to process (chunks and/or streaming items)
         hash_alg: Hash algorithm to use
         data_cache: Content-addressable data cache for writes
         account_id: AWS account ID (for S3DataCache ExpectedBucketOwner)
@@ -862,7 +1258,7 @@ def _run_pipeline(
     read_queue.put(_SHUTDOWN_SENTINEL)
 
     # Collect results
-    results: List[_ChunkWorkItem] = []
+    results: List[WorkItem] = []
     while True:
         try:
             item = result_queue.get(timeout=0.1)

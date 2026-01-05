@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 from ..manifest import (
-    FILE_CHUNK_SIZE_BYTES,
     AbsManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
@@ -79,16 +78,24 @@ def hash_manifest(
         - Diff manifests: Only new/modified file entries are hashed;
           deleted entries are passed through unchanged (no hash needed)
 
+    Chunking Behavior:
+        - If manifest.fileChunkSizeBytes is None: all files are hashed as a whole
+          (no chunking regardless of file size)
+        - If manifest.fileChunkSizeBytes is set: files larger than this size use
+          chunked hashing with chunkhashes field
+
     Note:
         - Input manifest must have absolute paths (from collect_manifest or join_manifest)
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
         - Deleted entries are unchanged (they mark deletions, no hash needed)
-        - For large files (>256MB): computes chunkhashes
         - Returns a NEW manifest (does not mutate input)
     """
     # Validate that manifest has absolute paths
     _validate_absolute_paths(manifest)
+
+    # Get chunk size from manifest (None means no chunking)
+    chunk_size = manifest.fileChunkSizeBytes
 
     hashed_paths: List[ManifestFilePath] = []
     total_size = 0
@@ -119,8 +126,12 @@ def hash_manifest(
         # Use resolved path as cache key for consistency
         cache_key = str(abs_path.resolve())
 
-        # Check if file needs chunking (>256MB)
-        if entry.size is not None and entry.size > FILE_CHUNK_SIZE_BYTES:
+        # Check if file needs chunking (only if chunk_size is set and file is larger)
+        needs_chunking = (
+            chunk_size is not None and entry.size is not None and entry.size > chunk_size
+        )
+
+        if needs_chunking:
             # Large file: hash and chunkhashes should both be None (unhashed)
             if entry.hash is not None:
                 raise ValueError(
@@ -137,10 +148,10 @@ def hash_manifest(
             chunk_hashes = _hash_file_chunked(
                 file_path=abs_path,
                 cache_key=cache_key,
-                file_size=entry.size,
+                file_size=entry.size,  # type: ignore[arg-type]
                 mtime=entry.mtime,
                 hash_alg=manifest.hashAlg,
-                chunk_size=FILE_CHUNK_SIZE_BYTES,
+                chunk_size=chunk_size,  # type: ignore[arg-type]
                 hash_cache=hash_cache,
                 force_rehash=force_rehash,
             )
@@ -156,19 +167,18 @@ def hash_manifest(
             )
             print_function_callback(f"Hashed (chunked, {len(chunk_hashes)} chunks): {entry.path}")
         else:
-            # Small file: hash should be None (unhashed), chunkhashes should be None
+            # Small file or no chunking: hash should be None (unhashed), chunkhashes should be None
             if entry.hash is not None:
                 raise ValueError(
-                    f"Small file '{entry.path}' should have hash=None (unhashed), "
-                    f"got hash={entry.hash!r}"
+                    f"File '{entry.path}' should have hash=None (unhashed), got hash={entry.hash!r}"
                 )
             if entry.chunkhashes is not None:
                 raise ValueError(
-                    f"Small file '{entry.path}' should have chunkhashes=None, "
+                    f"File '{entry.path}' should have chunkhashes=None, "
                     f"got chunkhashes={entry.chunkhashes!r}"
                 )
 
-            # Compute hash
+            # Compute hash (whole file)
             file_hash = _get_or_compute_hash(
                 file_path=abs_path,
                 cache_key=cache_key,
@@ -210,6 +220,7 @@ def hash_manifest(
         files=hashed_paths,
         total_size=total_size,
         parent_manifest_hash=manifest.parentManifestHash,
+        file_chunk_size_bytes=manifest.fileChunkSizeBytes,
     )
 
 

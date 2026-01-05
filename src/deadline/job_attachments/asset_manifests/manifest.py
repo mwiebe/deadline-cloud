@@ -361,6 +361,8 @@ class Manifest:
         totalSize: Total size of all files in the manifest (in bytes).
         dirs: List of directory entries.
         parentManifestHash: Hash of parent snapshot for diff manifests.
+        fileChunkSizeBytes: Chunk size for large file hashing. If None, files are
+            hashed as a whole regardless of size. Default is FILE_CHUNK_SIZE_BYTES (256MB).
     """
 
     hashAlg: HashAlgorithm
@@ -368,6 +370,7 @@ class Manifest:
     totalSize: int
     dirs: List[ManifestDirectoryPath]
     parentManifestHash: Optional[str]
+    fileChunkSizeBytes: Optional[int]
 
     def __init__(
         self,
@@ -377,12 +380,14 @@ class Manifest:
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
+        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
     ) -> None:
         self.hashAlg = hash_alg
         self.totalSize = total_size
         self.dirs = dirs if dirs is not None else []
         self.files = files if files is not None else []
         self.parentManifestHash = parent_manifest_hash
+        self.fileChunkSizeBytes = file_chunk_size_bytes
 
     def validate(self) -> None:
         """
@@ -414,6 +419,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
+        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -421,6 +427,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
             total_size=total_size,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
+            file_chunk_size_bytes=file_chunk_size_bytes,
         )
 
     def validate(self) -> None:
@@ -440,6 +447,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
+        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -447,6 +455,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
             total_size=total_size,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
+            file_chunk_size_bytes=file_chunk_size_bytes,
         )
 
     def validate(self) -> None:
@@ -466,6 +475,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
+        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -473,6 +483,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
             total_size=total_size,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
+            file_chunk_size_bytes=file_chunk_size_bytes,
         )
 
     def validate(self) -> None:
@@ -492,6 +503,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
+        file_chunk_size_bytes: Optional[int] = FILE_CHUNK_SIZE_BYTES,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -499,6 +511,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
             total_size=total_size,
             dirs=dirs,
             parent_manifest_hash=parent_manifest_hash,
+            file_chunk_size_bytes=file_chunk_size_bytes,
         )
 
     def validate(self) -> None:

@@ -181,8 +181,19 @@ Manifest Classes (new unified in-memory representation)
 Path/Directory Classes (also in manifest.py)
 ├── ManifestFilePath            # File entry (unified, matches v2025 capabilities)
 ├── ManifestDirectoryPath       # Directory entry
-└── FILE_CHUNK_SIZE_BYTES       # 256MB chunk size constant
+└── FILE_CHUNK_SIZE_BYTES       # 256MB chunk size constant (default)
 ```
+
+**Manifest Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `hashAlg` | `HashAlgorithm` | Hashing algorithm used for file content hashes |
+| `files` | `List[ManifestFilePath]` | List of file entries |
+| `totalSize` | `int` | Total size of all files in bytes |
+| `dirs` | `List[ManifestDirectoryPath]` | List of directory entries |
+| `parentManifestHash` | `Optional[str]` | Hash of parent snapshot (for diff manifests) |
+| `fileChunkSizeBytes` | `Optional[int]` | Chunk size for large file hashing. Default: `FILE_CHUNK_SIZE_BYTES` (256MB). If `None`, files are hashed as a whole regardless of size. |
 
 For backwards compatibility in `base_manifest.py`:
 
@@ -604,20 +615,25 @@ def hash_manifest(
 | `hash_cache` provided, `force_rehash=True` | Always compute hash, update cache |
 | `hash_cache` is None | Always compute hash |
 
-**Large file handling (v2025-12-04-beta):**
+**Chunking behavior (controlled by `manifest.fileChunkSizeBytes`):**
 
-Files larger than 256MB (`FILE_CHUNK_SIZE_BYTES`) use chunked hashing:
+| `fileChunkSizeBytes` | File Size | Behavior |
+|---------------------|-----------|----------|
+| `None` | Any | Hash entire file as a whole (no chunking) |
+| Set (e.g., 256MB) | ≤ chunk size | Compute single `hash` |
+| Set (e.g., 256MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
 
+When `fileChunkSizeBytes` is set and a file is larger than the chunk size:
 - `hash` field is `None`
-- `chunkhashes` contains list of hashes, one per 256MB chunk
-- Chunk count must equal `ceil(size / 256MB)`
+- `chunkhashes` contains list of hashes, one per chunk
+- Chunk count equals `ceil(size / fileChunkSizeBytes)`
 
 **Entry type handling:**
 
 | Entry Type | Action |
 |------------|--------|
-| Regular file (≤256MB) | Compute single hash |
-| Large file (>256MB) | Compute chunkhashes |
+| Regular file (no chunking or ≤ chunk size) | Compute single hash |
+| Large file (> chunk size, when chunking enabled) | Compute chunkhashes |
 | Symlink | Pass through unchanged |
 | Deleted marker | Pass through unchanged (diff manifests only) |
 | Directory | Pass through unchanged |
@@ -753,9 +769,26 @@ The operation uses a multi-threaded pipeline with three stages:
          (bounded by max_memory_bytes)
 ```
 
-1. **READ stage:** Reads file chunks (256MB for large files, whole file for small files) from disk into memory buffers
+1. **READ stage:** Reads file chunks from disk into memory buffers
 2. **HASH stage:** Computes XXH128 hash of each chunk in memory
-3. **UPLOAD stage:** Uploads the chunk to S3 using the hash as the object key
+3. **UPLOAD stage:** Uploads the chunk to the data cache using the hash as the object key
+
+**Chunking Behavior (controlled by `manifest.fileChunkSizeBytes`):**
+
+| `fileChunkSizeBytes` | File Size | Processing |
+|---------------------|-----------|------------|
+| `None` | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
+| `None` | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
+| Set (e.g., 256MB) | ≤ chunk size | Single chunk: read → hash → upload |
+| Set (e.g., 256MB) | > chunk size | Multiple chunks through pipeline |
+
+When `fileChunkSizeBytes` is `None` and a file is larger than `max_memory_bytes`:
+- **Pass 1:** Stream through file to compute hash (discard data to avoid OOM)
+- **Pass 2:** Stream through file again to upload
+
+When `fileChunkSizeBytes` is set:
+- `max_memory_bytes` must be >= `fileChunkSizeBytes` (raises `ValueError` otherwise)
+- Large files are processed chunk by chunk through the pipeline
 
 **Memory Management:**
 
@@ -770,7 +803,7 @@ When `max_memory_bytes` is not specified, the default is calculated as the maxim
 
 | Option | Value | Rationale |
 |--------|-------|-----------|
-| Minimum | 256MB | One chunk must fit; worst case processes one chunk at a time |
+| Minimum | 256MB | One chunk must fit for default 256MB chunk size; worst case processes one chunk at a time |
 | Quarter of total | `total_memory / 4` | Use a reasonable portion of system resources |
 | Available minus 1GB | `available_memory - 1GB` | When lots of free memory exists (e.g., 60GB), use most of it |
 
@@ -787,21 +820,7 @@ default_limit = max(256MB, total_memory // 4, available_memory - 1GB)
 | High memory server | 128GB | 100GB | 32GB | 99GB | 99GB |
 | Constrained (busy) | 32GB | 1.5GB | 8GB | 0.5GB | 8GB |
 
-This ensures the pipeline uses as much memory as safely available while maintaining a reasonable lower bound
-
-**Chunk Processing:**
-
-| File Size | Chunk Size | Processing |
-|-----------|------------|------------|
-| ≤256MB | Whole file | Single chunk: read → hash → upload |
-| >256MB | 256MB | Multiple chunks processed sequentially per file |
-
-For large files (>256MB), chunks are processed in order:
-1. Read chunk 0 → Hash chunk 0 → Upload chunk 0
-2. Read chunk 1 → Hash chunk 1 → Upload chunk 1
-3. ... and so on
-
-This ensures that for any single large file, memory usage is bounded to ~256MB per file in the pipeline.
+This ensures the pipeline uses as much memory as safely available while maintaining a reasonable lower bound.
 
 **Storage Key Format:**
 
@@ -834,8 +853,9 @@ For `FileSystemDataCache`, the `object_exists()` method checks the local filesys
 
 | Entry Type | Action |
 |------------|--------|
-| Regular file (≤256MB) | Read → Hash → Upload (single chunk) |
-| Large file (>256MB) | Read → Hash → Upload (per 256MB chunk) |
+| Regular file (fits in memory or no chunking) | Read → Hash → Upload (single pass) |
+| Large file (> memory, no chunking) | Stream hash → Stream upload (two-pass) |
+| Large file (chunking enabled) | Read → Hash → Upload (per chunk) |
 | Symlink | Pass through unchanged (no upload) |
 | Deleted marker | Pass through unchanged (no upload) |
 | Directory | Pass through unchanged (no upload) |
@@ -847,7 +867,7 @@ For `FileSystemDataCache`, the `object_exists()` method checks the local filesys
 | Snapshot | All file entries are hashed and uploaded |
 | Diff | Only new/modified file entries are hashed and uploaded; deleted entries pass through unchanged |
 
-The `parentManifestHash` field is preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsDiffManifest`, `RelSnapshotManifest`).
+The `parentManifestHash` and `fileChunkSizeBytes` fields are preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsDiffManifest`, `RelSnapshotManifest`).
 
 **Error Handling:**
 
