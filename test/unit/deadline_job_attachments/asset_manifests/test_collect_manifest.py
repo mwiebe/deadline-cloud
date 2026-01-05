@@ -484,8 +484,8 @@ class TestCollectManifestMetadata:
         file_entries = [p for p in manifest.files if "file.txt" in p.path]
         assert file_entries[0].mtime == expected_mtime
 
-    def test_hash_is_empty_string(self, tmp_path: Path) -> None:
-        """Hash is set to empty string (to be filled by hash_manifest)."""
+    def test_hash_is_none_for_unhashed(self, tmp_path: Path) -> None:
+        """Hash is set to None for unhashed files (to be filled by hash_manifest)."""
         file_path = tmp_path / "file.txt"
         file_path.write_text("content")
 
@@ -495,7 +495,7 @@ class TestCollectManifestMetadata:
         )
 
         file_entries = [p for p in manifest.files if "file.txt" in p.path]
-        assert file_entries[0].hash == ""
+        assert file_entries[0].hash is None
 
     @pytest.mark.skipif(os.name == "nt", reason="Execute bit not meaningful on Windows")
     def test_runnable_flag_captured(self, tmp_path: Path) -> None:

@@ -516,8 +516,8 @@ def hash_upload_manifest(
     avoiding the need to read files twice (once for hashing, once for writing).
 
     Args:
-        manifest: Manifest with absolute paths and empty hashes (from collect_manifest).
-            Can be AbsSnapshotManifest or AbsDiffManifest.
+        manifest: Manifest with absolute paths and hash=None for unhashed files
+            (from collect_manifest). Can be AbsSnapshotManifest or AbsDiffManifest.
         data_cache: Content-addressable data cache destination. Either S3DataCache
             for cloud storage or FileSystemDataCache for local/network storage.
         hash_cache: Optional hash cache for efficiency
@@ -726,7 +726,15 @@ def hash_upload_manifest(
         if file_size > FILE_CHUNK_SIZE_BYTES:
             # Large file: use chunkhashes
             expected_chunks = (file_size + FILE_CHUNK_SIZE_BYTES - 1) // FILE_CHUNK_SIZE_BYTES
-            chunkhashes_list = [chunk_hashes.get(i, "") for i in range(expected_chunks)]
+            # All chunks must have been hashed
+            chunkhashes_list: List[str] = []
+            for i in range(expected_chunks):
+                chunk_hash = chunk_hashes.get(i)
+                if chunk_hash is None:
+                    raise ValueError(
+                        f"Internal error: chunk {i} of file '{entry.path}' was not hashed"
+                    )
+                chunkhashes_list.append(chunk_hash)
             hashed_paths.append(
                 ManifestFilePath(
                     path=entry.path,
@@ -738,7 +746,10 @@ def hash_upload_manifest(
             )
         else:
             # Small file: single hash
-            file_hash = chunk_hashes.get(0, "")
+            # Hash must have been computed
+            file_hash = chunk_hashes.get(0)
+            if file_hash is None:
+                raise ValueError(f"Internal error: file '{entry.path}' was not hashed")
             hashed_paths.append(
                 ManifestFilePath(
                     path=entry.path,

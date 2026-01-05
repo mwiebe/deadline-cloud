@@ -4,7 +4,7 @@
 Module for collecting directory structure into manifest objects WITHOUT computing hashes.
 
 This module implements the COLLECT operation from the composable manifest operations design:
-    COLLECT: Paths → AbsSnapshotManifest (with hash="" for files, absolute paths)
+    COLLECT: Paths → AbsSnapshotManifest (with hash=None for files, absolute paths)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
@@ -44,7 +44,7 @@ def collect_manifest(
     This function:
     1. Collects the specified directories and filenames
     2. Captures metadata (mtime, size, permissions)
-    3. Sets hash="" (empty string) for all file entries
+    3. Sets hash=None for all file entries (hashes not yet computed)
     4. Returns an AbsSnapshotManifest with absolute paths
 
     Args:
@@ -66,7 +66,7 @@ def collect_manifest(
         print_function_callback: Progress callback
 
     Returns:
-        An AbsSnapshotManifest with absolute paths and hash="" for files
+        An AbsSnapshotManifest with absolute paths and hash=None for files
 
     Raises:
         FileNotFoundError: If any directory does not exist.
@@ -135,6 +135,9 @@ def _collect_manifest_impl(
     1. First pass: Collect all non-symlink paths to build the "collected set"
     2. Second pass: Process symlinks - preserve if target is in collected set,
        collapse if target is outside (escaping)
+
+    Files are collected with hash=None to indicate hashes have not been computed.
+    Use hash_manifest() or hash_upload_manifest() to fill in hashes.
     """
     file_entries: List[ManifestFilePath] = []
     dir_entries: List[ManifestDirectoryPath] = []
@@ -411,13 +414,17 @@ def _create_unhashed_file_entry(
     entry_path: str,
     stat_info: Optional[os.stat_result] = None,
 ) -> ManifestFilePath:
-    """Create a ManifestFilePath entry for a regular file WITHOUT computing hash."""
+    """Create a ManifestFilePath entry for a regular file WITHOUT computing hash.
+
+    The returned entry has hash=None and chunkhashes=None to indicate that
+    hashes have not been computed yet.
+    """
     if stat_info is None:
         stat_info = full_path.stat()
     runnable = bool(stat_info.st_mode & 0o111)
     return ManifestFilePath(
         path=entry_path,
-        hash="",
+        hash=None,
         size=stat_info.st_size,
         mtime=stat_info.st_mtime_ns // 1000,
         runnable=runnable if runnable else False,

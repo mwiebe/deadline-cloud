@@ -111,11 +111,11 @@ Here are the operations for working with data snapshots:
        but when using HASH_UPLOAD provide a `FileSystemDataCache` that writes to your local file system
        to place in a zip file instead of uploading to the cloud.
 4. To collect a single directory tree into a manifest with relative paths:
-    1. Use COLLECT with a single directory to collect, with PRESERVE as
+    1. Use COLLECT with a single directory to collect, with COLLAPSE_ESCAPING as
        the symlink_policy
-    2. Use SUBTREE to extract the directory as a relative-path manifest,
-       with COLLAPSE_ESCAPING as the symlink_policy.
-    3.
+    2. Use HASH to populate the hash values in the manifest. Run this
+       while the manifest has absolute paths.
+    3. Use SUBTREE to extract the directory as a relative-path manifest.
 
 ### Benefits of Composable Design
 
@@ -370,7 +370,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 | Module | Operation | Description |
 |--------|-----------|-------------|
-| `_collect_manifest.py` | COLLECT | Scans directories/files, creates manifest with `hash=""` |
+| `_collect_manifest.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
@@ -382,12 +382,12 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 ## ContentAddressedDataCache Classes
 
-**Location:** `_data_cache.py`
+**Location:** `_content_addressed_data_cache.py`
 
 The `ContentAddressedDataCache` is an abstract base class that defines the interface for content-addressable storage backends. It encapsulates the destination-specific parameters needed by the HASH_UPLOAD operation.
 
 ```python
-# In _data_cache.py
+# In _content_addressed_data_cache.py
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -517,7 +517,7 @@ def collect_manifest(
 
 **Key implementation details:**
 
-- Files have `hash=""` (empty string) to indicate hashing is needed
+- Files have `hash=None` to indicate hashing is needed
 - Symlinks have `symlink_target` set as absolute paths (no hash needed)
 - All paths in the manifest are absolute
 - Directories are included in the manifest
@@ -565,7 +565,7 @@ for entry in manifest.paths:
 
 **Helper functions:**
 
-- `_create_unhashed_file_entry()` - Creates file entry with `hash=""` and metadata
+- `_create_unhashed_file_entry()` - Creates file entry with `hash=None` and metadata
 - `_handle_symlink()` - Handles symlink according to policy
 
 ### 2. HASH: `hash_manifest()`
@@ -587,7 +587,7 @@ def hash_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and empty hashes. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
+| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `print_function_callback` | Progress callback for status messages |
@@ -726,7 +726,7 @@ def hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and empty hashes. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
+| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `data_cache` | Content-addressable data cache destination. Either `S3DataCache` for cloud storage or `FileSystemDataCache` for local/network storage. |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |

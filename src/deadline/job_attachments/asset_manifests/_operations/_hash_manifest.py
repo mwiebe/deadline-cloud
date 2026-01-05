@@ -5,7 +5,7 @@ Module for filling in hashes for manifest objects that were created by collect_m
 or compute_diff_manifest.
 
 This module implements the HASH operation from the composable manifest operations design:
-    HASH: AbsManifest (with hash="") → AbsManifest (with hashes filled in)
+    HASH: AbsManifest (with hash=None) → AbsManifest (with hashes filled in)
 
 Where AbsManifest can be either:
     - AbsSnapshotManifest: A full directory tree snapshot with absolute paths
@@ -47,11 +47,12 @@ def hash_manifest(
     """
     Fill in hashes for a manifest structure with absolute paths.
 
-    Given a manifest with hash="" for file entries (from collect_manifest or
+    Given a manifest with hash=None for file entries (from collect_manifest or
     compute_diff_manifest), computes and fills in the actual hashes.
 
     Args:
-        manifest: Manifest with absolute paths and empty hashes. Can be either:
+        manifest: Manifest with absolute paths and hash=None for unhashed files.
+            Can be either:
             - AbsSnapshotManifest (from collect_manifest)
             - AbsDiffManifest (from compute_diff_manifest with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
@@ -120,18 +121,16 @@ def hash_manifest(
 
         # Check if file needs chunking (>256MB)
         if entry.size is not None and entry.size > FILE_CHUNK_SIZE_BYTES:
-            # Large file: validate input - hash should be None, chunkhashes should be
-            # a list with correct length for the file size
-            expected_chunks = (entry.size + FILE_CHUNK_SIZE_BYTES - 1) // FILE_CHUNK_SIZE_BYTES
+            # Large file: hash and chunkhashes should both be None (unhashed)
             if entry.hash is not None:
                 raise ValueError(
                     f"Large file '{entry.path}' (size={entry.size}) should have hash=None, "
                     f"got hash={entry.hash!r}"
                 )
-            if not isinstance(entry.chunkhashes, list) or len(entry.chunkhashes) != expected_chunks:
+            if entry.chunkhashes is not None:
                 raise ValueError(
-                    f"Large file '{entry.path}' (size={entry.size}) should have "
-                    f"{expected_chunks} chunkhashes, got {entry.chunkhashes!r}"
+                    f"Large file '{entry.path}' (size={entry.size}) should have chunkhashes=None "
+                    f"(unhashed), got chunkhashes={entry.chunkhashes!r}"
                 )
 
             # Compute chunk hashes
@@ -157,11 +156,10 @@ def hash_manifest(
             )
             print_function_callback(f"Hashed (chunked, {len(chunk_hashes)} chunks): {entry.path}")
         else:
-            # Small file: validate input - hash should be a string (empty from collect),
-            # chunkhashes should be None
-            if not isinstance(entry.hash, str):
+            # Small file: hash should be None (unhashed), chunkhashes should be None
+            if entry.hash is not None:
                 raise ValueError(
-                    f"Small file '{entry.path}' should have hash as a string, "
+                    f"Small file '{entry.path}' should have hash=None (unhashed), "
                     f"got hash={entry.hash!r}"
                 )
             if entry.chunkhashes is not None:

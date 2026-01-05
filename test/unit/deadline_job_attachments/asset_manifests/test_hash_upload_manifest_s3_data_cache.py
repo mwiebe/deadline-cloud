@@ -173,7 +173,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",  # Empty hash to be filled
+                    hash=None,  # None indicates hash not yet computed
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -189,7 +189,8 @@ class TestHashUploadManifest:
 
         assert isinstance(result, AbsSnapshotManifest)
         assert len(result.files) == 1
-        assert result.files[0].hash != ""  # Hash should be filled in
+        assert result.files[0].hash is not None  # Hash should be filled in
+        assert result.files[0].hash != ""  # Hash should not be empty
         assert result.files[0].path == abs_path
 
         # Verify the file was uploaded to S3
@@ -291,7 +292,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=file_size,
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -332,7 +333,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -372,7 +373,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -405,7 +406,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=original_size,
                     mtime=original_mtime,
                 )
@@ -453,6 +454,7 @@ class TestHashUploadManifest:
         # Symlink should have no hash
         assert symlink_entries[0].hash is None
         # File should have hash
+        assert file_entries[0].hash is not None
         assert file_entries[0].hash != ""
 
         # Only the target file should be uploaded (not the symlink)
@@ -557,7 +559,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                     runnable=runnable,
@@ -574,6 +576,7 @@ class TestHashUploadManifest:
 
         assert len(result.files) == 1
         assert result.files[0].runnable is runnable
+        assert result.files[0].hash is not None
         assert result.files[0].hash != ""
 
     def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
@@ -609,7 +612,7 @@ class TestHashUploadManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -653,7 +656,7 @@ class TestHashUploadInputValidation:
             files=[
                 ManifestFilePath(
                     path="relative/path/file.txt",  # Relative path
-                    hash="",
+                    hash=None,
                     size=100,
                     mtime=12345,
                 )
@@ -681,7 +684,7 @@ class TestHashUploadInputValidation:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -695,4 +698,5 @@ class TestHashUploadInputValidation:
             manifest=manifest,
             data_cache=data_cache,
         )
+        assert result.files[0].hash is not None
         assert result.files[0].hash != ""

@@ -169,20 +169,30 @@ class ManifestFilePath:
             )
 
     def _validate_non_deleted_entry(self) -> None:
-        """Validate a non-deleted entry."""
-        # Must have exactly one of hash, chunkhashes, or symlink_target
+        """Validate a non-deleted entry.
+
+        Valid states for non-deleted entries:
+        1. Symlink: symlink_target is set, hash and chunkhashes are None
+        2. Hashed small file: hash is set, chunkhashes and symlink_target are None
+        3. Hashed large file: chunkhashes is set, hash and symlink_target are None
+        4. Unhashed file: hash, chunkhashes, and symlink_target are all None
+           (file collected but not yet hashed)
+        """
         content_fields = [
             self.hash is not None,
             self.chunkhashes is not None,
             self.symlink_target is not None,
         ]
-        if sum(content_fields) != 1:
+        content_count = sum(content_fields)
+
+        # Valid: exactly one content field set, OR all None (unhashed file)
+        if content_count > 1:
             raise ManifestDecodeValidationError(
-                f"File '{self.path}' must have exactly one of 'hash', 'chunkhashes', "
+                f"File '{self.path}' must have at most one of 'hash', 'chunkhashes', "
                 f"or 'symlink_target'"
             )
 
-        # Symlinks don't need size/mtime, but regular files do
+        # Symlinks don't need size/mtime, but regular files (hashed or unhashed) do
         if self.symlink_target is None:
             if self.size is None:
                 raise ManifestDecodeValidationError(f"File '{self.path}' must have 'size' field")

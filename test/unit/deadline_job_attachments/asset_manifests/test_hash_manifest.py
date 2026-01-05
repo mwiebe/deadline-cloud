@@ -53,13 +53,13 @@ class TestHashManifestBasic:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        # Collect first (hash="")
+        # Collect first (hash=None for unhashed files)
         collected = collect_manifest(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
-        assert collected.files[0].hash == ""
+        assert collected.files[0].hash is None
 
         # Hash the manifest
         hashed = hash_manifest(collected)
@@ -551,13 +551,14 @@ class TestLargeFileChunking:
 
         # Create manifest with large file size manually
         # For size = FILE_CHUNK_SIZE_BYTES + 1000, we need 2 chunks
+        # hash=None and chunkhashes=None indicates unhashed large file
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    chunkhashes=["", ""],  # Placeholder for 2 chunks
+                    hash=None,  # None for unhashed file
                     size=FILE_CHUNK_SIZE_BYTES + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
@@ -604,7 +605,7 @@ class TestInputValidation:
             files=[
                 ManifestFilePath(
                     path="/absolute/path/file.txt",  # Start with absolute
-                    hash="",
+                    hash=None,
                     size=100,
                     mtime=12345,
                 )
@@ -630,6 +631,7 @@ class TestInputValidation:
 
         # Should not raise
         hashed = hash_manifest(collected)
+        assert hashed.files[0].hash is not None
         assert hashed.files[0].hash != ""
 
     def test_large_file_rejects_non_none_hash(self, tmp_path: Path) -> None:
@@ -659,75 +661,53 @@ class TestInputValidation:
         with pytest.raises(ValueError, match="should have hash=None"):
             hash_manifest(manifest)
 
-    def test_large_file_rejects_wrong_chunk_count(self, tmp_path: Path) -> None:
-        """Large file with wrong chunkhashes count raises ValueError."""
+    def test_large_file_valid_input_with_none_chunkhashes(self, tmp_path: Path) -> None:
+        """Large file with chunkhashes=None (unhashed) is valid and gets hashed."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        # Create manifest with valid chunk count first
+        # Create manifest with unhashed large file (hash=None, chunkhashes=None)
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    chunkhashes=["a", "b"],  # Correct count for 2 chunks
+                    hash=None,  # Unhashed
                     size=FILE_CHUNK_SIZE_BYTES + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
             ],
             total_size=FILE_CHUNK_SIZE_BYTES + 1000,
         )
-        # Manually set wrong chunk count (bypassing validation)
-        manifest.files[0].chunkhashes = ["a"]  # Should be 2 chunks
 
-        with pytest.raises(ValueError, match="should have 2 chunkhashes"):
-            hash_manifest(manifest)
+        with patch(
+            "deadline.job_attachments.asset_manifests._operations._hash_manifest._hash_file_chunked"
+        ) as mock_chunk:
+            mock_chunk.return_value = ["hash1", "hash2"]
 
-    def test_large_file_rejects_none_chunkhashes(self, tmp_path: Path) -> None:
-        """Large file with chunkhashes=None raises ValueError."""
-        test_file = tmp_path / "large.bin"
-        test_file.write_bytes(b"x" * 1000)
-        abs_path = str(test_file).replace("\\", "/")
-        stat_info = test_file.stat()
+            hashed = hash_manifest(manifest)
 
-        # Create manifest - need to bypass validation
-        manifest = AbsSnapshotManifest(
-            hash_alg=HashAlgorithm.XXH128,
-            dirs=[],
-            files=[
-                ManifestFilePath(
-                    path=abs_path,
-                    chunkhashes=["", ""],  # Valid initially
-                    size=FILE_CHUNK_SIZE_BYTES + 1000,
-                    mtime=int(stat_info.st_mtime_ns // 1000),
-                )
-            ],
-            total_size=FILE_CHUNK_SIZE_BYTES + 1000,
-        )
-        # Manually set to None (invalid)
-        manifest.files[0].chunkhashes = None
-
-        with pytest.raises(ValueError, match="should have 2 chunkhashes"):
-            hash_manifest(manifest)
+            assert hashed.files[0].chunkhashes is not None
+            assert len(hashed.files[0].chunkhashes) == 2
 
     def test_large_file_valid_input_passes(self, tmp_path: Path) -> None:
-        """Large file with valid input (hash=None, correct chunkhashes count) passes."""
+        """Large file with valid input (hash=None, chunkhashes=None) passes."""
         test_file = tmp_path / "large.bin"
         test_file.write_bytes(b"x" * 1000)
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        # Create manifest with valid large file
+        # Create manifest with valid large file (unhashed)
         manifest = AbsSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    chunkhashes=["", "", ""],  # Correct count for 3 chunks
+                    hash=None,  # Unhashed
                     size=FILE_CHUNK_SIZE_BYTES * 2 + 1000,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
@@ -744,22 +724,6 @@ class TestInputValidation:
 
             assert hashed.files[0].chunkhashes is not None
             assert len(hashed.files[0].chunkhashes) == 3
-
-    def test_small_file_rejects_non_string_hash(self, tmp_path: Path) -> None:
-        """Small file with hash=None raises ValueError."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("content")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-        # Manually set hash to None (invalid for small file)
-        collected.files[0].hash = None
-
-        with pytest.raises(ValueError, match="should have hash as a string"):
-            hash_manifest(collected)
 
     def test_small_file_rejects_non_none_chunkhashes(self, tmp_path: Path) -> None:
         """Small file with chunkhashes set raises ValueError."""
@@ -778,7 +742,7 @@ class TestInputValidation:
             hash_manifest(collected)
 
     def test_small_file_valid_input_passes(self, tmp_path: Path) -> None:
-        """Small file with valid input (hash is string, chunkhashes=None) passes."""
+        """Small file with valid input (hash=None, chunkhashes=None) passes."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
@@ -787,8 +751,8 @@ class TestInputValidation:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        # Default from collect_manifest should be valid
-        assert isinstance(collected.files[0].hash, str)
+        # Default from collect_manifest should be valid (hash=None for unhashed)
+        assert collected.files[0].hash is None
         assert collected.files[0].chunkhashes is None
 
         hashed = hash_manifest(collected)
@@ -902,14 +866,14 @@ class TestHashDiffManifest:
         file_stat = test_file.stat()
         abs_path = str(test_file).replace("\\", "/")
 
-        # Create a diff manifest with a new file (hash="")
+        # Create a diff manifest with a new file (hash=None)
         diff_manifest = AbsDiffManifest(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",  # Empty hash to be filled
+                    hash=None,  # None indicates hash not yet computed
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -1002,14 +966,14 @@ class TestHashDiffManifest:
                 # New file
                 ManifestFilePath(
                     path=new_path,
-                    hash="",
+                    hash=None,
                     size=int(new_stat.st_size),
                     mtime=int(new_stat.st_mtime_ns // 1000),
                 ),
                 # Modified file
                 ManifestFilePath(
                     path=mod_path,
-                    hash="",
+                    hash=None,
                     size=int(mod_stat.st_size),
                     mtime=int(mod_stat.st_mtime_ns // 1000),
                 ),
@@ -1110,7 +1074,7 @@ class TestHashDiffManifest:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=int(file_stat.st_size),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
@@ -1141,7 +1105,7 @@ class TestManifestTypePreservation:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=stat_info.st_size,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
@@ -1166,7 +1130,7 @@ class TestManifestTypePreservation:
             files=[
                 ManifestFilePath(
                     path=abs_path,
-                    hash="",
+                    hash=None,
                     size=stat_info.st_size,
                     mtime=int(stat_info.st_mtime_ns // 1000),
                 )
