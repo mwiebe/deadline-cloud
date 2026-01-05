@@ -23,7 +23,7 @@ Manifest
 Here are the data cache types used by these operations:
 
 ```
-DataCache
+ContentAddressedDataCache
 ├── S3DataCache         (data on S3)
 └── FileSystemDataCache (data on a file system)
 ```
@@ -108,7 +108,7 @@ Here are the operations for working with data snapshots:
    in hand, you can provide a reproducible artifact to a render TD or to
    vendor support personnel.
     1. Same as for submitting a job to a cloud render farm with COLLECT/HASH_UPLOAD/PARTITION,
-       but when using HASH_UPLOAD provide a DataCache that goes to your local file system
+       but when using HASH_UPLOAD provide a `FileSystemDataCache` that writes to your local file system
        to place in a zip file instead of uploading to the cloud.
 4. To collect a single directory tree into a manifest with relative paths:
     1. Use COLLECT with a single directory to collect, with PRESERVE as
@@ -274,7 +274,7 @@ Replace `manifestVersion` and `manifestType` with a single `specificationVersion
 # v2025_12_04/encode.py
 def encode_v2025(manifest: Manifest) -> str: ...
 
-# v2025_12_04/decode.py  
+# v2025_12_04/decode.py
 def decode_v2025(manifest_str: str) -> Manifest: ...
 ```
 
@@ -379,6 +379,92 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_subtree_manifest.py` | SUBTREE | Extracts a subtree as a new manifest |
 | `_partition_manifest.py` | PARTITION | Partitions manifest into (root, RelSnapshot) pairs |
 | `_join_manifest.py` | JOIN | Joins a prefix to all paths in a manifest |
+
+## ContentAddressedDataCache Classes
+
+**Location:** `_data_cache.py`
+
+The `ContentAddressedDataCache` is an abstract base class that defines the interface for content-addressable storage backends. It encapsulates the destination-specific parameters needed by the HASH_UPLOAD operation.
+
+```python
+# In _data_cache.py
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+import boto3
+
+@dataclass
+class ContentAddressedDataCache(ABC):
+    """Abstract base class for content-addressable data caches."""
+
+    @abstractmethod
+    def get_object_key(self, hash_value: str, algorithm: str) -> str:
+        """Returns the storage key/path for a given hash."""
+        ...
+
+    @abstractmethod
+    def object_exists(self, hash_value: str, algorithm: str) -> bool:
+        """Checks if an object with the given hash already exists."""
+        ...
+
+
+@dataclass
+class S3DataCache(ContentAddressedDataCache):
+    """
+    Content-addressable data cache backed by Amazon S3.
+
+    Files are stored with keys in the format:
+        {s3_key_prefix}/{hash}.{algorithm}
+
+    Example: Data/a1b2c3d4e5f67890abcdef1234567890.xxh128
+    """
+    s3_bucket: str
+    s3_key_prefix: str
+    s3_client: boto3.client  # S3 client with permissions for GetObject, PutObject, HeadObject
+    s3_check_cache: Optional[S3CheckCache] = None
+
+    def get_object_key(self, hash_value: str, algorithm: str) -> str:
+        return f"{self.s3_key_prefix}/{hash_value}.{algorithm}"
+
+    def object_exists(self, hash_value: str, algorithm: str) -> bool:
+        key = self.get_object_key(hash_value, algorithm)
+        # Check local cache first
+        if self.s3_check_cache is not None and self.s3_check_cache.contains(key):
+            return True
+        # Fall back to S3 HeadObject
+        ...
+
+
+@dataclass
+class FileSystemDataCache(ContentAddressedDataCache):
+    """
+    Content-addressable data cache backed by a local or network file system.
+
+    Files are stored with paths in the format:
+        {root_path}/{hash}.{algorithm}
+
+    Example: /mnt/cache/a1b2c3d4e5f67890abcdef1234567890.xxh128
+
+    This is useful for:
+    - Creating portable debug snapshots (zip files)
+    - Local testing without S3
+    - Network-attached storage caches
+    """
+    root_path: Path
+
+    def __post_init__(self):
+        # Ensure root_path is absolute
+        if not self.root_path.is_absolute():
+            raise ValueError(f"root_path must be absolute, got: {self.root_path}")
+
+    def get_object_key(self, hash_value: str, algorithm: str) -> str:
+        return str(self.root_path / f"{hash_value}.{algorithm}")
+
+    def object_exists(self, hash_value: str, algorithm: str) -> bool:
+        return (self.root_path / f"{hash_value}.{algorithm}").exists()
+```
 
 ## Operation Details
 
@@ -622,16 +708,13 @@ for entry in hashed_diff.paths:
 
 **Location:** `_hash_upload_manifest.py`
 
-Fills in hashes for a manifest AND uploads file content to S3 in a pipelined manner. This operation combines hashing and uploading into a single pass over the data, avoiding the need to read files twice (once for hashing, once for uploading).
+Fills in hashes for a manifest AND uploads file content to a data cache in a pipelined manner. This operation combines hashing and uploading into a single pass over the data, avoiding the need to read files twice (once for hashing, once for uploading).
 
 ```python
 def hash_upload_manifest(
     manifest: BaseAssetManifest,
-    s3_bucket: str,
-    s3_key_prefix: str,
-    boto3_session: Optional[boto3.Session] = None,
+    data_cache: ContentAddressedDataCache,
     hash_cache: Optional[HashCache] = None,
-    s3_check_cache: Optional[S3CheckCache] = None,
     force_rehash: bool = False,
     max_memory_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
@@ -644,11 +727,8 @@ def hash_upload_manifest(
 | Parameter | Description |
 |-----------|-------------|
 | `manifest` | Manifest with absolute paths and empty hashes. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
-| `s3_bucket` | S3 bucket name for uploads |
-| `s3_key_prefix` | S3 key prefix for content-addressable storage (e.g., `"Data"`) |
-| `boto3_session` | Optional boto3 session for AWS credentials |
+| `data_cache` | Content-addressable data cache destination. Either `S3DataCache` for cloud storage or `FileSystemDataCache` for local/network storage. |
 | `hash_cache` | Optional hash cache for efficiency |
-| `s3_check_cache` | Optional S3 check cache to skip already-uploaded files |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `max_memory_bytes` | Maximum memory to use for buffering (default: auto-detect from system) |
 | `print_function_callback` | Progress callback for status messages |
@@ -723,30 +803,32 @@ For large files (>256MB), chunks are processed in order:
 
 This ensures that for any single large file, memory usage is bounded to ~256MB per file in the pipeline.
 
-**S3 Key Format:**
+**Storage Key Format:**
 
-Files are uploaded to content-addressable storage with keys:
-```
-{s3_key_prefix}/{hash}.{algorithm}
-```
+Files are stored in content-addressable format with keys/paths based on the data cache type:
 
-Example: `Data/a1b2c3d4e5f67890abcdef1234567890.xxh128`
+| Data Cache Type | Key Format | Example |
+|-----------------|------------|---------|
+| `S3DataCache` | `{s3_key_prefix}/{hash}.{algorithm}` | `Data/a1b2c3d4e5f67890abcdef1234567890.xxh128` |
+| `FileSystemDataCache` | `{root_path}/{hash}.{algorithm}` | `/mnt/cache/a1b2c3d4e5f67890abcdef1234567890.xxh128` |
 
-For chunked files, each chunk is uploaded separately:
+For chunked files, each chunk is stored separately:
 ```
-Data/{chunk0_hash}.xxh128
-Data/{chunk1_hash}.xxh128
+{prefix}/{chunk0_hash}.xxh128
+{prefix}/{chunk1_hash}.xxh128
 ...
 ```
 
 **Cache Integration:**
 
-| Cache | Purpose |
-|-------|---------|
-| `hash_cache` | Skip hashing for files with unchanged mtime |
-| `s3_check_cache` | Skip upload for files already in S3 |
+| Cache | Purpose | Location |
+|-------|---------|----------|
+| `hash_cache` | Skip hashing for files with unchanged mtime | `hash_upload_manifest()` parameter |
+| `s3_check_cache` | Skip upload for files already in S3 | `S3DataCache` member |
 
-When both caches hit, the file is completely skipped (no read, no hash, no upload).
+When both caches hit (for `S3DataCache`), the file is completely skipped (no read, no hash, no upload).
+
+For `FileSystemDataCache`, the `object_exists()` method checks the local filesystem directly, so no separate check cache is needed.
 
 **Entry Type Handling:**
 
@@ -773,14 +855,15 @@ The `parentManifestHash` field is preserved from the input manifest. The manifes
 - Partial uploads are not cleaned up (S3 content-addressable storage is idempotent)
 - The hash cache is updated even if upload fails (hash is still valid)
 
-**Example:**
+**Example - Uploading to S3:**
 
 ```python
+import boto3
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
     hash_upload_manifest,
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
+from deadline.job_attachments.asset_manifests._operations._data_cache import S3DataCache
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
@@ -788,18 +871,23 @@ from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 abs_manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
-    version=ManifestVersion.v2025_12_04_beta,
 )
 
-# Hash and upload in a single pipelined pass (manifest has absolute paths)
+# Create S3 data cache with client and optional check cache
 with HashCache("/tmp/hash_cache") as hash_cache:
     with S3CheckCache("/tmp/s3_cache") as s3_cache:
-        hashed = hash_upload_manifest(
-            manifest=abs_manifest,
+        data_cache = S3DataCache(
             s3_bucket="my-job-attachments-bucket",
             s3_key_prefix="Data",
-            hash_cache=hash_cache,
+            s3_client=boto3.client("s3"),
             s3_check_cache=s3_cache,
+        )
+
+        # Hash and upload in a single pipelined pass
+        hashed = hash_upload_manifest(
+            manifest=abs_manifest,
+            data_cache=data_cache,
+            hash_cache=hash_cache,
             max_memory_bytes=1024 * 1024 * 1024,  # 1GB memory limit
         )
 
@@ -817,6 +905,40 @@ Output:
 ```
   file: /projects/my_scene/assets/model.blend hash=a1b2c3d4e5f67890... - uploaded
   large file: /projects/my_scene/renders/output.exr (3 chunks) - uploaded
+```
+
+**Example - Writing to local filesystem (debug snapshot):**
+
+```python
+from pathlib import Path
+from deadline.job_attachments.asset_manifests._operations import (
+    collect_manifest,
+    hash_upload_manifest,
+)
+from deadline.job_attachments.asset_manifests._operations._data_cache import FileSystemDataCache
+from deadline.job_attachments.caches.hash_cache import HashCache
+
+# Collect the directory tree with absolute paths
+abs_manifest = collect_manifest(
+    ["/projects/my_scene"],  # directories
+    [],                       # filenames
+)
+
+# Create filesystem data cache for debug snapshot
+data_cache = FileSystemDataCache(
+    root_path=Path("/tmp/debug_snapshot/data"),
+)
+
+# Hash and write to local filesystem
+with HashCache("/tmp/hash_cache") as hash_cache:
+    hashed = hash_upload_manifest(
+        manifest=abs_manifest,
+        data_cache=data_cache,
+        hash_cache=hash_cache,
+    )
+
+# Files are now stored in /tmp/debug_snapshot/data/{hash}.xxh128
+print(f"Debug snapshot created with {len(hashed.paths)} entries")
 ```
 
 **Performance Comparison:**
