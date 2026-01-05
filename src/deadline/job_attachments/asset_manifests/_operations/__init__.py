@@ -9,6 +9,11 @@ from ._compose_manifest import compose_manifests
 from ._subtree_manifest import subtree_manifest
 from ._partition_manifest import partition_manifest
 from ._join_manifest import join_manifest
+from ._content_addressed_data_cache import (
+    ContentAddressedDataCache,
+    S3DataCache,
+    FileSystemDataCache,
+)
 
 __all__ = [
     "collect_manifest",
@@ -20,4 +25,7 @@ __all__ = [
     "subtree_manifest",
     "partition_manifest",
     "join_manifest",
+    "ContentAddressedDataCache",
+    "S3DataCache",
+    "FileSystemDataCache",
 ]

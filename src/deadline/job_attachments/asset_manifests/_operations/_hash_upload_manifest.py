@@ -1,15 +1,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Module for filling in hashes AND uploading file content to S3 in a pipelined manner.
+Module for filling in hashes AND uploading file content to a data cache in a pipelined manner.
 
 This module implements the HASH_UPLOAD operation from the composable manifest operations design:
-    HASH_UPLOAD: AbsManifest (with hash="") → AbsManifest (with hashes filled in) + S3 uploads
+    HASH_UPLOAD: (AbsManifest, DataCache) → AbsManifest (with hashes filled in) + data cache writes
 
 The operation combines hashing and uploading into a single pass over the data:
 - Reads file chunks into memory
 - Hashes each chunk
-- Uploads to S3 before freeing memory
+- Writes to data cache before freeing memory
 
 This avoids reading files twice (once for hashing, once for uploading) and provides
 significant performance improvements for large datasets.
@@ -17,7 +17,7 @@ significant performance improvements for large datasets.
 The pipeline uses bounded memory to prevent OOM conditions:
 - READ stage reads chunks into a memory pool
 - HASH stage computes hashes in-place
-- UPLOAD stage uploads and releases memory
+- UPLOAD stage uploads/writes and releases memory
 - When memory limit is reached, READ blocks until UPLOAD frees space
 
 All composable operations use v2025 structure and semantics internally. Support for
@@ -35,7 +35,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 import logging
 
-import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 from ..manifest import (
@@ -47,13 +46,17 @@ from ..manifest import (
 )
 from ..hash_algorithms import HashAlgorithm, hash_data
 from ...caches.hash_cache import HashCache, HashCacheEntry
-from ...caches.s3_check_cache import S3CheckCache, S3CheckCacheEntry
-from ..._aws.aws_clients import get_boto3_session, get_s3_client, get_account_id
+from ...caches.s3_check_cache import S3CheckCacheEntry
 from ...progress_tracker import ProgressTracker
 from ...exceptions import (
     JobAttachmentsS3ClientError,
     JobAttachmentS3BotoCoreError,
     COMMON_ERROR_GUIDANCE_FOR_S3,
+)
+from ._content_addressed_data_cache import (
+    ContentAddressedDataCache,
+    S3DataCache,
+    FileSystemDataCache,
 )
 
 logger = logging.getLogger("deadline.job_attachments.hash_upload")
@@ -320,75 +323,122 @@ class _HashStage(_PipelineStage):
 
 
 class _UploadStage(_PipelineStage):
-    """Pipeline stage that uploads chunks to S3."""
+    """Pipeline stage that writes chunks to a data cache (S3 or filesystem)."""
 
     def __init__(
         self,
         input_queue: "queue.Queue[_ChunkWorkItem]",
         output_queue: "queue.Queue[_ChunkWorkItem]",
         memory_pool: _MemoryPool,
-        s3_client: Any,
-        s3_bucket: str,
-        s3_key_prefix: str,
+        data_cache: ContentAddressedDataCache,
         hash_alg: HashAlgorithm,
-        s3_check_cache: Optional[S3CheckCache],
-        account_id: str,
+        account_id: Optional[str],
         progress_tracker: Optional[ProgressTracker],
     ) -> None:
         super().__init__("UPLOAD", input_queue, output_queue)
         self._memory_pool = memory_pool
-        self._s3_client = s3_client
-        self._s3_bucket = s3_bucket
-        self._s3_key_prefix = s3_key_prefix
+        self._data_cache = data_cache
         self._hash_alg = hash_alg
-        self._s3_check_cache = s3_check_cache
         self._account_id = account_id
         self._progress_tracker = progress_tracker
 
     def _process(self, item: _ChunkWorkItem) -> _ChunkWorkItem:
-        """Upload chunk to S3."""
+        """Write chunk to data cache."""
         if item.data is None or item.chunk_hash is None:
             return item
 
         chunk_size = len(item.data)
-        s3_key = f"{self._s3_key_prefix}/{item.chunk_hash}.{self._hash_alg.value}"
-        cache_key = f"{self._s3_bucket}/{s3_key}"
 
         try:
-            # Check S3 cache first
-            if self._s3_check_cache is not None:
-                cache_entry = self._s3_check_cache.get_entry(cache_key)
-                if cache_entry is not None:
-                    item.skipped = True
-                    item.uploaded = False
-                    logger.debug(f"Skipping upload (cached): {s3_key}")
-                    return item
-
-            # Upload to S3 with conditional write (only if object doesn't exist)
-            uploaded = self._upload_to_s3_if_not_exists(item.data, s3_key)
-            item.uploaded = uploaded
-            item.skipped = not uploaded
-            if uploaded:
-                logger.debug(f"Uploaded: {s3_key}")
+            if isinstance(self._data_cache, S3DataCache):
+                self._process_s3(item)
+            elif isinstance(self._data_cache, FileSystemDataCache):
+                self._process_filesystem(item)
             else:
-                logger.debug(f"Skipping upload (exists): {s3_key}")
-
-            # Update S3 check cache
-            if self._s3_check_cache is not None:
-                self._s3_check_cache.put_entry(
-                    S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
-                )
+                raise ValueError(f"Unsupported data cache type: {type(self._data_cache)}")
 
             # Update progress
             if self._progress_tracker is not None:
                 self._progress_tracker.track_progress_callback(chunk_size)
 
         finally:
-            # Release memory after upload completes
+            # Release memory after write completes
             self._memory_pool.release(chunk_size)
             item.data = None  # Free the data
 
         return item
+
+    def _process_s3(self, item: _ChunkWorkItem) -> None:
+        """Upload chunk to S3."""
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+        if item.data is None:
+            raise ValueError("Chunk data is None, cannot upload")
+        if item.chunk_hash is None:
+            raise ValueError("Chunk hash is None, cannot determine S3 key")
+
+        s3_key = self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value)
+        cache_key = f"{self._data_cache.s3_bucket}/{s3_key}"
+
+        # Check S3 cache first
+        if self._data_cache.s3_check_cache is not None:
+            cache_entry = self._data_cache.s3_check_cache.get_entry(cache_key)
+            if cache_entry is not None:
+                item.skipped = True
+                item.uploaded = False
+                logger.debug(f"Skipping upload (cached): {s3_key}")
+                return
+
+        # Upload to S3 with conditional write (only if object doesn't exist)
+        uploaded = self._upload_to_s3_if_not_exists(item.data, s3_key)
+        item.uploaded = uploaded
+        item.skipped = not uploaded
+        if uploaded:
+            logger.debug(f"Uploaded: {s3_key}")
+        else:
+            logger.debug(f"Skipping upload (exists): {s3_key}")
+
+        # Update S3 check cache
+        if self._data_cache.s3_check_cache is not None:
+            self._data_cache.s3_check_cache.put_entry(
+                S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
+            )
+
+    def _process_filesystem(self, item: _ChunkWorkItem) -> None:
+        """Write chunk to filesystem."""
+        if not isinstance(self._data_cache, FileSystemDataCache):
+            raise TypeError(f"Expected FileSystemDataCache, got {type(self._data_cache).__name__}")
+        if item.data is None:
+            raise ValueError("Chunk data is None, cannot write to filesystem")
+        if item.chunk_hash is None:
+            raise ValueError("Chunk hash is None, cannot determine file path")
+
+        file_path = Path(self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value))
+
+        # Check if file already exists
+        if file_path.exists():
+            item.skipped = True
+            item.uploaded = False
+            logger.debug(f"Skipping write (exists): {file_path}")
+            return
+
+        # Ensure parent directory exists
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to a temp file first, then rename for atomicity
+        temp_path = file_path.with_suffix(f".{file_path.suffix}.tmp")
+        try:
+            with open(temp_path, "wb") as f:
+                f.write(item.data)
+            temp_path.rename(file_path)
+            item.uploaded = True
+            item.skipped = False
+            logger.debug(f"Wrote: {file_path}")
+        except Exception:
+            # Clean up temp file on error
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
 
     def _upload_to_s3_if_not_exists(self, data: bytes, s3_key: str) -> bool:
         """
@@ -403,15 +453,24 @@ class _UploadStage(_PipelineStage):
 
         Returns:
             True if the object was uploaded, False if it already existed
+
+        Raises:
+            TypeError: If data_cache is not an S3DataCache
         """
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+
         try:
-            self._s3_client.put_object(
-                Bucket=self._s3_bucket,
-                Key=s3_key,
-                Body=data,
-                ExpectedBucketOwner=self._account_id,
-                IfNoneMatch="*",
-            )
+            put_kwargs: Dict[str, Any] = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+                "Body": data,
+                "IfNoneMatch": "*",
+            }
+            if self._account_id is not None:
+                put_kwargs["ExpectedBucketOwner"] = self._account_id
+
+            self._data_cache.s3_client.put_object(**put_kwargs)
             return True
         except ClientError as exc:
             error_code = exc.response["Error"]["Code"]
@@ -430,7 +489,7 @@ class _UploadStage(_PipelineStage):
             raise JobAttachmentsS3ClientError(
                 action="uploading chunk",
                 status_code=status_code,
-                bucket_name=self._s3_bucket,
+                bucket_name=self._data_cache.s3_bucket,
                 key_or_prefix=s3_key,
                 message=f"{status_code_guidance.get(status_code, '')} {str(exc)}",
             ) from exc
@@ -443,30 +502,25 @@ class _UploadStage(_PipelineStage):
 
 def hash_upload_manifest(
     manifest: AbsManifest,
-    s3_bucket: str,
-    s3_key_prefix: str,
-    boto3_session: Optional[boto3.Session] = None,
+    data_cache: ContentAddressedDataCache,
     hash_cache: Optional[HashCache] = None,
-    s3_check_cache: Optional[S3CheckCache] = None,
     force_rehash: bool = False,
     max_memory_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
 ) -> AbsManifest:
     """
-    Fill in hashes for a manifest AND upload file content to S3 in a pipelined manner.
+    Fill in hashes for a manifest AND write file content to a data cache in a pipelined manner.
 
-    This operation combines hashing and uploading into a single pass over the data,
-    avoiding the need to read files twice (once for hashing, once for uploading).
+    This operation combines hashing and writing into a single pass over the data,
+    avoiding the need to read files twice (once for hashing, once for writing).
 
     Args:
         manifest: Manifest with absolute paths and empty hashes (from collect_manifest).
             Can be AbsSnapshotManifest or AbsDiffManifest.
-        s3_bucket: S3 bucket name for uploads
-        s3_key_prefix: S3 key prefix for content-addressable storage (e.g., "Data")
-        boto3_session: Optional boto3 session for AWS credentials
+        data_cache: Content-addressable data cache destination. Either S3DataCache
+            for cloud storage or FileSystemDataCache for local/network storage.
         hash_cache: Optional hash cache for efficiency
-        s3_check_cache: Optional S3 check cache to skip already-uploaded files
         force_rehash: If True, ignore cache and recalculate all hashes
         max_memory_bytes: Maximum memory to use for buffering (default: auto-detect)
         print_function_callback: Progress callback for status messages
@@ -482,7 +536,7 @@ def hash_upload_manifest(
         The operation uses a multi-threaded pipeline with three stages:
         1. READ: Reads file chunks from disk into memory buffers
         2. HASH: Computes XXH128 hash of each chunk in memory
-        3. UPLOAD: Uploads the chunk to S3 using the hash as the object key
+        3. UPLOAD: Writes the chunk to the data cache using the hash as the key
 
         Memory is bounded by max_memory_bytes. When the limit is reached,
         READ blocks until UPLOAD completes and frees memory.
@@ -492,7 +546,7 @@ def hash_upload_manifest(
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
         - Deleted entries are unchanged (they mark deletions, no hash needed)
-        - For large files (>256MB): computes chunkhashes and uploads each chunk
+        - For large files (>256MB): computes chunkhashes and writes each chunk
         - Returns a NEW manifest (does not mutate input)
     """
     # Validate that manifest has absolute paths
@@ -502,11 +556,23 @@ def hash_upload_manifest(
     if max_memory_bytes is None:
         max_memory_bytes = _get_default_max_memory_bytes()
 
-    # Set up boto3 session and S3 client
-    if boto3_session is None:
-        boto3_session = get_boto3_session()
-    s3_client = get_s3_client(boto3_session)
-    account_id = get_account_id(session=boto3_session)
+    # Get account_id for S3DataCache (used for ExpectedBucketOwner)
+    account_id: Optional[str] = None
+    if isinstance(data_cache, S3DataCache):
+        # Import here to avoid circular dependency and only when needed
+        from ..._aws.aws_clients import get_account_id, get_boto3_session
+
+        # Try to get account ID from the S3 client's session
+        try:
+            # Create a session from the client's credentials if possible
+            session = get_boto3_session()
+            account_id = get_account_id(session=session)
+        except Exception:
+            # If we can't get account ID, proceed without ExpectedBucketOwner
+            logger.warning(
+                "Could not determine AWS account ID, proceeding without ExpectedBucketOwner"
+            )
+            account_id = None
 
     # Separate entries by type
     file_entries_to_process: List[Tuple[int, ManifestFilePath]] = []
@@ -569,14 +635,15 @@ def hash_upload_manifest(
             )
             file_chunk_map[cache_key] = [len(work_items) - 1]
 
-    # Check caches - only skip if BOTH hash cache AND s3 check cache hit
+    # Check caches - for S3DataCache, skip if BOTH hash cache AND s3 check cache hit
+    # For FileSystemDataCache, skip if hash cache hits AND file exists
     cached_chunk_hashes: Dict[str, Dict[int, str]] = {}  # cache_key -> {chunk_idx -> hash}
     items_to_process: List[_ChunkWorkItem] = []
 
     for item in work_items:
         skip_pipeline = False
 
-        if hash_cache is not None and s3_check_cache is not None and not force_rehash:
+        if hash_cache is not None and not force_rehash:
             mtime_str = str(item.mtime) if item.mtime is not None else ""
             hash_cache_entry = hash_cache.get_entry(
                 item.cache_key,
@@ -586,18 +653,16 @@ def hash_upload_manifest(
             )
             if hash_cache_entry is not None and hash_cache_entry.last_modified_time == mtime_str:
                 cached_hash = hash_cache_entry.file_hash
-                # Check S3 cache
-                s3_key = f"{s3_key_prefix}/{cached_hash}.{manifest.hashAlg.value}"
-                s3_cache_key = f"{s3_bucket}/{s3_key}"
-                s3_cache_entry = s3_check_cache.get_entry(s3_cache_key)
-                if s3_cache_entry is not None:
+
+                # Check if object exists in data cache
+                if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
                     # Both caches hit - skip the pipeline entirely
                     skip_pipeline = True
                     if item.cache_key not in cached_chunk_hashes:
                         cached_chunk_hashes[item.cache_key] = {}
                     cached_chunk_hashes[item.cache_key][item.chunk_index] = cached_hash
                     print_function_callback(
-                        f"Fully cached (hash + S3): {item.file_path} chunk {item.chunk_index}"
+                        f"Fully cached (hash + data cache): {item.file_path} chunk {item.chunk_index}"
                     )
 
         if not skip_pipeline:
@@ -607,11 +672,8 @@ def hash_upload_manifest(
     pipeline_results = _run_pipeline(
         work_items=items_to_process,
         hash_alg=manifest.hashAlg,
-        s3_bucket=s3_bucket,
-        s3_key_prefix=s3_key_prefix,
-        s3_client=s3_client,
+        data_cache=data_cache,
         account_id=account_id,
-        s3_check_cache=s3_check_cache,
         max_memory_bytes=max_memory_bytes,
         progress_tracker=progress_tracker,
     )
@@ -732,11 +794,8 @@ def hash_upload_manifest(
 def _run_pipeline(
     work_items: List[_ChunkWorkItem],
     hash_alg: HashAlgorithm,
-    s3_bucket: str,
-    s3_key_prefix: str,
-    s3_client: Any,
-    account_id: str,
-    s3_check_cache: Optional[S3CheckCache],
+    data_cache: ContentAddressedDataCache,
+    account_id: Optional[str],
     max_memory_bytes: int,
     progress_tracker: Optional[ProgressTracker],
 ) -> List[_ChunkWorkItem]:
@@ -746,11 +805,8 @@ def _run_pipeline(
     Args:
         work_items: List of chunk work items to process
         hash_alg: Hash algorithm to use
-        s3_bucket: S3 bucket for uploads
-        s3_key_prefix: S3 key prefix for CAS
-        s3_client: Boto3 S3 client
-        account_id: AWS account ID
-        s3_check_cache: Optional S3 check cache
+        data_cache: Content-addressable data cache for writes
+        account_id: AWS account ID (for S3DataCache ExpectedBucketOwner)
         max_memory_bytes: Maximum memory for buffering
         progress_tracker: Optional progress tracker
 
@@ -776,11 +832,8 @@ def _run_pipeline(
         upload_queue,
         result_queue,
         memory_pool,
-        s3_client,
-        s3_bucket,
-        s3_key_prefix,
+        data_cache,
         hash_alg,
-        s3_check_cache,
         account_id,
         progress_tracker,
     )

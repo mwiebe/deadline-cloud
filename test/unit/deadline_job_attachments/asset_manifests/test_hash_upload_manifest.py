@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set
 
 import boto3
 import pytest
@@ -24,6 +24,7 @@ import pytest
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
     hash_upload_manifest,
+    S3DataCache,
 )
 from deadline.job_attachments.asset_manifests._operations._hash_upload_manifest import (
     _ChunkWorkItem,
@@ -128,6 +129,15 @@ class TestHashUploadManifest:
         response = self.s3_client.get_object(Bucket=TEST_BUCKET, Key=key)
         return response["Body"].read()
 
+    def _create_s3_data_cache(self, s3_check_cache: Optional[S3CheckCache] = None) -> S3DataCache:
+        """Create an S3DataCache for testing."""
+        return S3DataCache(
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+            s3_client=self.s3_client,
+            s3_check_cache=s3_check_cache,
+        )
+
     def test_hash_upload_empty_manifest(self) -> None:
         """Test hashing and uploading an empty manifest."""
         manifest = AbsSnapshotManifest(
@@ -136,10 +146,10 @@ class TestHashUploadManifest:
             total_size=0,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert isinstance(result, AbsSnapshotManifest)
@@ -171,10 +181,10 @@ class TestHashUploadManifest:
             total_size=int(file_stat.st_size),
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert isinstance(result, AbsSnapshotManifest)
@@ -212,10 +222,10 @@ class TestHashUploadManifest:
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert isinstance(result, AbsSnapshotManifest)
@@ -247,10 +257,10 @@ class TestHashUploadManifest:
             symlink_policy=SymlinkPolicy.COLLAPSE,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         # Filter to file entries
@@ -290,10 +300,10 @@ class TestHashUploadManifest:
         )
 
         with HashCache(str(cache_dir)) as hash_cache:
+            data_cache = self._create_s3_data_cache()
             result = hash_upload_manifest(
                 manifest=manifest,
-                s3_bucket=TEST_BUCKET,
-                s3_key_prefix=TEST_KEY_PREFIX,
+                data_cache=data_cache,
                 hash_cache=hash_cache,
             )
 
@@ -332,20 +342,18 @@ class TestHashUploadManifest:
 
         # First upload
         with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
             result1 = hash_upload_manifest(
                 manifest=manifest,
-                s3_bucket=TEST_BUCKET,
-                s3_key_prefix=TEST_KEY_PREFIX,
-                s3_check_cache=s3_cache,
+                data_cache=data_cache,
             )
 
         # Second upload with same file - should use cache
         with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
             result2 = hash_upload_manifest(
                 manifest=manifest,
-                s3_bucket=TEST_BUCKET,
-                s3_key_prefix=TEST_KEY_PREFIX,
-                s3_check_cache=s3_cache,
+                data_cache=data_cache,
             )
 
         # Both results should have the same hash
@@ -372,10 +380,10 @@ class TestHashUploadManifest:
             total_size=int(file_stat.st_size),
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         # Compute hash directly
@@ -405,10 +413,10 @@ class TestHashUploadManifest:
             total_size=original_size,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert result.files[0].size == original_size
@@ -429,10 +437,10 @@ class TestHashUploadManifest:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         # Find symlink and file entries
@@ -463,10 +471,10 @@ class TestHashUploadManifest:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         # Should have directory entries
@@ -491,10 +499,10 @@ class TestHashUploadManifest:
             total_size=0,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert len(result.files) == 1
@@ -520,10 +528,10 @@ class TestHashUploadManifest:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         # Find the file entry
@@ -558,10 +566,10 @@ class TestHashUploadManifest:
             total_size=int(file_stat.st_size),
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert len(result.files) == 1
@@ -579,10 +587,10 @@ class TestHashUploadManifest:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=collected,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert isinstance(result, AbsSnapshotManifest)
@@ -610,10 +618,10 @@ class TestHashUploadManifest:
             parent_manifest_hash="abc123",
         )
 
+        data_cache = self._create_s3_data_cache()
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
 
         assert isinstance(result, AbsDiffManifest)
@@ -627,6 +635,16 @@ class TestHashUploadInputValidation:
     def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
         """Create the test S3 bucket before each test."""
         create_s3_bucket(TEST_BUCKET)
+        self.s3_client = s3
+
+    def _create_s3_data_cache(self, s3_check_cache: Optional[S3CheckCache] = None) -> S3DataCache:
+        """Create an S3DataCache for testing."""
+        return S3DataCache(
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+            s3_client=self.s3_client,
+            s3_check_cache=s3_check_cache,
+        )
 
     def test_rejects_relative_paths(self) -> None:
         """Test that manifest with relative paths raises ValueError."""
@@ -643,11 +661,11 @@ class TestHashUploadInputValidation:
             total_size=100,
         )
 
+        data_cache = self._create_s3_data_cache()
         with pytest.raises(ValueError, match="requires absolute paths"):
             hash_upload_manifest(
                 manifest=manifest,
-                s3_bucket=TEST_BUCKET,
-                s3_key_prefix=TEST_KEY_PREFIX,
+                data_cache=data_cache,
             )
 
     def test_accepts_absolute_paths(self, tmp_path: Path) -> None:
@@ -671,10 +689,10 @@ class TestHashUploadInputValidation:
             total_size=int(file_stat.st_size),
         )
 
+        data_cache = self._create_s3_data_cache()
         # Should not raise
         result = hash_upload_manifest(
             manifest=manifest,
-            s3_bucket=TEST_BUCKET,
-            s3_key_prefix=TEST_KEY_PREFIX,
+            data_cache=data_cache,
         )
         assert result.files[0].hash != ""
