@@ -26,7 +26,12 @@ import stat
 from typing import Any, Callable, List, Optional, Set
 
 from ..hash_algorithms import HashAlgorithm
-from ..manifest import AbsSnapshotManifest, ManifestDirectoryPath, ManifestFilePath
+from ..manifest import (
+    AbsSnapshotManifest,
+    ManifestDirectoryPath,
+    ManifestFilePath,
+    DEFAULT_FILE_CHUNK_SIZE,
+)
 from ..versions import SymlinkPolicy
 
 
@@ -65,7 +70,7 @@ def collect_manifest(
               collected paths; collapse symlinks whose targets are outside
               (escaping symlinks) to files/directories.
         file_chunk_size_bytes: Chunk size for large file hashing.
-            - None: Not specified (downstream operations will apply default)
+            - None: Use DEFAULT_FILE_CHUNK_SIZE (256MB) (default)
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
             - Positive int: Chunk size in bytes for large files
         print_function_callback: Progress callback
@@ -147,8 +152,8 @@ def _collect_manifest_impl(
     Use hash_manifest() or hash_upload_manifest() to fill in hashes.
 
     Args:
-        file_chunk_size_bytes: Chunk size for large file hashing. If None, uses
-            the default from the Manifest constructor.
+        file_chunk_size_bytes: Chunk size for large file hashing.
+            None means use DEFAULT_FILE_CHUNK_SIZE (256MB).
     """
     file_entries: List[ManifestFilePath] = []
     dir_entries: List[ManifestDirectoryPath] = []
@@ -407,12 +412,17 @@ def _collect_manifest_impl(
         dir_entries.extend(dirs)
         total_size += size
 
+    # Apply default chunk size if not specified
+    output_chunk_size = (
+        file_chunk_size_bytes if file_chunk_size_bytes is not None else DEFAULT_FILE_CHUNK_SIZE
+    )
+
     return AbsSnapshotManifest(
         hash_alg=HashAlgorithm.XXH128,
         dirs=dir_entries,
         files=file_entries,
         total_size=total_size,
-        file_chunk_size_bytes=file_chunk_size_bytes,
+        file_chunk_size_bytes=output_chunk_size,
     )
 
 

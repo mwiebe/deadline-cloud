@@ -194,7 +194,7 @@ Path/Directory Classes (also in manifest.py)
 | `totalSize` | `int` | Total size of all files in bytes |
 | `dirs` | `List[ManifestDirectoryPath]` | List of directory entries |
 | `parentManifestHash` | `Optional[str]` | Hash of parent snapshot (for diff manifests) |
-| `fileChunkSizeBytes` | `Optional[int]` | Chunk size for large file hashing. `None` means "not specified" (operations apply `DEFAULT_FILE_CHUNK_SIZE`). `WHOLE_FILE_CHUNK_SIZE` (-1) means "no chunking". Positive int specifies chunk size in bytes. |
+| `fileChunkSizeBytes` | `int` | Chunk size for large file hashing. `DEFAULT_FILE_CHUNK_SIZE` (256MB) is the default. `WHOLE_FILE_CHUNK_SIZE` (-1) means "no chunking". Positive int specifies chunk size in bytes. |
 
 For backwards compatibility in `base_manifest.py`:
 
@@ -507,7 +507,7 @@ def collect_manifest(
 | `filenames` | (positional) List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
 | `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
-| `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = not specified (downstream operations apply default). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
+| `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = use `DEFAULT_FILE_CHUNK_SIZE` (256MB). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 
 **Symlink Policy Options (for `collect_manifest`):**
@@ -625,10 +625,11 @@ def hash_manifest(
 
 | `fileChunkSizeBytes` | File Size | Behavior |
 |---------------------|-----------|----------|
-| `None` | Any | Apply default (`DEFAULT_FILE_CHUNK_SIZE` = 256MB) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | Compute single `hash` (default) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
 | `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | Hash entire file as a whole (no chunking) |
-| Positive int (e.g., 256MB) | ≤ chunk size | Compute single `hash` |
-| Positive int (e.g., 256MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
+| Positive int (e.g., 64MB) | ≤ chunk size | Compute single `hash` |
+| Positive int (e.g., 64MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
 
 When chunking is enabled and a file is larger than the chunk size:
 - `hash` field is `None`
@@ -786,12 +787,12 @@ The operation uses a multi-threaded pipeline with three stages:
 
 | `fileChunkSizeBytes` | File Size | Processing |
 |---------------------|-----------|------------|
-| `None` (applies default) | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
-| `None` (applies default) | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | Single chunk: read → hash → upload (default) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Multiple chunks through pipeline |
 | `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
 | `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
-| Positive int (e.g., 256MB) | ≤ chunk size | Single chunk: read → hash → upload |
-| Positive int (e.g., 256MB) | > chunk size | Multiple chunks through pipeline |
+| Positive int (e.g., 64MB) | ≤ chunk size | Single chunk: read → hash → upload |
+| Positive int (e.g., 64MB) | > chunk size | Multiple chunks through pipeline |
 
 When chunking is disabled (`WHOLE_FILE_CHUNK_SIZE`) and a file is larger than `max_memory_bytes`:
 - **Pass 1:** Stream through file to compute hash (discard data to avoid OOM)
@@ -1842,9 +1843,19 @@ diff = compute_diff_manifest(
 
 ### Chunked File Validation (v2025-12-04-beta)
 
-- Files >256MB must use `chunkhashes` (not `hash`)
-- Files ≤256MB must use `hash` (not `chunkhashes`)
-- Chunk count must equal `ceil(size / 256MB)`
+Chunking behavior is controlled by the manifest's `fileChunkSizeBytes` field:
+
+| `fileChunkSizeBytes` | File Size | Required Field |
+|---------------------|-----------|----------------|
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | `hash` (default) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | `chunkhashes` |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | `hash` (no chunking) |
+| Positive int (chunk size) | ≤ chunk size | `hash` |
+| Positive int (chunk size) | > chunk size | `chunkhashes` |
+
+When `chunkhashes` is used:
+- Chunk count must equal `ceil(size / fileChunkSizeBytes)`
+- Each chunk hash corresponds to exactly `fileChunkSizeBytes` bytes (except possibly the last chunk)
 
 ### Deleted Entry Validation (v2025-12-04-beta)
 

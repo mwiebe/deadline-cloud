@@ -42,7 +42,6 @@ from ..manifest import (
     ManifestDirectoryPath,
     ManifestFilePath,
     _is_absolute_path,
-    DEFAULT_FILE_CHUNK_SIZE,
 )
 from ..hash_algorithms import HashAlgorithm, hash_data
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
@@ -64,7 +63,7 @@ logger = logging.getLogger("deadline.job_attachments.hash_upload")
 # Minimum memory limit: 256MB (one chunk)
 MIN_MEMORY_BYTES = 256 * 1024 * 1024
 
-# Default read buffer size for streaming hash (when fileChunkSizeBytes is None)
+# Default read buffer size for streaming hash (when fileChunkSizeBytes is WHOLE_FILE_CHUNK_SIZE)
 DEFAULT_STREAM_BUFFER_SIZE = 64 * 1024 * 1024  # 64MB
 
 # Sentinel value to signal pipeline shutdown
@@ -849,10 +848,9 @@ def hash_upload_manifest(
         processed through a SINGLE unified pipeline for maximum throughput.
 
     Chunking Behavior:
-        - If effective chunk size is WHOLE_FILE_CHUNK_SIZE (-1) or None after applying
-          defaults: all files are hashed as a whole. For files larger than max_memory_bytes,
-          the file is streamed for hashing (discarding data to avoid OOM), then streamed
-          again for uploading.
+        - If effective chunk size is WHOLE_FILE_CHUNK_SIZE (-1): all files are hashed
+          as a whole. For files larger than max_memory_bytes, the file is streamed for
+          hashing (discarding data to avoid OOM), then streamed again for uploading.
         - If effective chunk size is a positive int: files larger than this size use
           chunked hashing. max_memory_bytes must be >= chunk size.
 
@@ -871,23 +869,17 @@ def hash_upload_manifest(
         file_chunk_size_bytes if file_chunk_size_bytes is not None else manifest.fileChunkSizeBytes
     )
 
-    # Get effective chunk size for processing decisions
-    # Apply default if input manifest has None
-    effective_chunk_size = manifest.fileChunkSizeBytes
-    if effective_chunk_size is None:
-        effective_chunk_size = DEFAULT_FILE_CHUNK_SIZE
-
     # WHOLE_FILE_CHUNK_SIZE (-1) means no chunking
-    chunking_enabled = effective_chunk_size > 0
+    chunking_enabled = output_chunk_size > 0
 
     # Set up memory limit
     if max_memory_bytes is None:
         max_memory_bytes = _get_default_max_memory_bytes()
 
     # Validate memory limit against chunk size (only if chunking is enabled)
-    if chunking_enabled and max_memory_bytes < effective_chunk_size:
+    if chunking_enabled and max_memory_bytes < output_chunk_size:
         raise ValueError(
-            f"max_memory_bytes ({max_memory_bytes}) must be >= fileChunkSizeBytes ({effective_chunk_size}). "
+            f"max_memory_bytes ({max_memory_bytes}) must be >= fileChunkSizeBytes ({output_chunk_size}). "
             f"The pipeline needs at least one chunk's worth of memory to operate."
         )
 
@@ -932,12 +924,12 @@ def hash_upload_manifest(
         entry_map[cache_key] = (idx, entry)
 
         # Determine how to process this file
-        if chunking_enabled and file_size > effective_chunk_size:
+        if chunking_enabled and file_size > output_chunk_size:
             # Chunked file: create work items for each chunk
             offset = 0
             chunk_idx = 0
             while offset < file_size:
-                chunk_end = min(offset + effective_chunk_size, file_size)
+                chunk_end = min(offset + output_chunk_size, file_size)
                 all_work_items.append(
                     _ChunkWorkItem(
                         file_path=abs_path,

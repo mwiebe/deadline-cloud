@@ -180,6 +180,9 @@ class ManifestFilePath:
         3. Hashed large file: chunkhashes is set, hash and symlink_target are None
         4. Unhashed file: hash, chunkhashes, and symlink_target are all None
            (file collected but not yet hashed)
+
+        Note: chunkhashes validation (size > chunk_size, correct chunk count) is
+        deferred to manifest-level validation since it requires the chunk size setting.
         """
         content_fields = [
             self.hash is not None,
@@ -202,26 +205,39 @@ class ManifestFilePath:
             if self.mtime is None:
                 raise ManifestDecodeValidationError(f"File '{self.path}' must have 'mtime' field")
 
-        # Validate chunkhashes relationship with size
-        if self.chunkhashes is not None:
-            self._validate_chunkhashes()
+    def _validate_chunkhashes(self, chunk_size: int = WHOLE_FILE_CHUNK_SIZE) -> None:
+        """
+        Validate chunkhashes field constraints.
 
-    def _validate_chunkhashes(self) -> None:
-        """Validate chunkhashes field constraints."""
+        Args:
+            chunk_size: The chunk size to validate against.
+                       This should be the manifest's fileChunkSizeBytes.
+                       WHOLE_FILE_CHUNK_SIZE (-1) means no chunking is expected.
+        """
         if self.size is None:
             raise ManifestDecodeValidationError(
                 f"File '{self.path}' with chunkhashes must have 'size' field"
             )
-        if self.size <= DEFAULT_FILE_CHUNK_SIZE:
+
+        # WHOLE_FILE_CHUNK_SIZE means no chunking - chunkhashes shouldn't exist
+        if chunk_size == WHOLE_FILE_CHUNK_SIZE:
             raise ManifestDecodeValidationError(
-                f"File '{self.path}' with chunkhashes must have size > {DEFAULT_FILE_CHUNK_SIZE} "
-                f"(256MB), got {self.size}"
+                f"File '{self.path}' has chunkhashes but manifest has no chunking enabled "
+                f"(fileChunkSizeBytes={WHOLE_FILE_CHUNK_SIZE})"
             )
-        expected_chunks = math.ceil(self.size / DEFAULT_FILE_CHUNK_SIZE)
+
+        # Files with chunkhashes must be larger than the chunk size
+        if self.size <= chunk_size:
+            raise ManifestDecodeValidationError(
+                f"File '{self.path}' with chunkhashes must have size > {chunk_size} "
+                f"(chunk size), got {self.size}"
+            )
+
+        expected_chunks = math.ceil(self.size / chunk_size)
         if self.chunkhashes is not None and len(self.chunkhashes) != expected_chunks:
             raise ManifestDecodeValidationError(
                 f"File '{self.path}' with size {self.size} should have {expected_chunks} "
-                f"chunks, got {len(self.chunkhashes)}"
+                f"chunks (chunk_size={chunk_size}), got {len(self.chunkhashes)}"
             )
 
     def _validate_symlink_target_relative(self) -> None:
@@ -365,7 +381,7 @@ class Manifest:
         dirs: List of directory entries.
         parentManifestHash: Hash of parent snapshot for diff manifests.
         fileChunkSizeBytes: Chunk size for large file hashing.
-            - None: Not specified (operations will apply default DEFAULT_FILE_CHUNK_SIZE)
+            - DEFAULT_FILE_CHUNK_SIZE (256MB): Default chunk size for large files
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
             - Positive int: Chunk size in bytes for large files
     """
@@ -375,7 +391,7 @@ class Manifest:
     totalSize: int
     dirs: List[ManifestDirectoryPath]
     parentManifestHash: Optional[str]
-    fileChunkSizeBytes: Optional[int]
+    fileChunkSizeBytes: int
 
     def __init__(
         self,
@@ -385,7 +401,7 @@ class Manifest:
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = None,
+        file_chunk_size_bytes: int = DEFAULT_FILE_CHUNK_SIZE,
     ) -> None:
         self.hashAlg = hash_alg
         self.totalSize = total_size
@@ -400,7 +416,15 @@ class Manifest:
 
         Subclasses should override this to call their mixin validation methods.
         """
-        pass
+        # Validate chunkhashes for all files that have them
+        self._validate_all_chunkhashes()
+
+    def _validate_all_chunkhashes(self) -> None:
+        """Validate chunkhashes for all files in the manifest."""
+        chunk_size = self.fileChunkSizeBytes
+        for entry in self.files:
+            if entry.chunkhashes is not None:
+                entry._validate_chunkhashes(chunk_size)
 
     @classmethod
     def get_default_hash_alg(cls) -> HashAlgorithm:
@@ -424,7 +448,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = None,
+        file_chunk_size_bytes: int = DEFAULT_FILE_CHUNK_SIZE,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -437,6 +461,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
 
     def validate(self) -> None:
         """Validate absolute paths and snapshot constraints."""
+        super().validate()
         self._validate_absolute_paths()
         self._validate_snapshot()
 
@@ -452,7 +477,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = None,
+        file_chunk_size_bytes: int = DEFAULT_FILE_CHUNK_SIZE,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -465,6 +490,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
 
     def validate(self) -> None:
         """Validate absolute paths and diff constraints."""
+        super().validate()
         self._validate_absolute_paths()
         self._validate_diff()
 
@@ -480,7 +506,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = None,
+        file_chunk_size_bytes: int = DEFAULT_FILE_CHUNK_SIZE,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -493,6 +519,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
 
     def validate(self) -> None:
         """Validate relative paths and snapshot constraints."""
+        super().validate()
         self._validate_relative_paths()
         self._validate_snapshot()
 
@@ -508,7 +535,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
         total_size: int = 0,
         dirs: Optional[List[ManifestDirectoryPath]] = None,
         parent_manifest_hash: Optional[str] = None,
-        file_chunk_size_bytes: Optional[int] = None,
+        file_chunk_size_bytes: int = DEFAULT_FILE_CHUNK_SIZE,
     ) -> None:
         super().__init__(
             hash_alg=hash_alg,
@@ -521,6 +548,7 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
 
     def validate(self) -> None:
         """Validate relative paths and diff constraints."""
+        super().validate()
         self._validate_relative_paths()
         self._validate_diff()
 
