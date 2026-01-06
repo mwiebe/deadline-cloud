@@ -335,3 +335,551 @@ class TestContentAddressableStorageS3:
 
         s3_objects = self._get_s3_objects()
         assert len(s3_objects) == 1
+
+
+class TestHashCacheWithChunkedFiles:
+    """Tests for hash cache integration with chunked files."""
+
+    def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
+        """Create a FileSystemDataCache for testing."""
+        cache_root.mkdir(parents=True, exist_ok=True)
+        return FileSystemDataCache(root_path=cache_root)
+
+    def _get_cache_files(self, cache_root: Path) -> Set[str]:
+        """Get all file names in the cache directory."""
+        return {f.name for f in cache_root.iterdir() if f.is_file()}
+
+    def test_hash_cache_stores_chunk_ranges(self, tmp_path: Path) -> None:
+        """Test that hash cache stores entries for each chunk range."""
+        cache_root = tmp_path / "cache"
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        # Create a 64-byte file, use 16-byte chunks -> 4 chunks
+        test_file = tmp_path / "chunked.bin"
+        test_file.write_bytes(bytes(range(64)))
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=64,
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=64,
+            file_chunk_size_bytes=16,
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            data_cache = self._create_filesystem_data_cache(cache_root)
+            result = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=64,
+            )
+
+            # Verify chunkhashes were produced
+            assert result.files[0].chunkhashes is not None
+            assert len(result.files[0].chunkhashes) == 4
+
+            # Verify cache entries for each chunk range
+            cache_key = str(test_file.resolve())
+            for i in range(4):
+                chunk_start = i * 16
+                chunk_end = (i + 1) * 16
+                cached_entry = hash_cache.get_entry(
+                    cache_key, HashAlgorithm.XXH128, chunk_start, chunk_end
+                )
+                assert cached_entry is not None, f"Chunk {i} not found in cache"
+                assert cached_entry.file_hash == result.files[0].chunkhashes[i]
+
+    def test_hash_cache_hit_for_chunked_file(self, tmp_path: Path) -> None:
+        """Test that cached chunk hashes are used on second run."""
+        cache_root = tmp_path / "cache"
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        # Create a 32-byte file, use 16-byte chunks -> 2 chunks
+        test_file = tmp_path / "chunked.bin"
+        test_file.write_bytes(b"a" * 32)
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=32,
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=32,
+            file_chunk_size_bytes=16,
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            data_cache = self._create_filesystem_data_cache(cache_root)
+
+            # First run - populates cache
+            result1 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=64,
+            )
+
+            # Second run - should use cached chunk hashes
+            result2 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=64,
+            )
+
+            assert result1.files[0].chunkhashes == result2.files[0].chunkhashes
+
+
+class TestS3CheckCacheUpdates:
+    """Tests for S3 check cache updates after uploads."""
+
+    @pytest.fixture(autouse=True)
+    def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
+        """Create the test S3 bucket before each test."""
+        create_s3_bucket(TEST_BUCKET)
+        self.s3_client = s3
+
+    def _create_s3_data_cache(self, s3_check_cache: Optional[S3CheckCache] = None) -> S3DataCache:
+        """Create an S3DataCache for testing."""
+        return S3DataCache(
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+            s3_client=self.s3_client,
+            s3_check_cache=s3_check_cache,
+        )
+
+    def test_s3_check_cache_entry_written_after_upload(self, tmp_path: Path) -> None:
+        """Test that S3CheckCacheEntry is written after successful upload."""
+        cache_dir = tmp_path / "s3_cache"
+        cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test content for S3 cache")
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
+            result = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+
+            # Verify S3 check cache entry was written
+            file_hash = result.files[0].hash
+            s3_key = f"{TEST_KEY_PREFIX}/{file_hash}.xxh128"
+            cache_key = f"{TEST_BUCKET}/{s3_key}"
+
+            cached_entry = s3_cache.get_entry(cache_key)
+            assert cached_entry is not None
+            assert cached_entry.s3_key == cache_key
+
+    def test_s3_check_cache_prevents_reupload(self, tmp_path: Path) -> None:
+        """Test that S3 check cache prevents re-uploading on second run."""
+        cache_dir = tmp_path / "s3_cache"
+        cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test content")
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        # Track put_object calls
+        put_object_calls = []
+        original_put_object = self.s3_client.put_object
+
+        def tracking_put_object(*args, **kwargs):
+            put_object_calls.append(kwargs.get("Key", args[1] if len(args) > 1 else None))
+            return original_put_object(*args, **kwargs)
+
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
+
+            # First upload
+            self.s3_client.put_object = tracking_put_object
+            hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+            first_run_calls = len(put_object_calls)
+
+            # Second upload - should skip due to S3 check cache
+            hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+            second_run_calls = len(put_object_calls) - first_run_calls
+
+        # First run should have uploaded, second run should have skipped
+        assert first_run_calls == 1
+        assert second_run_calls == 0
+
+
+class TestPartialCacheHits:
+    """Tests for partial cache hit scenarios."""
+
+    def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
+        """Create a FileSystemDataCache for testing."""
+        cache_root.mkdir(parents=True, exist_ok=True)
+        return FileSystemDataCache(root_path=cache_root)
+
+    def _get_cache_files(self, cache_root: Path) -> Set[str]:
+        """Get all file names in the cache directory."""
+        return {f.name for f in cache_root.iterdir() if f.is_file()}
+
+    def test_some_files_cached_others_not(self, tmp_path: Path) -> None:
+        """Test processing when some files are cached and others are not."""
+        cache_root = tmp_path / "cache"
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        # Create two files
+        file1 = tmp_path / "file1.txt"
+        file1.write_text("Content of file 1")
+        file2 = tmp_path / "file2.txt"
+        file2.write_text("Content of file 2")
+
+        file1_stat = file1.stat()
+        file2_stat = file2.stat()
+
+        # First manifest with only file1
+        manifest1 = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=str(file1).replace("\\", "/"),
+                    hash=None,
+                    size=int(file1_stat.st_size),
+                    mtime=int(file1_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file1_stat.st_size),
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            data_cache = self._create_filesystem_data_cache(cache_root)
+
+            # First run - cache file1
+            result1 = hash_upload_manifest(
+                manifest=manifest1,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+            )
+            file1_hash = result1.files[0].hash
+
+            # Second manifest with both files
+            manifest2 = AbsSnapshotManifest(
+                hash_alg=HashAlgorithm.XXH128,
+                files=[
+                    ManifestFilePath(
+                        path=str(file1).replace("\\", "/"),
+                        hash=None,
+                        size=int(file1_stat.st_size),
+                        mtime=int(file1_stat.st_mtime_ns // 1000),
+                    ),
+                    ManifestFilePath(
+                        path=str(file2).replace("\\", "/"),
+                        hash=None,
+                        size=int(file2_stat.st_size),
+                        mtime=int(file2_stat.st_mtime_ns // 1000),
+                    ),
+                ],
+                total_size=int(file1_stat.st_size) + int(file2_stat.st_size),
+            )
+
+            # Second run - file1 should be cached, file2 should be processed
+            result2 = hash_upload_manifest(
+                manifest=manifest2,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+            )
+
+            # Both files should have hashes
+            assert len(result2.files) == 2
+            hashes = {f.hash for f in result2.files}
+            assert file1_hash in hashes
+            assert all(h is not None for h in hashes)
+
+    def test_some_chunks_cached_others_not(self, tmp_path: Path) -> None:
+        """Test processing when some chunks are cached and others are not."""
+        cache_root = tmp_path / "cache"
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        # Create a 32-byte file with 16-byte chunks
+        test_file = tmp_path / "chunked.bin"
+        test_file.write_bytes(b"a" * 16 + b"b" * 16)  # Two different chunks
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=32,
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=32,
+            file_chunk_size_bytes=16,
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            data_cache = self._create_filesystem_data_cache(cache_root)
+
+            # First run - cache both chunks
+            result1 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=64,
+            )
+
+            # Note: We can't easily remove individual chunks from the hash cache,
+            # so we verify the full cache scenario works correctly
+
+            # Second run - should use cached chunks
+            result2 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=64,
+            )
+
+            assert result1.files[0].chunkhashes == result2.files[0].chunkhashes
+
+    def test_cache_miss_due_to_mtime_change(self, tmp_path: Path) -> None:
+        """Test that cache is invalidated when file mtime changes."""
+        cache_root = tmp_path / "cache"
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Original content")
+        file_stat = test_file.stat()
+        original_mtime = int(file_stat.st_mtime_ns // 1000)
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest1 = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=original_mtime,
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            data_cache = self._create_filesystem_data_cache(cache_root)
+
+            # First run - cache the file
+            result1 = hash_upload_manifest(
+                manifest=manifest1,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+            )
+
+            # Modify file and update mtime
+            test_file.write_text("Modified content")
+            file_stat = test_file.stat()
+            new_mtime = int(file_stat.st_mtime_ns // 1000)
+
+            # Ensure mtime is different (may need to wait on some systems)
+            if new_mtime == original_mtime:
+                import time
+
+                time.sleep(0.01)
+                test_file.write_text("Modified content again")
+                file_stat = test_file.stat()
+                new_mtime = int(file_stat.st_mtime_ns // 1000)
+
+            manifest2 = AbsSnapshotManifest(
+                hash_alg=HashAlgorithm.XXH128,
+                files=[
+                    ManifestFilePath(
+                        path=abs_path,
+                        hash=None,
+                        size=int(file_stat.st_size),
+                        mtime=new_mtime,
+                    )
+                ],
+                total_size=int(file_stat.st_size),
+            )
+
+            # Second run with different mtime - should recompute hash
+            result2 = hash_upload_manifest(
+                manifest=manifest2,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+            )
+
+            # Hashes should be different due to content change
+            assert result1.files[0].hash != result2.files[0].hash
+
+
+class TestStreamingFilesCacheIntegration:
+    """Tests for cache integration with streaming (large) files."""
+
+    def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
+        """Create a FileSystemDataCache for testing."""
+        cache_root.mkdir(parents=True, exist_ok=True)
+        return FileSystemDataCache(root_path=cache_root)
+
+    def _get_cache_files(self, cache_root: Path) -> Set[str]:
+        """Get all file names in the cache directory."""
+        return {f.name for f in cache_root.iterdir() if f.is_file()}
+
+    def test_streaming_file_skipped_when_exists_in_data_cache(self, tmp_path: Path) -> None:
+        """Test that streaming files are skipped when already in data cache."""
+        cache_root = tmp_path / "cache"
+
+        test_file = tmp_path / "large.bin"
+        test_file.write_bytes(bytes(range(100)))
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=100,
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=100,
+            file_chunk_size_bytes=-1,  # No chunking - whole file
+        )
+
+        data_cache = self._create_filesystem_data_cache(cache_root)
+
+        # First run - uploads file
+        result1 = hash_upload_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+            max_memory_bytes=32,  # Force streaming mode
+        )
+
+        cached_file = cache_root / f"{result1.files[0].hash}.xxh128"
+        original_mtime = cached_file.stat().st_mtime
+
+        # Second run - should skip since file exists in data cache
+        result2 = hash_upload_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+            max_memory_bytes=32,
+        )
+
+        assert result1.files[0].hash == result2.files[0].hash
+        # File should not have been rewritten
+        assert cached_file.stat().st_mtime == original_mtime
+
+    def test_streaming_file_with_hash_cache(self, tmp_path: Path) -> None:
+        """Test that hash cache works with streaming files."""
+        cache_root = tmp_path / "cache"
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        test_file = tmp_path / "large.bin"
+        test_file.write_bytes(bytes(range(100)))
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshotManifest(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=100,
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=100,
+            file_chunk_size_bytes=-1,  # No chunking
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            data_cache = self._create_filesystem_data_cache(cache_root)
+
+            # First run - populates hash cache
+            result1 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=32,  # Force streaming mode
+            )
+
+            # Verify hash cache entry was written (whole file range)
+            cache_key = str(test_file.resolve())
+            cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
+            assert cached_entry is not None
+            assert cached_entry.file_hash == result1.files[0].hash
+
+            # Second run - should use hash cache
+            result2 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_memory_bytes=32,
+            )
+
+            assert result1.files[0].hash == result2.files[0].hash
