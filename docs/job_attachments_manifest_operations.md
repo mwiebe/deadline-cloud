@@ -1732,22 +1732,24 @@ back_to_subtree = subtree_manifest(original, "assets/textures")
 Create a complete snapshot manifest from a directory:
 
 ```
-Directory ──[collect]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered ──[save]──► File
+Directory ──[collect]──► AbsSnapshot ──[hash]──► Hashed ──[subtree]──► RelSnapshot ──[filter]──► Filtered ──[save]──► File
 ```
+
+**Important:** The HASH operation must occur BEFORE SUBTREE because HASH requires absolute paths to read files from the filesystem. SUBTREE converts to relative paths, after which the manifest can no longer be hashed.
 
 ```python
 # Step 1: Collect directory tree with absolute paths
 abs_manifest = collect_manifest([root], [], version=version)
 
-# Step 2: Extract as relative paths
-unhashed = subtree_manifest(abs_manifest, root)
+# Step 2: Hash all files (requires absolute paths)
+hashed = hash_manifest(abs_manifest, hash_cache)
 
-# Step 3: Hash all files
-hashed = hash_manifest(unhashed, root, hash_cache)
+# Step 3: Extract as relative paths
+rel_manifest = subtree_manifest(hashed, root)
 
 # Step 4: Filter the snapshot
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
-filtered = filter_manifest(hashed, filter)
+filtered = filter_manifest(rel_manifest, filter)
 
 # Step 5: Write to file
 manifest_path = _write_manifest(root, filtered, destination, name)
@@ -1760,9 +1762,11 @@ Compare by mtime/size without hashing unchanged files:
 ```
 Parent File ──[load]──► Parent ──[filter]──► Filtered Parent ──┐
                                                                ├──[diff]──► Diff Manifest
-Directory ──[collect]──► AbsSnapshot ──[subtree]──► Unhashed ──[filter]──► Filtered Current ─┘
+Directory ──[collect]──► AbsSnapshot ──[subtree]──► RelSnapshot ──[filter]──► Filtered Current ─┘
                                                         (no hashes)
 ```
+
+**Note:** In fast mode, we skip hashing entirely and compare by mtime/size. The SUBTREE operation can be applied to unhashed manifests since it only transforms paths, not file content. However, any changed files identified by the diff will still need hashing before upload.
 
 ```python
 # Load parent manifest
@@ -1798,8 +1802,10 @@ Hash everything for definitive comparison:
 ```
 Parent File ──[load]──► Parent ──[filter]──► Filtered Parent ──┐
                                                                ├──[diff]──► Diff Manifest
-Directory ──[collect]──► AbsSnapshot ──[subtree]──► Unhashed ──[hash]──► Hashed ──[filter]──► Filtered Current ─┘
+Directory ──[collect]──► AbsSnapshot ──[hash]──► Hashed ──[subtree]──► RelSnapshot ──[filter]──► Filtered Current ─┘
 ```
+
+**Important:** The HASH operation must occur BEFORE SUBTREE because HASH requires absolute paths to read files from the filesystem.
 
 ```python
 # Load parent manifest
@@ -1808,15 +1814,15 @@ with open(parent_path) as f:
     parent = decode_manifest(parent_str)
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
-# Collect and hash current directory
+# Collect and hash current directory (hash before subtree!)
 abs_manifest = collect_manifest([root], [], version=version)
-current_unhashed = subtree_manifest(abs_manifest, root)
-current_hashed = hash_manifest(current_unhashed, root, hash_cache, force_rehash=True)
+hashed = hash_manifest(abs_manifest, hash_cache, force_rehash=True)
+current_rel = subtree_manifest(hashed, root)
 
 # Filter BOTH with same patterns
 filter = IncludeExcludePathsFilter(include=include, exclude=exclude)
 filtered_parent = filter_manifest(parent, filter)
-filtered_current = filter_manifest(current_hashed, filter)
+filtered_current = filter_manifest(current_rel, filter)
 
 # Compute diff (full mode - compare by hash)
 diff = compute_diff_manifest(
