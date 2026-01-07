@@ -536,16 +536,37 @@ def _collect_transitive_target(
     collected_paths: Set[str],
     print_function_callback: Callable[[Any], None],
 ) -> tuple[List[ManifestFilePath], List[ManifestDirectoryPath], int]:
-    """Collect a symlink target that is outside the root path."""
+    """Collect a symlink target that is outside the root path.
+
+    For TRANSITIVE_INCLUDE_TARGETS policy, symlinks found within transitive
+    targets are also preserved and their targets are transitively included.
+    """
     file_entries: List[ManifestFilePath] = []
     dir_entries: List[ManifestDirectoryPath] = []
     total_size = 0
+    # Track additional transitive targets discovered from nested symlinks
+    nested_transitive_targets: List[Path] = []
 
     if not target_path.exists():
         print_function_callback(f"Skipping broken symlink target: {target_path}")
         return (file_entries, dir_entries, total_size)
 
-    if target_path.is_file() and not target_path.is_symlink():
+    if target_path.is_symlink():
+        # Target is itself a symlink - preserve it and transitively include its target
+        entry_path = target_path.as_posix()
+        if entry_path not in collected_paths:
+            symlink_target = _get_symlink_absolute_target(target_path)
+            entry = ManifestFilePath(
+                path=entry_path,
+                symlink_target=symlink_target.as_posix(),
+            )
+            file_entries.append(entry)
+            collected_paths.add(entry_path)
+            print_function_callback(f"Collected transitive symlink target: {entry_path}")
+            # Queue the symlink's target for transitive collection
+            nested_transitive_targets.append(symlink_target)
+
+    elif target_path.is_file():
         entry_path = target_path.as_posix()
         if entry_path not in collected_paths:
             try:
@@ -572,6 +593,20 @@ def _collect_transitive_target(
             for name in list(dirnames):
                 full_path = Path(dirpath) / name
                 if full_path.is_symlink():
+                    # Preserve the symlink and queue its target for transitive collection
+                    entry_path = full_path.absolute().as_posix()
+                    if entry_path not in collected_paths:
+                        symlink_target = _get_symlink_absolute_target(full_path)
+                        entry = ManifestFilePath(
+                            path=entry_path,
+                            symlink_target=symlink_target.as_posix(),
+                        )
+                        file_entries.append(entry)
+                        collected_paths.add(entry_path)
+                        print_function_callback(f"Collected transitive symlink dir: {entry_path}")
+                        # Queue the target for transitive collection
+                        nested_transitive_targets.append(symlink_target)
+                    # Don't follow directory symlinks in os.walk
                     dirnames.remove(name)
 
             for name in filenames:
@@ -580,6 +615,17 @@ def _collect_transitive_target(
                 if entry_path in collected_paths:
                     continue
                 if full_path.is_symlink():
+                    # Preserve the symlink and queue its target for transitive collection
+                    symlink_target = _get_symlink_absolute_target(full_path)
+                    entry = ManifestFilePath(
+                        path=entry_path,
+                        symlink_target=symlink_target.as_posix(),
+                    )
+                    file_entries.append(entry)
+                    collected_paths.add(entry_path)
+                    print_function_callback(f"Collected transitive symlink: {entry_path}")
+                    # Queue the target for transitive collection
+                    nested_transitive_targets.append(symlink_target)
                     continue
                 try:
                     stat_info = full_path.stat(follow_symlinks=False)
@@ -592,6 +638,17 @@ def _collect_transitive_target(
                     print_function_callback(
                         f"Skipping inaccessible transitive file {entry_path}: {e}"
                     )
+
+    # Recursively collect nested transitive targets
+    for nested_target in nested_transitive_targets:
+        nested_files, nested_dirs, nested_size = _collect_transitive_target(
+            target_path=nested_target,
+            collected_paths=collected_paths,
+            print_function_callback=print_function_callback,
+        )
+        file_entries.extend(nested_files)
+        dir_entries.extend(nested_dirs)
+        total_size += nested_size
 
     return (file_entries, dir_entries, total_size)
 
@@ -606,6 +663,11 @@ def _collect_escaping_dir_symlink(
 
     The contents are collected with paths under the symlink path, not the target path.
     This effectively "inlines" the target directory contents at the symlink location.
+
+    Nested symlinks within the collapsed directory are handled as follows:
+    - If the symlink target is within the same directory being collapsed, the symlink
+      is preserved with its target translated to the collapsed location.
+    - If the symlink target escapes the directory being collapsed, it is skipped.
     """
     file_entries: List[ManifestFilePath] = []
     dir_entries: List[ManifestDirectoryPath] = []
@@ -618,6 +680,33 @@ def _collect_escaping_dir_symlink(
     if not target_abs_path.is_dir():
         print_function_callback(f"Skipping non-directory escaping symlink target: {symlink_path}")
         return (file_entries, dir_entries, total_size)
+
+    def is_target_within_collapsed_dir(link_path: Path) -> tuple[bool, Optional[str]]:
+        """Check if a symlink's target is within the directory being collapsed.
+
+        Returns:
+            Tuple of (is_internal, translated_target_path)
+            - is_internal: True if target is within the collapsed directory
+            - translated_target_path: The target path translated to collapsed location,
+              or None if not internal
+        """
+        try:
+            # Get the symlink target (may be relative)
+            raw_target = os.readlink(link_path)
+            # Resolve relative to the symlink's parent directory
+            resolved_target = (link_path.parent / raw_target).resolve()
+
+            # Check if the resolved target is within the target_abs_path
+            try:
+                rel_to_target = resolved_target.relative_to(target_abs_path)
+                # Target is within the collapsed directory - translate the path
+                translated = f"{symlink_path}/{rel_to_target.as_posix()}"
+                return (True, translated)
+            except ValueError:
+                # Target is outside the collapsed directory
+                return (False, None)
+        except (OSError, ValueError):
+            return (False, None)
 
     for dirpath, dirnames, filenames in os.walk(target_abs_path, followlinks=False):
         rel_within_target = Path(dirpath).relative_to(target_abs_path)
@@ -635,9 +724,51 @@ def _collect_escaping_dir_symlink(
         for name in list(dirnames):
             full_path = Path(dirpath) / name
             if full_path.is_symlink():
-                print_function_callback(
-                    f"Skipping nested symlink in escaping target: {dir_entry_path}/{name}"
-                )
+                # Check if this directory symlink's target is within the collapsed dir
+                is_internal, translated_target = is_target_within_collapsed_dir(full_path)
+                if rel_within_target == Path("."):
+                    entry_path = f"{symlink_path}/{name}"
+                else:
+                    entry_path = f"{symlink_path}/{rel_within_target.as_posix()}/{name}"
+
+                if is_internal and translated_target is not None:
+                    # Preserve the symlink with translated target
+                    if entry_path not in collected_paths:
+                        entry = ManifestFilePath(
+                            path=entry_path,
+                            symlink_target=translated_target,
+                        )
+                        file_entries.append(entry)
+                        collected_paths.add(entry_path)
+                        print_function_callback(
+                            f"Collected symlink dir (internal, translated): {entry_path}"
+                        )
+                else:
+                    # Nested escaping directory symlink - collapse it recursively
+                    try:
+                        nested_target = full_path.resolve()
+                        if nested_target.exists() and nested_target.is_dir():
+                            nested_files, nested_dirs, nested_size = _collect_escaping_dir_symlink(
+                                symlink_path=entry_path,
+                                target_abs_path=nested_target,
+                                collected_paths=collected_paths,
+                                print_function_callback=print_function_callback,
+                            )
+                            file_entries.extend(nested_files)
+                            dir_entries.extend(nested_dirs)
+                            total_size += nested_size
+                            print_function_callback(
+                                f"Collapsed nested escaping dir symlink: {entry_path}"
+                            )
+                        else:
+                            print_function_callback(
+                                f"Skipping broken nested dir symlink: {entry_path}"
+                            )
+                    except OSError as e:
+                        print_function_callback(
+                            f"Skipping inaccessible nested dir symlink {entry_path}: {e}"
+                        )
+                # Don't follow directory symlinks in either case
                 dirnames.remove(name)
 
         for name in filenames:
@@ -649,8 +780,36 @@ def _collect_escaping_dir_symlink(
 
             if entry_path in collected_paths:
                 continue
+
             if full_path.is_symlink():
-                print_function_callback(f"Skipping nested symlink in escaping target: {entry_path}")
+                # Check if this file symlink's target is within the collapsed dir
+                is_internal, translated_target = is_target_within_collapsed_dir(full_path)
+                if is_internal and translated_target is not None:
+                    # Preserve the symlink with translated target
+                    entry = ManifestFilePath(
+                        path=entry_path,
+                        symlink_target=translated_target,
+                    )
+                    file_entries.append(entry)
+                    collected_paths.add(entry_path)
+                    print_function_callback(
+                        f"Collected symlink (internal, translated): {entry_path}"
+                    )
+                else:
+                    # Nested escaping file symlink - collapse it (inline content)
+                    try:
+                        target_stat = full_path.stat(follow_symlinks=True)
+                        file_entry = _create_unhashed_file_entry(full_path, entry_path, target_stat)
+                        file_entries.append(file_entry)
+                        collected_paths.add(entry_path)
+                        total_size += file_entry.size or 0
+                        print_function_callback(
+                            f"Collapsed nested escaping symlink: {entry_path}"
+                        )
+                    except OSError as e:
+                        print_function_callback(
+                            f"Skipping broken nested symlink {entry_path}: {e}"
+                        )
                 continue
 
             try:
