@@ -48,6 +48,12 @@ Here are the operations for working with data snapshots:
 │         Pipelines read/hash/upload for all files, returning a           │
 │         manifest with hashes populated.                                 │
 │                                                                         │
+│  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadSummary                │
+│         Downloads files from a data cache to local filesystem,          │
+│         recreating the directory structure from the manifest.           │
+│         Requires absolute paths. Supports parallel downloads,           │
+│         progress tracking, and file conflict resolution.                │
+│                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -386,6 +392,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_collect_manifest.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
+| `_download_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
@@ -992,7 +999,305 @@ For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
 | Output sync from worker | HASH_UPLOAD |
 | Testing/debugging | HASH (simpler) |
 
-### 4. FILTER: `filter_manifest()`
+### 4. DOWNLOAD: `download_manifest()`
+
+**Location:** `_download_manifest.py`
+
+Downloads files from a data cache (S3 or filesystem) to the local filesystem. For snapshot manifests (`AbsSnapshotManifest`), recreates the directory structure specified in the manifest. For diff manifests (`AbsDiffManifest`), applies changes by downloading new/modified files and deleting removed files. The manifest must have absolute paths.
+
+```python
+def download_manifest(
+    manifest: AbsManifest,
+    data_cache: DataCache,
+    *,
+    file_conflict_resolution: FileConflictResolution = FileConflictResolution.OVERWRITE,
+    apply_deletes: bool = True,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    max_workers: Optional[int] = None,
+    print_function_callback: Callable[[Any], None] = lambda msg: None,
+    progress_tracker: Optional[ProgressTracker] = None,
+) -> DownloadSummaryStatistics:
+```
+
+**Parameters:**
+
+| Parameter | Description |
+|-----------|-------------|
+| `manifest` | Manifest with absolute paths and hashes. Can be `AbsSnapshotManifest` or `AbsDiffManifest`. |
+| `data_cache` | Data cache to download from (`S3DataCache` or `FileSystemDataCache`) |
+| `file_conflict_resolution` | How to handle existing files (see below). Default `OVERWRITE`. |
+| `apply_deletes` | If `True` (default), apply deletions from diff manifests. If `False`, skip deletions and only download new/modified files. |
+| `symlink_policy` | How to handle symlinks. Default `PRESERVE`. Only `PRESERVE` and `EXCLUDE` are supported. |
+| `max_workers` | Maximum parallel download workers. Default: auto-detect based on S3 pool connections. |
+| `print_function_callback` | Progress callback for status messages |
+| `progress_tracker` | Optional progress tracker for download progress and cancellation |
+
+**Returns:** `DownloadSummaryStatistics` containing:
+- `total_files`: Number of files in manifest
+- `processed_files`: Number of files successfully downloaded
+- `skipped_files`: Number of files skipped (already exist with SKIP resolution)
+- `total_bytes`: Total bytes to download
+- `processed_bytes`: Bytes successfully downloaded
+- `total_time`: Total operation time in seconds
+
+**Raises:** 
+- `ValueError` if the manifest contains relative paths
+- `AssetSyncCancelledError` if cancelled via progress tracker
+
+**File Conflict Resolution:**
+
+| Resolution | Behavior |
+|------------|----------|
+| `SKIP` | Skip download if file already exists at target path |
+| `OVERWRITE` | Overwrite existing file with downloaded content |
+| `CREATE_COPY` | Create a new file with suffix (e.g., `file (1).ext`) if file exists |
+
+**Entry Type Handling:**
+
+| Entry Type | Action |
+|------------|--------|
+| Regular file | Download from data cache using hash as key |
+| Large file (chunkhashes) | Download each chunk, concatenate to target file |
+| Symlink | Create symlink pointing to `symlink_target` (see ordering below) |
+| Deleted file marker (diff) | Delete the file at the path if it exists |
+| Deleted directory marker (diff) | Delete the directory only if empty (see below) |
+| Directory | Create directory (with parents) if it doesn't exist |
+
+**Symlink Ordering:**
+
+For chained symlinks (e.g., `A -> B -> C` where A points to B and B points to C), the operation ensures targets are created before the symlinks that point to them. This is achieved through topological sorting of the symlink dependency graph:
+
+1. Build a dependency graph where symlink A depends on symlink B if A's target is B's path
+2. Perform topological sort to determine creation order
+3. Create symlinks in sorted order (targets first, then dependents)
+
+This ensures that when symlink A is created, its target B already exists (if B is also a symlink in the manifest).
+
+**Diff Manifest Behavior:**
+
+When downloading a diff manifest (`AbsDiffManifest`):
+- Entries with `deleted=True` cause the target file/directory to be removed
+- Non-deleted entries are downloaded normally
+- This allows applying incremental updates to a local directory
+
+**Deletion Ordering and Non-Empty Directories:**
+
+Deletions are processed in order of path length (longest paths first), ensuring that child files and subdirectories are deleted before their parent directories. This is important because:
+
+1. **Directories are only deleted if empty.** The DOWNLOAD operation uses `rmdir()` (not recursive delete) for directories. If a directory still contains files, it is silently left in place.
+
+2. **Diff manifests must explicitly list all deletions.** To delete a directory and its contents, the diff manifest must include deletion markers for every file and subdirectory within it, followed by the directory itself. The DIFF operation produces manifests that satisfy this requirement.
+
+3. **Untracked files are preserved.** If files exist in a directory that were not part of the original manifest (e.g., user-created files, logs, caches), deleting the parent directory marker will leave the directory intact because it's not empty. This prevents accidental data loss.
+
+Example: To delete directory `/project/old_assets/` containing `model.obj` and `texture.png`:
+```
+# Diff manifest must include (in any order, sorted by DOWNLOAD):
+/project/old_assets/model.obj    (deleted=True)
+/project/old_assets/texture.png  (deleted=True)
+/project/old_assets/             (deleted=True, directory)
+```
+
+**Pipelined Architecture:**
+
+For large downloads, the operation uses a multi-threaded approach:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         DOWNLOAD PIPELINE                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────┐     ┌─────────┐     ┌─────────┐                           │
+│  │DOWNLOAD │────►│  WRITE  │────►│ VERIFY  │  (optional hash verify)   │
+│  │ Thread  │     │ Thread  │     │ Thread  │                           │
+│  └─────────┘     └─────────┘     └─────────┘                           │
+│       │               │               │                                 │
+│       └───────────────┴───────────────┘                                 │
+│                Memory Pool                                              │
+│           (bounded by max_memory_bytes)                                 │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+For small files, downloads happen in parallel using a thread pool.
+For large chunked files, chunks are downloaded sequentially and written to the target file.
+
+**Storage Key Format:**
+
+Files are retrieved from content-addressable storage using keys based on the data cache type:
+
+| Data Cache Type | Key Format | Example |
+|-----------------|------------|---------|
+| `S3DataCache` | `{s3_key_prefix}/{hash}.{algorithm}` | `Data/a1b2c3d4e5f67890abcdef1234567890.xxh128` |
+| `FileSystemDataCache` | `{root_path}/{hash}.{algorithm}` | `/mnt/cache/a1b2c3d4e5f67890abcdef1234567890.xxh128` |
+
+**Atomic File Downloads:**
+
+All file downloads are atomic to ensure target files are never in a partial or corrupt state:
+
+1. **Temporary file creation:** Files are downloaded to a temporary file beside the target (e.g., `myfile.dat.tmp048df` where `048df` is a random hex suffix)
+2. **Atomic move:** After the download completes successfully, `os.replace()` atomically moves the temp file to the final location
+3. **Error cleanup:** If any error occurs during download, the temporary file is deleted
+
+This is particularly important for chunked files (>256MB), where multiple chunks are downloaded sequentially. The target file only appears once all chunks have been successfully downloaded and concatenated.
+
+| File Type | Behavior |
+|-----------|----------|
+| Regular file | Download to temp file, then atomic move |
+| Chunked file | All chunks written to single temp file, then atomic move after last chunk |
+
+**Modification Time Restoration:**
+
+Downloaded files have their modification time (`mtime`) set to the value stored in the manifest, preserving the original file timestamps.
+
+**Example - Downloading from S3:**
+
+```python
+import boto3
+from deadline.job_attachments.asset_manifests._operations import (
+    download_manifest,
+    join_manifest,
+)
+from deadline.job_attachments.asset_manifests._operations._data_cache import S3DataCache
+from deadline.job_attachments.asset_manifests.decode import decode_manifest
+from deadline.job_attachments.models import FileConflictResolution
+
+# Load a manifest with relative paths
+with open("scene.manifest") as f:
+    rel_manifest = decode_manifest(f.read())
+
+# Join with absolute path to create AbsSnapshotManifest
+abs_manifest = join_manifest(rel_manifest, "/home/user/projects/scene")
+
+# Create S3 data cache
+data_cache = S3DataCache(
+    s3_bucket="my-job-attachments-bucket",
+    s3_key_prefix="Data",
+    s3_client=boto3.client("s3"),
+)
+
+# Download all files to local filesystem
+stats = download_manifest(
+    manifest=abs_manifest,
+    data_cache=data_cache,
+    file_conflict_resolution=FileConflictResolution.OVERWRITE,
+)
+
+print(f"Downloaded {stats.processed_files} files ({stats.processed_bytes} bytes)")
+print(f"Skipped {stats.skipped_files} files")
+print(f"Total time: {stats.total_time:.2f}s")
+```
+
+Output:
+```
+Downloaded 42 files (1234567890 bytes)
+Skipped 0 files
+Total time: 12.34s
+```
+
+**Example - Downloading from local cache (debug snapshot):**
+
+```python
+from pathlib import Path
+from deadline.job_attachments.asset_manifests._operations import (
+    download_manifest,
+    join_manifest,
+)
+from deadline.job_attachments.asset_manifests._operations._data_cache import FileSystemDataCache
+from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+# Load manifest from debug snapshot
+with open("/tmp/debug_snapshot/manifest.json") as f:
+    rel_manifest = decode_manifest(f.read())
+
+# Join with target directory
+abs_manifest = join_manifest(rel_manifest, "/home/user/restored_scene")
+
+# Create filesystem data cache pointing to debug snapshot data
+data_cache = FileSystemDataCache(
+    root_path=Path("/tmp/debug_snapshot/data"),
+)
+
+# Download (copy) files from cache to target directory
+stats = download_manifest(
+    manifest=abs_manifest,
+    data_cache=data_cache,
+)
+
+print(f"Restored {stats.processed_files} files to /home/user/restored_scene")
+```
+
+**Example - Applying a diff manifest:**
+
+```python
+from deadline.job_attachments.asset_manifests._operations import (
+    download_manifest,
+    join_manifest,
+)
+from deadline.job_attachments.asset_manifests._operations._data_cache import S3DataCache
+from deadline.job_attachments.asset_manifests.decode import decode_manifest
+
+# Load a diff manifest
+with open("changes.diff.manifest") as f:
+    rel_diff = decode_manifest(f.read())
+
+# Join with target directory
+abs_diff = join_manifest(rel_diff, "/home/user/projects/scene")
+
+# Apply the diff - downloads new/modified files, deletes removed files
+data_cache = S3DataCache(
+    s3_bucket="my-job-attachments-bucket",
+    s3_key_prefix="Data",
+    s3_client=boto3.client("s3"),
+)
+
+stats = download_manifest(
+    manifest=abs_diff,
+    data_cache=data_cache,
+)
+
+print(f"Applied diff: {stats.processed_files} files updated")
+```
+
+**When to Use DOWNLOAD:**
+
+| Use Case | Recommended Approach |
+|----------|---------------------|
+| Worker input sync | DOWNLOAD with S3DataCache |
+| Job output download | DOWNLOAD with S3DataCache |
+| Restore from debug snapshot | DOWNLOAD with FileSystemDataCache |
+| Apply incremental update | DOWNLOAD with AbsDiffManifest |
+| Step-step dependency sync | DOWNLOAD with composed output manifests |
+
+**Relationship to HASH_UPLOAD:**
+
+DOWNLOAD is the inverse of HASH_UPLOAD:
+
+| Operation | Direction | Input | Output |
+|-----------|-----------|-------|--------|
+| HASH_UPLOAD | Local → Cache | AbsManifest (no hashes) | AbsManifest (with hashes) + data in cache |
+| DOWNLOAD | Cache → Local | AbsManifest (with hashes) | Files on local filesystem |
+
+```python
+# Round-trip example:
+# 1. Collect and upload
+abs_manifest = collect_manifest(["/projects/scene"], [])
+hashed = hash_upload_manifest(abs_manifest, s3_cache)
+
+# 2. Save manifest
+with open("scene.manifest", "w") as f:
+    f.write(encode_manifest(hashed))
+
+# 3. Later, download to different location
+loaded = decode_manifest(open("scene.manifest").read())
+abs_for_download = join_manifest(
+    subtree_manifest(loaded, "/projects/scene"),
+    "/home/other_user/scene"
+)
+download_manifest(abs_for_download, s3_cache)
+```
+
+### 5. FILTER: `filter_manifest()`
 
 **Location:** `_filter_manifest.py`
 
@@ -1067,7 +1372,7 @@ def python_files_only(entry):
 py_manifest = filter_manifest(manifest, python_files_only)
 ```
 
-### 5. DIFF: `compute_diff_manifest()`
+### 6. DIFF: `compute_diff_manifest()`
 
 **Location:** `_diff_manifest.py`
 
@@ -1183,7 +1488,7 @@ Diff manifest type: RelDiffManifest
 Parent hash: f8e9d0c1b2a34567...
 ```
 
-### 6. COMPOSE: `compose_manifests()`
+### 7. COMPOSE: `compose_manifests()`
 
 **Location:** `_compose_manifest.py`
 
@@ -1264,7 +1569,7 @@ task3_output = decode_manifest(read_file("task3_output.manifest"))
 merged = compose_manifests([task1_output, task2_output, task3_output])
 ```
 
-### 7. SUBTREE: `subtree_manifest()`
+### 8. SUBTREE: `subtree_manifest()`
 
 **Location:** `_subtree_manifest.py`
 
@@ -1456,7 +1761,7 @@ textures = subtree_manifest(full_manifest, "assets/textures")
 png_only = filter_manifest(textures, lambda e: e.path.endswith(".png"))
 ```
 
-### 8. PARTITION: `partition_manifest()`
+### 9. PARTITION: `partition_manifest()`
 
 **Location:** `_partition_manifest.py`
 
@@ -1612,7 +1917,7 @@ composed = compose_manifests([abs1, abs2])
 # composed ≈ abs_manifest
 ```
 
-### 9. JOIN: `join_manifest()`
+### 10. JOIN: `join_manifest()`
 
 **Location:** `_join_manifest.py`
 
