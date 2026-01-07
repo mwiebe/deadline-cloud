@@ -338,7 +338,7 @@ class TestExcludePolicy:
 
         messages: List[str] = []
 
-        manifest = collect_manifest(
+        collect_manifest(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE,

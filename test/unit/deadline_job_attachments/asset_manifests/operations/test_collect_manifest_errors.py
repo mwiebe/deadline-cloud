@@ -18,7 +18,7 @@ import os
 import stat
 from pathlib import Path
 from typing import List
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -75,9 +75,7 @@ class TestInputValidation:
                 [subdir],
             )
 
-    def test_empty_directories_and_filenames_returns_empty_manifest(
-        self, tmp_path: Path
-    ) -> None:
+    def test_empty_directories_and_filenames_returns_empty_manifest(self, tmp_path: Path) -> None:
         """Empty inputs return an empty manifest."""
         manifest = collect_manifest([], [])
 
@@ -314,7 +312,7 @@ class TestOSErrorHandling:
             # The implementation should handle this gracefully
             # Note: This may or may not be caught depending on where stat is called
             try:
-                manifest = collect_manifest(
+                collect_manifest(
                     [tmp_path],
                     [],
                     print_function_callback=lambda msg: messages.append(str(msg)),
@@ -342,7 +340,7 @@ class TestOSErrorHandling:
 
         with patch("os.readlink", mock_readlink):
             try:
-                manifest = collect_manifest(
+                collect_manifest(
                     [tmp_path],
                     [],
                     symlink_policy=SymlinkPolicy.PRESERVE,
@@ -416,7 +414,7 @@ class TestPrintFunctionCallback:
 
         messages: List[str] = []
 
-        manifest = collect_manifest(
+        collect_manifest(
             [tmp_path],
             [],
             print_function_callback=lambda msg: messages.append(str(msg)),
@@ -433,7 +431,7 @@ class TestPrintFunctionCallback:
 
         messages: List[str] = []
 
-        manifest = collect_manifest(
+        collect_manifest(
             [tmp_path],
             [],
             print_function_callback=lambda msg: messages.append(str(msg)),
@@ -450,7 +448,7 @@ class TestPrintFunctionCallback:
 
         messages: List[str] = []
 
-        manifest = collect_manifest(
+        collect_manifest(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -468,7 +466,7 @@ class TestPrintFunctionCallback:
 
         messages: List[str] = []
 
-        manifest = collect_manifest(
+        collect_manifest(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE,

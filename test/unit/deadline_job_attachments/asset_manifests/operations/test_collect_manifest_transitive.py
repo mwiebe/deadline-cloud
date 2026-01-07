@@ -13,11 +13,8 @@ These tests cover:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import List
-
-import pytest
 
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,

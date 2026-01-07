@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
 )

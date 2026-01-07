@@ -803,13 +803,9 @@ def _collect_escaping_dir_symlink(
                         file_entries.append(file_entry)
                         collected_paths.add(entry_path)
                         total_size += file_entry.size or 0
-                        print_function_callback(
-                            f"Collapsed nested escaping symlink: {entry_path}"
-                        )
+                        print_function_callback(f"Collapsed nested escaping symlink: {entry_path}")
                     except OSError as e:
-                        print_function_callback(
-                            f"Skipping broken nested symlink {entry_path}: {e}"
-                        )
+                        print_function_callback(f"Skipping broken nested symlink {entry_path}: {e}")
                 continue
 
             try:

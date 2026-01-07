@@ -30,7 +30,7 @@ import time
 from collections import defaultdict, deque
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, DefaultDict, List, Optional, Tuple, Union
+from typing import Any, Callable, DefaultDict, List, Optional, Tuple
 
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -40,7 +40,6 @@ from ..manifest import (
     ManifestDirectoryPath,
     ManifestFilePath,
     _is_absolute_path,
-    DEFAULT_FILE_CHUNK_SIZE,
 )
 from ..versions import SymlinkPolicy
 from ._content_addressed_data_cache import (
@@ -51,13 +50,11 @@ from ._content_addressed_data_cache import (
 from ...models import FileConflictResolution
 from ...progress_tracker import (
     DownloadSummaryStatistics,
-    ProgressReportMetadata,
     ProgressStatus,
     ProgressTracker,
 )
 from ...exceptions import (
     AssetSyncCancelledError,
-    AssetSyncError,
     JobAttachmentsS3ClientError,
     JobAttachmentS3BotoCoreError,
     COMMON_ERROR_GUIDANCE_FOR_S3,
@@ -260,9 +257,7 @@ def _download_single_file(
         elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
             pass  # Continue to download
         elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-            local_path = _get_new_copy_file_path(
-                local_path, collision_lock, collision_file_dict
-            )
+            local_path = _get_new_copy_file_path(local_path, collision_lock, collision_file_dict)
             local_path = _get_long_path_compatible_path(local_path)
         else:
             raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
@@ -335,9 +330,7 @@ def _download_chunked_file(
         elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
             pass  # Continue to download
         elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-            local_path = _get_new_copy_file_path(
-                local_path, collision_lock, collision_file_dict
-            )
+            local_path = _get_new_copy_file_path(local_path, collision_lock, collision_file_dict)
             local_path = _get_long_path_compatible_path(local_path)
         else:
             raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
@@ -358,11 +351,14 @@ def _download_chunked_file(
                     s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
                     # Download chunk to another temp location then append
                     chunk_temp_suffix = secrets.token_hex(5)
-                    chunk_tmp_path = local_path.parent / f"{local_path.name}.chunk{chunk_temp_suffix}"
+                    chunk_tmp_path = (
+                        local_path.parent / f"{local_path.name}.chunk{chunk_temp_suffix}"
+                    )
                     try:
                         # Use a simple download without atomic move for chunks
                         # since we're writing to our own temp file
                         from boto3.s3.transfer import TransferConfig
+
                         config = TransferConfig()
                         chunk_bytes = 0
 
@@ -432,6 +428,7 @@ def _create_symlink(entry: ManifestFilePath) -> None:
         # For symlinks, we always overwrite
         if local_path.is_dir():
             import shutil
+
             shutil.rmtree(local_path)
         else:
             local_path.unlink()
@@ -668,9 +665,7 @@ def download_manifest(
     # Only count symlinks if policy is PRESERVE
     symlink_count = len(symlinks) if symlink_policy == SymlinkPolicy.PRESERVE else 0
     total_files = len(regular_files) + len(chunked_files) + symlink_count
-    total_bytes = sum(
-        (e.size or 0) for e in regular_files
-    ) + sum(
+    total_bytes = sum((e.size or 0) for e in regular_files) + sum(
         (e.size or 0) for e in chunked_files
     )
 
@@ -757,7 +752,7 @@ def download_manifest(
                         progress_tracker.report_progress()
                         print_function_callback(f"Downloaded: {entry.path}")
 
-                    except Exception as e:
+                    except Exception:
                         if progress_tracker and not progress_tracker.continue_reporting:
                             raise AssetSyncCancelledError("Download cancelled.")
                         raise
