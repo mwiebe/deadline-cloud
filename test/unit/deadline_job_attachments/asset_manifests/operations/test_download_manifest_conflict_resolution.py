@@ -59,14 +59,14 @@ class TestDownloadManifestFileConflictResolution:
         rel_manifest = subtree_manifest(hashed, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        stats = download_manifest(
+        result = download_manifest(
             manifest=download_manifest_obj,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.SKIP,
         )
 
         assert existing_file.read_text() == "Existing content"
-        assert stats.skipped_files == 1
+        assert result.statistics.skipped_files == 1
 
     def test_conflict_overwrite(self, tmp_path: Path) -> None:
         """Test OVERWRITE conflict resolution overwrites existing files."""
@@ -89,14 +89,14 @@ class TestDownloadManifestFileConflictResolution:
         rel_manifest = subtree_manifest(hashed, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        stats = download_manifest(
+        result = download_manifest(
             manifest=download_manifest_obj,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.OVERWRITE,
         )
 
         assert existing_file.read_text() == "New content"
-        assert stats.processed_files == 1
+        assert result.statistics.processed_files == 1
 
     def test_conflict_create_copy(self, tmp_path: Path) -> None:
         """Test CREATE_COPY conflict resolution creates numbered copies."""
@@ -119,7 +119,7 @@ class TestDownloadManifestFileConflictResolution:
         rel_manifest = subtree_manifest(hashed, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        stats = download_manifest(
+        result = download_manifest(
             manifest=download_manifest_obj,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.CREATE_COPY,
@@ -129,4 +129,4 @@ class TestDownloadManifestFileConflictResolution:
         copy_file = download_dir / "test (1).txt"
         assert copy_file.exists()
         assert copy_file.read_text() == "New content"
-        assert stats.processed_files == 1
+        assert result.statistics.processed_files == 1

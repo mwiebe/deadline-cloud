@@ -67,11 +67,13 @@ Here are the operations for working with data snapshots:
 │         Pipelines read/hash/upload for all files, returning a           │
 │         manifest with hashes populated.                                 │
 │                                                                         │
-│  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadSummary                │
+│  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadResult                 │
 │         Downloads files from a data cache to local filesystem,          │
 │         recreating the directory structure from the manifest.           │
 │         Requires absolute paths. Supports parallel downloads,           │
 │         progress tracking, and file conflict resolution.                │
+│         Returns statistics and an updated manifest with mtime           │
+│         values matching the local filesystem for reliable diffs.        │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -135,10 +137,16 @@ Here are the operations for working with data snapshots:
     1. Same as for submitting a job to a cloud render farm with COLLECT/HASH_UPLOAD/PARTITION,
        but when using HASH_UPLOAD provide a `FileSystemDataCache` that writes to your local file system
        to place in a zip file instead of uploading to the cloud.
+5. (`deadline job download-output`) To download the output of a single Deadline Cloud job,
+   take all the output manifests, join them to have absolute paths, compose them into
+   a single manifest, and then download.
+   1. Use JOIN make each task output manifest have absolute paths.
+   2. Order the manifests by their S3 last-modified timestamp, then COMPOSE them into a single manifest.
+   3. Use DOWNLOAD to apply the changes locally.
 4. To collect a single directory tree into a manifest with relative paths:
     1. Use COLLECT with a single directory to collect, with COLLAPSE_ESCAPING as
        the symlink_policy
-    2. Use HASH to populate the hash values in the manifest. Run this
+    2. (Optional) Use HASH to populate the hash values in the manifest. Run this
        while the manifest has absolute paths.
     3. Use SUBTREE to extract the directory as a relative-path manifest.
 
@@ -818,7 +826,7 @@ def download_manifest(
     max_workers: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
-) -> DownloadSummaryStatistics:
+) -> DownloadResult:
 ```
 
 **Parameters:**
@@ -834,13 +842,50 @@ def download_manifest(
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for download progress and cancellation |
 
-**Returns:** `DownloadSummaryStatistics` containing:
+**Returns:** `DownloadResult` dataclass containing:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `statistics` | `DownloadSummaryStatistics` | Summary statistics about the download operation |
+| `manifest` | `AbsManifest` | A copy of the input manifest with mtime values updated to match the local filesystem |
+
+The `statistics` field contains:
 - `total_files`: Number of files in manifest
 - `processed_files`: Number of files successfully downloaded
 - `skipped_files`: Number of files skipped (already exist with SKIP resolution)
 - `total_bytes`: Total bytes to download
 - `processed_bytes`: Bytes successfully downloaded
 - `total_time`: Total operation time in seconds
+
+**Why Return an Updated Manifest?**
+
+The `manifest` field in the return value contains a copy of the input manifest with `mtime` values updated to match the actual local filesystem timestamps after download. This is essential for reliable cross-platform workflows:
+
+1. **File system mtime precision varies by OS:**
+   - Linux (ext4): nanosecond precision
+   - Windows (NTFS): 100-nanosecond precision
+   - macOS (APFS): nanosecond precision, but HFS+ has 1-second precision
+
+2. **Problem scenario:** A manifest created on Linux captures an mtime like `1704067200123456` (microseconds). When downloaded to Windows, the file system may store it as `1704067200123400` due to precision differences. A subsequent DIFF operation comparing the original manifest against a COLLECT of the downloaded files would incorrectly detect the file as "modified" due to the mtime mismatch.
+
+3. **Solution:** By returning a manifest with the actual filesystem mtimes, callers can use this updated manifest as the baseline for subsequent DIFF operations, ensuring reliable change detection regardless of the OS where the snapshot was created vs. where it was downloaded.
+
+**Example - Using the updated manifest for reliable diffs:**
+
+```python
+# Download files from a manifest created on a different OS
+result = download_manifest(manifest=cloud_manifest, data_cache=s3_cache)
+
+# Use the updated manifest (with local filesystem mtimes) as the baseline
+local_baseline = result.manifest
+
+# Later, detect actual user changes reliably
+current_state = collect_manifest([download_dir], [])
+current_hashed = hash_manifest(current_state)
+changes = compute_diff_manifest(parent=local_baseline, current=current_hashed)
+# 'changes' now correctly reflects only real user modifications,
+# not false positives from mtime precision differences
+```
 
 **Raises:**
 - `ValueError` if the manifest contains relative paths

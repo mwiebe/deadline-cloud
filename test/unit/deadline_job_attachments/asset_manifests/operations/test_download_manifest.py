@@ -181,10 +181,10 @@ class TestDownloadManifestFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        stats = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
-        assert stats.processed_files == 0
-        assert stats.total_bytes == 0
+        assert result.statistics.processed_files == 0
+        assert result.statistics.total_bytes == 0
 
     def test_download_single_file(self, tmp_path: Path) -> None:
         """Test downloading a single file."""
@@ -204,9 +204,9 @@ class TestDownloadManifestFileSystem:
         rel_manifest = subtree_manifest(hashed, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        stats = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        result = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
-        assert stats.processed_files == 1
+        assert result.statistics.processed_files == 1
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 
@@ -231,9 +231,9 @@ class TestDownloadManifestFileSystem:
         rel_manifest = subtree_manifest(hashed, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        stats = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        result = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
-        assert stats.processed_files == 3
+        assert result.statistics.processed_files == 3
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 
@@ -325,9 +325,9 @@ class TestDownloadManifestS3:
         rel_manifest = subtree_manifest(hashed, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        stats = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        result = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
-        assert stats.processed_files == 1
+        assert result.statistics.processed_files == 1
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 

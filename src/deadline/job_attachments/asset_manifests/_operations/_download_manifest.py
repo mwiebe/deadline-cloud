@@ -4,7 +4,7 @@
 Module for downloading files from a content-addressable data cache to local filesystem.
 
 This module implements the DOWNLOAD operation from the composable manifest operations design:
-    DOWNLOAD: (AbsManifest, DataCache) → DownloadSummaryStatistics
+    DOWNLOAD: (AbsManifest, DataCache) → DownloadResult
 
 The operation downloads files from a data cache (S3 or filesystem) to the local filesystem,
 recreating the directory structure specified in the manifest. The manifest must have
@@ -19,6 +19,7 @@ Key features:
 - Symlink creation
 - Diff manifest support (applies deletions)
 - Modification time restoration
+- Returns updated manifest with local filesystem timestamps for reliable diff operations
 """
 
 from __future__ import annotations
@@ -28,15 +29,17 @@ import logging
 import os
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, DefaultDict, List, Optional, Tuple
+from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
 
 from botocore.exceptions import BotoCoreError, ClientError
 
 from .._manifest import (
     AbsDiffManifest,
     AbsManifest,
+    AbsSnapshotManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
     _is_absolute_path,
@@ -65,6 +68,25 @@ logger = logging.getLogger("deadline.job_attachments.download")
 
 # Default number of parallel download workers
 DEFAULT_MAX_WORKERS = 10
+
+
+@dataclass
+class DownloadResult:
+    """
+    Result of a download_manifest operation.
+
+    Attributes:
+        statistics: Summary statistics about the download operation.
+        manifest: A copy of the input manifest with mtime values updated to match
+            the actual local filesystem timestamps. This is useful for cross-OS
+            scenarios where file system mtime precision differs (e.g., a snapshot
+            created on Linux with nanosecond precision used on Windows with
+            100-nanosecond precision). Using this updated manifest as the basis
+            for subsequent diff operations ensures reliable change detection.
+    """
+
+    statistics: DownloadSummaryStatistics
+    manifest: AbsManifest
 
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
@@ -237,12 +259,13 @@ def _download_single_file(
     collision_file_dict: DefaultDict[str, int],
     file_conflict_resolution: FileConflictResolution,
     progress_tracker: Optional[ProgressTracker],
-) -> Tuple[int, Optional[Path], bool]:
+) -> Tuple[int, Optional[Path], bool, Optional[int]]:
     """
     Download a single file entry from the data cache.
 
     Returns:
-        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped)
+        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
+        actual_mtime_us is the actual filesystem mtime in microseconds, or None if skipped.
     """
     if entry.hash is None:
         raise ValueError(f"File entry '{entry.path}' has no hash")
@@ -253,7 +276,7 @@ def _download_single_file(
     # Handle file conflicts
     if local_path.exists():
         if file_conflict_resolution == FileConflictResolution.SKIP:
-            return (file_size, None, True)
+            return (file_size, None, True, None)
         elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
             pass  # Continue to download
         elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
@@ -292,8 +315,12 @@ def _download_single_file(
         mtime_seconds = entry.mtime / 1_000_000  # Convert from microseconds
         os.utime(local_path, (mtime_seconds, mtime_seconds))
 
+    # Get the actual filesystem mtime (may differ from requested due to OS precision)
+    # Use st_mtime_ns with integer division to avoid floating point precision issues
+    actual_mtime_us = local_path.stat().st_mtime_ns // 1_000
+
     logger.debug(f"Downloaded {entry.path} to {local_path}")
-    return (bytes_downloaded, local_path, False)
+    return (bytes_downloaded, local_path, False, actual_mtime_us)
 
 
 def _download_chunked_file(
@@ -304,7 +331,7 @@ def _download_chunked_file(
     collision_file_dict: DefaultDict[str, int],
     file_conflict_resolution: FileConflictResolution,
     progress_tracker: Optional[ProgressTracker],
-) -> Tuple[int, Optional[Path], bool]:
+) -> Tuple[int, Optional[Path], bool, Optional[int]]:
     """
     Download a chunked file (>256MB) by downloading each chunk and concatenating.
 
@@ -313,7 +340,8 @@ def _download_chunked_file(
     potentially long download of multiple chunks.
 
     Returns:
-        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped)
+        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
+        actual_mtime_us is the actual filesystem mtime in microseconds, or None if skipped.
     """
     import secrets
 
@@ -326,7 +354,7 @@ def _download_chunked_file(
     # Handle file conflicts
     if local_path.exists():
         if file_conflict_resolution == FileConflictResolution.SKIP:
-            return (file_size, None, True)
+            return (file_size, None, True, None)
         elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
             pass  # Continue to download
         elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
@@ -401,8 +429,12 @@ def _download_chunked_file(
             mtime_seconds = entry.mtime / 1_000_000  # Convert from microseconds
             os.utime(local_path, (mtime_seconds, mtime_seconds))
 
+        # Get the actual filesystem mtime (may differ from requested due to OS precision)
+        # Use st_mtime_ns with integer division to avoid floating point precision issues
+        actual_mtime_us = local_path.stat().st_mtime_ns // 1_000
+
         logger.debug(f"Downloaded chunked file {entry.path} ({len(entry.chunkhashes)} chunks)")
-        return (total_bytes, local_path, False)
+        return (total_bytes, local_path, False, actual_mtime_us)
 
     finally:
         # Clean up temp file if it still exists (i.e., on error before os.replace)
@@ -581,6 +613,71 @@ def _create_directory(dir_entry: ManifestDirectoryPath) -> None:
     logger.debug(f"Created directory {dir_entry.path}")
 
 
+def _build_updated_manifest(
+    manifest: AbsManifest,
+    updated_mtimes: Dict[str, int],
+) -> AbsManifest:
+    """
+    Build a copy of the manifest with mtime values updated to match actual filesystem timestamps.
+
+    This is useful for cross-OS scenarios where file system mtime precision differs.
+    For example, a snapshot created on Linux with nanosecond precision may have different
+    mtime values when the files are written to Windows (100-nanosecond precision) or
+    macOS (microsecond precision). Using the updated manifest as the basis for subsequent
+    diff operations ensures reliable change detection.
+
+    Args:
+        manifest: The original manifest with absolute paths.
+        updated_mtimes: Dict mapping file paths to their actual filesystem mtime in microseconds.
+
+    Returns:
+        A new manifest of the same type with updated mtime values for downloaded files.
+        Files not in updated_mtimes (e.g., skipped files, symlinks, deleted entries)
+        retain their original mtime values.
+    """
+    # Build updated file entries
+    updated_files: List[ManifestFilePath] = []
+    for entry in manifest.files:
+        if entry.path in updated_mtimes:
+            # Create a new entry with the updated mtime
+            updated_files.append(
+                ManifestFilePath(
+                    path=entry.path,
+                    hash=entry.hash,
+                    size=entry.size,
+                    mtime=updated_mtimes[entry.path],
+                    runnable=entry.runnable,
+                    chunkhashes=entry.chunkhashes,
+                    symlink_target=entry.symlink_target,
+                    deleted=entry.deleted,
+                )
+            )
+        else:
+            # Keep the original entry unchanged
+            updated_files.append(entry)
+
+    # Create the appropriate manifest type
+    if isinstance(manifest, AbsSnapshotManifest):
+        return AbsSnapshotManifest(
+            hash_alg=manifest.hashAlg,
+            files=updated_files,
+            total_size=manifest.totalSize,
+            dirs=manifest.dirs,
+            parent_manifest_hash=manifest.parentManifestHash,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
+        )
+    else:
+        # AbsDiffManifest
+        return AbsDiffManifest(
+            hash_alg=manifest.hashAlg,
+            files=updated_files,
+            total_size=manifest.totalSize,
+            dirs=manifest.dirs,
+            parent_manifest_hash=manifest.parentManifestHash,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
+        )
+
+
 def download_manifest(
     manifest: AbsManifest,
     data_cache: ContentAddressedDataCache,
@@ -591,7 +688,7 @@ def download_manifest(
     max_workers: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
-) -> DownloadSummaryStatistics:
+) -> DownloadResult:
     """
     Download files from a data cache to the local filesystem.
 
@@ -615,7 +712,11 @@ def download_manifest(
         progress_tracker: Optional progress tracker for download progress and cancellation
 
     Returns:
-        DownloadSummaryStatistics with download results
+        DownloadResult containing:
+        - statistics: DownloadSummaryStatistics with download results
+        - manifest: A copy of the input manifest with mtime values updated to match
+          the actual local filesystem timestamps. This is useful for cross-OS scenarios
+          where file system mtime precision differs.
 
     Raises:
         ValueError: If the manifest contains relative paths or unsupported symlink_policy
@@ -689,6 +790,10 @@ def download_manifest(
     # Track downloaded files by root for statistics
     downloaded_files_by_root: DefaultDict[str, List[str]] = defaultdict(list)
 
+    # Track updated mtimes for each file path (path -> actual_mtime_us)
+    updated_mtimes: Dict[str, int] = {}
+    updated_mtimes_lock = Lock()
+
     processed_files = 0
     processed_bytes = 0
     skipped_files = 0
@@ -735,7 +840,7 @@ def download_manifest(
                 for future in concurrent.futures.as_completed(futures):
                     entry = futures[future]
                     try:
-                        bytes_downloaded, local_path, was_skipped = future.result()
+                        bytes_downloaded, local_path, was_skipped, actual_mtime_us = future.result()
 
                         if was_skipped:
                             skipped_files += 1
@@ -748,6 +853,10 @@ def download_manifest(
                             if local_path:
                                 root = str(local_path.parent)
                                 downloaded_files_by_root[root].append(str(local_path))
+                            # Track the actual mtime from the filesystem
+                            if actual_mtime_us is not None:
+                                with updated_mtimes_lock:
+                                    updated_mtimes[entry.path] = actual_mtime_us
 
                         progress_tracker.report_progress()
                         print_function_callback(f"Downloaded: {entry.path}")
@@ -762,7 +871,7 @@ def download_manifest(
             if progress_tracker and not progress_tracker.continue_reporting:
                 raise AssetSyncCancelledError("Download cancelled.")
 
-            bytes_downloaded, local_path, was_skipped = _download_chunked_file(
+            bytes_downloaded, local_path, was_skipped, actual_mtime_us = _download_chunked_file(
                 entry,
                 hash_alg,
                 data_cache,
@@ -783,6 +892,9 @@ def download_manifest(
                 if local_path:
                     root = str(local_path.parent)
                     downloaded_files_by_root[root].append(str(local_path))
+                # Track the actual mtime from the filesystem
+                if actual_mtime_us is not None:
+                    updated_mtimes[entry.path] = actual_mtime_us
 
             progress_tracker.report_progress()
             print_function_callback(f"Downloaded chunked file: {entry.path}")
@@ -809,4 +921,8 @@ def download_manifest(
 
     progress_tracker.total_time = time.perf_counter() - start_time
 
-    return progress_tracker.get_download_summary_statistics(dict(downloaded_files_by_root))
+    # Build the updated manifest with actual filesystem mtimes
+    updated_manifest = _build_updated_manifest(manifest, updated_mtimes)
+
+    statistics = progress_tracker.get_download_summary_statistics(dict(downloaded_files_by_root))
+    return DownloadResult(statistics=statistics, manifest=updated_manifest)
