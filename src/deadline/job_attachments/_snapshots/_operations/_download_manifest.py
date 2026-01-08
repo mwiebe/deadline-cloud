@@ -419,17 +419,33 @@ def _download_chunked_file(
     entry: ManifestFilePath,
     hash_alg: str,
     data_cache: ContentAddressedDataCache,
+    chunk_size_bytes: int,
+    executor: concurrent.futures.ThreadPoolExecutor,
     collision_lock: Lock,
     collision_file_dict: DefaultDict[str, int],
     file_conflict_resolution: FileConflictResolution,
     progress_tracker: Optional[ProgressTracker],
 ) -> Tuple[int, Optional[Path], bool, Optional[int]]:
     """
-    Download a chunked file (>256MB) by downloading each chunk and concatenating.
+    Download a chunked file (>256MB) by downloading all chunks in parallel.
 
-    Downloads to a temporary file first, then atomically moves to the target path.
-    This ensures the target file is never in a partial/corrupt state during the
-    potentially long download of multiple chunks.
+    Pre-allocates a temporary file to the exact size, then downloads all chunks
+    in parallel with each chunk writing to its correct byte offset. After all
+    chunks complete, atomically moves the temp file to the target path.
+
+    This ensures the target file is never in a partial/corrupt state, and
+    maximizes throughput by downloading chunks concurrently.
+
+    Args:
+        entry: The manifest file entry with chunkhashes.
+        hash_alg: The hash algorithm string (e.g., "xxh128").
+        data_cache: The data cache to download from.
+        chunk_size_bytes: The chunk size in bytes from the manifest.
+        executor: The shared ThreadPoolExecutor for parallel downloads.
+        collision_lock: Lock for thread-safe collision tracking.
+        collision_file_dict: Dict for tracking file name collisions.
+        file_conflict_resolution: How to handle existing files.
+        progress_tracker: Optional progress tracker for download progress.
 
     Returns:
         Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
@@ -462,56 +478,44 @@ def _download_chunked_file(
     temp_suffix = secrets.token_hex(5)
     temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
 
-    # Download chunks sequentially and write to temp file
-    total_bytes = 0
     try:
+        # Pre-allocate the temp file to the exact size
+        # This creates a sparse file on filesystems that support it
         with open(temp_path, "wb") as f:
-            for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
-                if isinstance(data_cache, S3DataCache):
-                    s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
-                    # Download chunk to another temp location then append
-                    chunk_temp_suffix = secrets.token_hex(5)
-                    chunk_tmp_path = (
-                        local_path.parent / f"{local_path.name}.chunk{chunk_temp_suffix}"
-                    )
-                    try:
-                        # Use a simple download without atomic move for chunks
-                        # since we're writing to our own temp file
-                        from boto3.s3.transfer import TransferConfig
+            f.truncate(file_size)
 
-                        config = TransferConfig()
-                        chunk_bytes = 0
+        # Submit all chunk downloads in parallel
+        futures: Dict[concurrent.futures.Future[int], int] = {}
+        for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
+            offset = chunk_idx * chunk_size_bytes
+            future = executor.submit(
+                _download_chunk_to_offset,
+                chunk_hash=chunk_hash,
+                chunk_idx=chunk_idx,
+                temp_path=temp_path,
+                offset=offset,
+                hash_alg=hash_alg,
+                data_cache=data_cache,
+                progress_tracker=progress_tracker,
+            )
+            futures[future] = chunk_idx
 
-                        def chunk_progress(bytes_amount: int) -> None:
-                            nonlocal chunk_bytes
-                            chunk_bytes += bytes_amount
-                            if progress_tracker:
-                                progress_tracker.track_progress_callback(bytes_amount)
+        # Wait for all chunks to complete and collect results
+        total_bytes = 0
+        errors: List[Exception] = []
 
-                        data_cache.s3_client.download_file(
-                            Bucket=data_cache.s3_bucket,
-                            Key=s3_key,
-                            Filename=str(chunk_tmp_path),
-                            Config=config,
-                            Callback=chunk_progress,
-                        )
-                        with open(chunk_tmp_path, "rb") as chunk_file:
-                            chunk_data = chunk_file.read()
-                            f.write(chunk_data)
-                            total_bytes += len(chunk_data)
-                    finally:
-                        chunk_tmp_path.unlink(missing_ok=True)
+        for future in concurrent.futures.as_completed(futures):
+            chunk_idx = futures[future]
+            try:
+                chunk_bytes = future.result()
+                total_bytes += chunk_bytes
+            except Exception as e:
+                logger.error(f"Failed to download chunk {chunk_idx} of {entry.path}: {e}")
+                errors.append(e)
 
-                elif isinstance(data_cache, FileSystemDataCache):
-                    source_path = Path(data_cache.get_object_key(chunk_hash, hash_alg))
-                    with open(source_path, "rb") as chunk_file:
-                        chunk_data = chunk_file.read()
-                        f.write(chunk_data)
-                        total_bytes += len(chunk_data)
-                        if progress_tracker:
-                            progress_tracker.track_progress_callback(len(chunk_data))
-                else:
-                    raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
+        # If any chunk failed, raise the first error
+        if errors:
+            raise errors[0]
 
         # Atomically move temp file to target
         os.replace(temp_path, local_path)
@@ -531,6 +535,119 @@ def _download_chunked_file(
     finally:
         # Clean up temp file if it still exists (i.e., on error before os.replace)
         temp_path.unlink(missing_ok=True)
+
+
+def _download_chunk_to_offset(
+    chunk_hash: str,
+    chunk_idx: int,
+    temp_path: Path,
+    offset: int,
+    hash_alg: str,
+    data_cache: ContentAddressedDataCache,
+    progress_tracker: Optional[ProgressTracker],
+) -> int:
+    """
+    Download a single chunk and write it to a specific offset in the temp file.
+
+    Each thread opens its own file handle and seeks to the correct offset before
+    writing. Since chunks write to non-overlapping regions, no locking is needed.
+
+    Args:
+        chunk_hash: The hash of the chunk to download.
+        chunk_idx: The index of this chunk (for logging).
+        temp_path: Path to the pre-allocated temp file.
+        offset: The byte offset where this chunk should be written.
+        hash_alg: The hash algorithm string (e.g., "xxh128").
+        data_cache: The data cache to download from.
+        progress_tracker: Optional progress tracker for download progress.
+
+    Returns:
+        The number of bytes written.
+    """
+    import secrets
+
+    if isinstance(data_cache, S3DataCache):
+        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
+
+        # Download chunk to a temporary file first, then write to offset
+        chunk_temp_suffix = secrets.token_hex(5)
+        chunk_tmp_path = temp_path.parent / f"{temp_path.name}.chunk{chunk_idx}.{chunk_temp_suffix}"
+
+        try:
+            from boto3.s3.transfer import TransferConfig
+
+            config = TransferConfig()
+            chunk_bytes = 0
+
+            def chunk_progress(bytes_amount: int) -> None:
+                nonlocal chunk_bytes
+                chunk_bytes += bytes_amount
+                if progress_tracker:
+                    progress_tracker.track_progress_callback(bytes_amount)
+
+            data_cache.s3_client.download_file(
+                Bucket=data_cache.s3_bucket,
+                Key=s3_key,
+                Filename=str(chunk_tmp_path),
+                Config=config,
+                Callback=chunk_progress,
+            )
+
+            # Read the downloaded chunk and write to the correct offset
+            with open(chunk_tmp_path, "rb") as chunk_file:
+                chunk_data = chunk_file.read()
+
+            # Write to the pre-allocated file at the correct offset
+            with open(temp_path, "r+b") as f:
+                f.seek(offset)
+                f.write(chunk_data)
+
+            return len(chunk_data)
+
+        except ClientError as exc:
+            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
+            status_code_guidance = {
+                **COMMON_ERROR_GUIDANCE_FOR_S3,
+                403: (
+                    "Forbidden or Access denied. Please check your AWS credentials, and ensure "
+                    "that your AWS IAM Role or User has the 's3:GetObject' permission."
+                ),
+                404: "Not found. Please check your bucket name and object key.",
+            }
+            raise JobAttachmentsS3ClientError(
+                action=f"downloading chunk {chunk_idx}",
+                status_code=status_code,
+                bucket_name=data_cache.s3_bucket,
+                key_or_prefix=s3_key,
+                message=f"{status_code_guidance.get(status_code, '')} {str(exc)}",
+            ) from exc
+        except BotoCoreError as bce:
+            raise JobAttachmentS3BotoCoreError(
+                action=f"downloading chunk {chunk_idx}",
+                error_details=str(bce),
+            ) from bce
+        finally:
+            chunk_tmp_path.unlink(missing_ok=True)
+
+    elif isinstance(data_cache, FileSystemDataCache):
+        source_path = Path(data_cache.get_object_key(chunk_hash, hash_alg))
+
+        # Read the chunk from the filesystem cache
+        with open(source_path, "rb") as chunk_file:
+            chunk_data = chunk_file.read()
+
+        # Write to the pre-allocated file at the correct offset
+        with open(temp_path, "r+b") as f:
+            f.seek(offset)
+            f.write(chunk_data)
+
+        if progress_tracker:
+            progress_tracker.track_progress_callback(len(chunk_data))
+
+        return len(chunk_data)
+
+    else:
+        raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
 
 
 def _create_symlink(entry: ManifestFilePath) -> None:
@@ -920,10 +1037,17 @@ def download_manifest(
         for dir_entry in directories:
             _create_directory(dir_entry)
 
-        # 3. Download regular files in parallel
-        if regular_files:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
+        # Get chunk size from manifest for chunked file downloads
+        chunk_size_bytes = manifest.fileChunkSizeBytes
+
+        # 3. Download all files (regular and chunked) using a shared thread pool
+        # Regular files are submitted as individual tasks
+        # Chunked files submit their chunks as tasks to the same pool
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit regular file downloads
+            regular_futures: Dict[concurrent.futures.Future, ManifestFilePath] = {}
+            if regular_files:
+                regular_futures = {
                     executor.submit(
                         _download_single_file,
                         entry,
@@ -939,67 +1063,71 @@ def download_manifest(
                     for entry in regular_files
                 }
 
-                for future in concurrent.futures.as_completed(futures):
-                    entry = futures[future]
-                    try:
-                        bytes_downloaded, local_path, was_skipped, actual_mtime_us = future.result()
+            # Process regular file results as they complete
+            for future in concurrent.futures.as_completed(regular_futures):
+                entry = regular_futures[future]
+                try:
+                    bytes_downloaded, local_path, was_skipped, actual_mtime_us = future.result()
 
-                        if was_skipped:
-                            skipped_files += 1
-                            skipped_bytes += bytes_downloaded
-                            progress_tracker.increase_skipped(1, bytes_downloaded)
-                        else:
-                            processed_files += 1
-                            processed_bytes += bytes_downloaded
-                            progress_tracker.increase_processed(1, 0)
-                            if local_path:
-                                root = str(local_path.parent)
-                                downloaded_files_by_root[root].append(str(local_path))
-                            # Track the actual mtime from the filesystem
-                            if actual_mtime_us is not None:
-                                with updated_mtimes_lock:
-                                    updated_mtimes[entry.path] = actual_mtime_us
+                    if was_skipped:
+                        skipped_files += 1
+                        skipped_bytes += bytes_downloaded
+                        progress_tracker.increase_skipped(1, bytes_downloaded)
+                    else:
+                        processed_files += 1
+                        processed_bytes += bytes_downloaded
+                        progress_tracker.increase_processed(1, 0)
+                        if local_path:
+                            root = str(local_path.parent)
+                            downloaded_files_by_root[root].append(str(local_path))
+                        # Track the actual mtime from the filesystem
+                        if actual_mtime_us is not None:
+                            with updated_mtimes_lock:
+                                updated_mtimes[entry.path] = actual_mtime_us
 
-                        progress_tracker.report_progress()
-                        print_function_callback(f"Downloaded: {entry.path}")
+                    progress_tracker.report_progress()
+                    print_function_callback(f"Downloaded: {entry.path}")
 
-                    except Exception:
-                        if progress_tracker and not progress_tracker.continue_reporting:
-                            raise AssetSyncCancelledError("Download cancelled.")
-                        raise
+                except Exception:
+                    if progress_tracker and not progress_tracker.continue_reporting:
+                        raise AssetSyncCancelledError("Download cancelled.")
+                    raise
 
-        # 4. Download chunked files sequentially (they're large)
-        for entry in chunked_files:
-            if progress_tracker and not progress_tracker.continue_reporting:
-                raise AssetSyncCancelledError("Download cancelled.")
+            # 4. Download chunked files with parallel chunk downloads
+            # Each chunked file uses the shared executor for its chunks
+            for entry in chunked_files:
+                if progress_tracker and not progress_tracker.continue_reporting:
+                    raise AssetSyncCancelledError("Download cancelled.")
 
-            bytes_downloaded, local_path, was_skipped, actual_mtime_us = _download_chunked_file(
-                entry,
-                hash_alg,
-                data_cache,
-                collision_lock,
-                collision_file_dict,
-                file_conflict_resolution,
-                progress_tracker,
-            )
+                bytes_downloaded, local_path, was_skipped, actual_mtime_us = _download_chunked_file(
+                    entry,
+                    hash_alg,
+                    data_cache,
+                    chunk_size_bytes,
+                    executor,
+                    collision_lock,
+                    collision_file_dict,
+                    file_conflict_resolution,
+                    progress_tracker,
+                )
 
-            if was_skipped:
-                skipped_files += 1
-                skipped_bytes += bytes_downloaded
-                progress_tracker.increase_skipped(1, bytes_downloaded)
-            else:
-                processed_files += 1
-                processed_bytes += bytes_downloaded
-                progress_tracker.increase_processed(1, 0)
-                if local_path:
-                    root = str(local_path.parent)
-                    downloaded_files_by_root[root].append(str(local_path))
-                # Track the actual mtime from the filesystem
-                if actual_mtime_us is not None:
-                    updated_mtimes[entry.path] = actual_mtime_us
+                if was_skipped:
+                    skipped_files += 1
+                    skipped_bytes += bytes_downloaded
+                    progress_tracker.increase_skipped(1, bytes_downloaded)
+                else:
+                    processed_files += 1
+                    processed_bytes += bytes_downloaded
+                    progress_tracker.increase_processed(1, 0)
+                    if local_path:
+                        root = str(local_path.parent)
+                        downloaded_files_by_root[root].append(str(local_path))
+                    # Track the actual mtime from the filesystem
+                    if actual_mtime_us is not None:
+                        updated_mtimes[entry.path] = actual_mtime_us
 
-            progress_tracker.report_progress()
-            print_function_callback(f"Downloaded chunked file: {entry.path}")
+                progress_tracker.report_progress()
+                print_function_callback(f"Downloaded chunked file: {entry.path}")
 
         # 5. Create symlinks (if policy is PRESERVE)
         # Sort symlinks so targets are created before symlinks that point to them

@@ -1006,8 +1006,9 @@ For large downloads, the operation uses a multi-threaded approach:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-For small files, downloads happen in parallel using a thread pool.
-For large chunked files, chunks are downloaded sequentially and written to the target file.
+Both small files and large chunked files are downloaded in parallel using a shared thread pool.
+For chunked files, all chunks of a single file are downloaded in parallel, with each chunk
+written directly to its correct byte offset in a pre-allocated temporary file.
 
 **Storage Key Format:**
 
@@ -1026,12 +1027,56 @@ All file downloads are atomic to ensure target files are never in a partial or c
 2. **Atomic move:** After the download completes successfully, `os.replace()` atomically moves the temp file to the final location
 3. **Error cleanup:** If any error occurs during download, the temporary file is deleted
 
-This is particularly important for chunked files (>256MB), where multiple chunks are downloaded sequentially. The target file only appears once all chunks have been successfully downloaded and concatenated.
+This is particularly important for chunked files (>256MB), where multiple chunks are downloaded in parallel. The target file only appears once all chunks have been successfully downloaded.
 
 | File Type | Behavior |
 |-----------|----------|
 | Regular file | Download to temp file, then atomic move |
-| Chunked file | All chunks written to single temp file, then atomic move after last chunk |
+| Chunked file | Pre-allocate temp file, download all chunks in parallel to their byte offsets, then atomic move after all chunks complete |
+
+**Parallel Chunked File Downloads:**
+
+Large files that exceed the chunk size (default 256MB) are stored as multiple chunks in the data cache.
+When downloading these files, all chunks are downloaded in parallel for maximum throughput:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    CHUNKED FILE DOWNLOAD                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  1. Pre-allocate temp file to exact size (using truncate)               │
+│                                                                         │
+│  2. Submit all chunk downloads to shared thread pool:                   │
+│                                                                         │
+│     ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│     │ Chunk 0  │  │ Chunk 1  │  │ Chunk 2  │  │ Chunk N  │             │
+│     │ offset=0 │  │ offset=  │  │ offset=  │  │ offset=  │             │
+│     │          │  │ 256MB    │  │ 512MB    │  │ N*256MB  │             │
+│     └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘             │
+│          │             │             │             │                    │
+│          ▼             ▼             ▼             ▼                    │
+│     ┌─────────────────────────────────────────────────────┐            │
+│     │              Temp File (pre-allocated)              │            │
+│     │  [chunk 0 region][chunk 1 region][...][chunk N]     │            │
+│     └─────────────────────────────────────────────────────┘            │
+│                                                                         │
+│  3. Wait for all chunks to complete                                     │
+│                                                                         │
+│  4. Atomic move: os.replace(temp_file, target_file)                     │
+│                                                                         │
+│  5. Restore mtime from manifest                                         │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+Key implementation details:
+
+- **Pre-allocation:** The temp file is created with `truncate(size)` to establish the exact file size before any writes. This creates a sparse file on filesystems that support it.
+- **Parallel writes:** Each chunk download writes to a non-overlapping byte range, so no locking is required. Each thread opens its own file handle and seeks to the correct offset.
+- **Offset calculation:** `offset = chunk_index * chunk_size_bytes`. The last chunk may be smaller than `chunk_size_bytes`.
+- **Shared thread pool:** Chunk downloads share the same `ThreadPoolExecutor` used for regular file downloads, controlled by `max_workers`.
+- **Error handling:** If any chunk fails, all pending chunk downloads for that file are allowed to complete or fail, the temp file is deleted, and the error is propagated.
+- **Atomicity:** The target file only appears after ALL chunks have been successfully written and `os.replace()` completes.
 
 **Modification Time Restoration:**
 
