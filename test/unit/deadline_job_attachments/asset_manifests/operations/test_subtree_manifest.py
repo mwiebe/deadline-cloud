@@ -30,7 +30,7 @@ from deadline.job_attachments.asset_manifests.versions import (
     SymlinkPolicy,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsSnapshotManifest,
     RelSnapshotManifest,
     RelDiffManifest,
@@ -802,7 +802,7 @@ class TestPathSeparatorHandling:
         """On Windows, backslashes in subtree parameter are normalized."""
         with patch(
             "deadline.job_attachments.asset_manifests._operations._subtree_manifest.os.name", "nt"
-        ), patch("deadline.job_attachments.asset_manifests.manifest.os.name", "nt"):
+        ), patch("deadline.job_attachments.asset_manifests._manifest.os.name", "nt"):
             manifest = self._create_rel_snapshot(
                 files=[
                     {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},

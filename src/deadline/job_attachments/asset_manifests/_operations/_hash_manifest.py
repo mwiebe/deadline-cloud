@@ -27,7 +27,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
-from ..manifest import (
+from .._manifest import (
     AbsManifest,
     ManifestDirectoryPath,
     ManifestFilePath,

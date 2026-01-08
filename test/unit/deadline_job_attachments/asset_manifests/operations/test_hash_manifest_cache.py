@@ -28,7 +28,7 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import (
     HashAlgorithm,
     hash_file,
 )
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsSnapshotManifest,
     ManifestFilePath,
     WHOLE_FILE_CHUNK_SIZE,

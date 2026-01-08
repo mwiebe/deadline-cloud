@@ -26,7 +26,7 @@ import stat
 from typing import Any, Callable, List, Optional, Set
 
 from ..hash_algorithms import HashAlgorithm
-from ..manifest import (
+from .._manifest import (
     AbsSnapshotManifest,
     ManifestDirectoryPath,
     ManifestFilePath,

@@ -1,23 +1,42 @@
-# Composable Data Snapshot Operations
+# Job Attachments Snapshots
 
-A manifest is a data structure that captures a directory tree snapshot—similar to a zip file's table of contents, but without the actual file content. It records metadata for each file (path, size, modification time, content hash) and, in newer formats, directories and symlinks. Manifests enable efficient change detection, incremental uploads, and content-addressable storage workflows.
+Snapshots are a feature of Deadline Cloud job attachments for capturing directory tree snapshots, taking diffs between them,
+and performing various transformations on them. Deadline Cloud uses a specific key structure on S3 where a Data/ prefix
+holds a content addressed data cache and a Manifest/ prefix holds snapshot and diff manifests representing inputs and
+outputs of jobs. This document describes the design of these snapshots and operations you can perform on them independently
+of Deadline Cloud itself, providing a useful tool for working with directory trees.
 
-This document describes the composable operations design for job attachment manifests in AWS Deadline Cloud. These operations provide a modular approach to creating, transforming, and comparing manifest objects.
+A snapshot manifest is a data structure that captures a directory tree snapshot—similar to a zip file's table of contents,
+but without the actual file content. It records metadata for each file (path, size, modification time, content hash) and,
+in newer formats, directories and symlinks. Operations on these manifests provide efficient change detection, uploads,
+downloads, and content-addressable storage workflows.
 
 ## Overview
 
-The manifest system uses composable operations that can be combined to implement various workflows.
-
-Here are the manifest types used by these operations:
+Here are the manifest types used by these operations.
 
 ```
 Manifest
-├── Snapshot
-│   ├── AbsSnapshot    (absolute paths)
-│   └── RelSnapshot    (relative paths)
-└── Diff
-    ├── AbsDiff        (absolute paths)
-    └── RelDiff        (relative paths)
+├── AbsSnapshot    (absolute paths)
+├── RelSnapshot    (relative paths)
+├── AbsDiff        (absolute paths)
+└── RelDiff        (relative paths)
+
+DiffManifest
+├── AbsDiff        (absolute paths)
+└── RelDiff        (relative paths)
+
+SnapshotManifest
+├── AbsSnapshot    (absolute paths)
+└── RelSnapshot    (relative paths)
+
+AbsManifest
+├── AbsSnapshot    (absolute paths)
+└── AbsDiff        (absolute paths)
+
+RelManifest
+├── RelSnapshot    (relative paths)
+└── RelDiff        (relative paths)
 ```
 
 Here are the data cache types used by these operations:
@@ -140,252 +159,32 @@ Separating structure collection, hashing, and hashing+uploading enables:
 - **Deferred hashing:** Collect structure first, hash only what's needed
 - **Reduced redundant reads:** The HASH_UPLOAD operation reads chunks of files to memory, then performs a hash + upload instead of one read for hash and a second read for upload.
 
-## In-progress Refactor
+## Design Choices
 
-This section tracks progress on unifying the in-memory manifest representation.
-
-### Goal
-
-**Before:** There are two memory manifest formats (v2023 and v2025), and there are two on-disk manifest formats (v2023 and v2025).
-
-**After:** There is one memory manifest format (unversioned, matches the current v2025 memory format), and there are two on-disk manifest formats.
-
-### Design Principles
-
-1. **All composable operations use v2025 structure and semantics internally.** Operations work with the unified manifest classes (`AbsSnapshotManifest`, `RelSnapshotManifest`, etc.) which support all v2025 features: symlinks, directories, deletions, chunked hashes, and runnable flags.
-
-2. **v2023 on-disk format support via lossy conversion.** When serializing to v2023 format, a conversion function drops v2025-only features:
-   - Symlink entries are dropped (or collapsed to files)
-   - Directory entries are dropped
-   - Deletion markers are dropped
-   - Chunked hashes are not supported (large files fail)
-   - Runnable flags are dropped
-
-3. **Operations no longer accept a `version` parameter.** Since all operations use v2025 semantics internally, there's no need to specify a version. The version only matters at serialization time (encode/decode).
-
-### Constraint
-
-We must maintain backwards compatibility on all `Base*` classes and the v2023 interface.
-
-### Design
-
-In `job_attachments/asset_manifests/manifest.py`, we define the unified manifest classes:
-
-```
-Manifest Classes (new unified in-memory representation)
-├── Manifest                    # Base class, calls validations from mixins
-├── AbsManifestMixin            # Validates absolute paths
-├── RelManifestMixin            # Validates relative paths
-├── SnapshotManifestMixin       # Validates snapshot constraints
-├── DiffManifestMixin           # Validates diff constraints
-│
-├── AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin)
-├── AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin)
-├── RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin)
-└── RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin)
-
-Path/Directory Classes (also in manifest.py)
-├── ManifestFilePath            # File entry (unified, matches v2025 capabilities)
-├── ManifestDirectoryPath       # Directory entry
-├── DEFAULT_FILE_CHUNK_SIZE     # 256MB chunk size constant (default)
-└── WHOLE_FILE_CHUNK_SIZE       # -1 sentinel meaning "no chunking"
-```
-
-**Manifest Fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `hashAlg` | `HashAlgorithm` | Hashing algorithm used for file content hashes |
-| `files` | `List[ManifestFilePath]` | List of file entries |
-| `totalSize` | `int` | Total size of all files in bytes |
-| `dirs` | `List[ManifestDirectoryPath]` | List of directory entries |
-| `parentManifestHash` | `Optional[str]` | Hash of parent snapshot (for diff manifests) |
-| `fileChunkSizeBytes` | `int` | Chunk size for large file hashing. `DEFAULT_FILE_CHUNK_SIZE` (256MB) is the default. `WHOLE_FILE_CHUNK_SIZE` (-1) means "no chunking". Positive int specifies chunk size in bytes. |
-
-For backwards compatibility in `base_manifest.py`:
-
-```python
-# Re-export unified manifest classes (can be imported from either module)
-from .manifest import (
-    DEFAULT_FILE_CHUNK_SIZE,
-    WHOLE_FILE_CHUNK_SIZE,
-    Manifest,
-    ManifestFilePath,
-    ManifestDirectoryPath,
-    AbsSnapshotManifest,
-    AbsDiffManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
-    # ... mixins
-)
-
-# Keep abstract base classes for version-specific serialization modules
-# BaseAssetManifest, BaseManifestPath, BaseManifestDirectoryPath remain as ABCs
-# that v2023 and v2025 modules extend for encode()/decode() functionality
-```
-
-The v2023 and v2025 modules continue to provide:
-- `encode()` - Serialize to on-disk format
-- `decode()` - Deserialize from on-disk format
-- Version-specific validation during encode (e.g., v2023 rejects symlinks)
-
-### Progress
-
-Phase 1 (Foundation) is complete:
-
-| Task | Status |
-|------|--------|
-| Create `manifest.py` with unified classes | ✓ Done |
-| Create mixin classes for validation | ✓ Done |
-| Create concrete manifest classes | ✓ Done |
-| Update `base_manifest.py` to re-export | ✓ Done |
-| Verify v2023/v2025 module compatibility | ✓ Done |
-| Verify backwards compatibility (512 tests) | ✓ Done |
-
-Phase 2 (Operations) is complete. All operations now use unified manifest classes:
-
-| Operation | Status |
-|-----------|--------|
-| COLLECT | ✓ Done |
-| FILTER | ✓ Done |
-| JOIN | ✓ Done |
-| COMPOSE | ✓ Done |
-| DIFF | ✓ Done |
-| SUBTREE | ✓ Done |
-| HASH | ✓ Done |
-| HASH_UPLOAD | ✓ Done |
-| PARTITION | ✓ Done |
-
-Phase 3 (Serialization) is in progress. This phase creates standalone encode/decode functions for the EXPERIMENTAL v2025 format that work with unified manifest classes.
-
-### Phase 3: Standalone Encode/Decode Functions
-
-**Goal:** Create standalone `encode_v2025()` and `decode_v2025()` functions that work with unified manifest classes, replacing the v2025-specific `AssetManifest` class.
-
-**Note:** The v2025-12 format is EXPERIMENTAL and subject to change. Do not use in production.
-
-**On-Disk Format Change:**
-
-Replace `manifestVersion` and `manifestType` with a single `specificationVersion` field:
-
-| specificationVersion | Class |
-|---------------------|-------|
-| `absolute-manifest-snapshot-2025-12` | `AbsSnapshotManifest` |
-| `absolute-manifest-diff-2025-12` | `AbsDiffManifest` |
-| `relative-manifest-snapshot-2025-12` | `RelSnapshotManifest` |
-| `relative-manifest-diff-2025-12` | `RelDiffManifest` |
-
-**Example:**
-
-```json
-{
-  "specificationVersion": "relative-manifest-snapshot-2025-12",
-  "hashAlg": "xxh128",
-  "totalSize": 12345,
-  "dirs": [...],
-  "files": [...]
-}
-```
-
-**API:**
-
-```python
-# v2025_12_04/encode.py
-def encode_v2025(manifest: Manifest) -> str: ...
-
-# v2025_12_04/decode.py
-def decode_v2025(manifest_str: str) -> Manifest: ...
-```
-
-**Auto-Collection of Parent Directories:**
-
-The `encode_v2025()` function automatically collects all parent directories needed for `$N/` compression, even if they weren't explicitly included in `manifest.dirs`. This ensures the encoded manifest always has a complete directory index for path compression.
-
-For example, if a manifest contains a file at `a/b/c/file.txt` but no explicit directories, `encode_v2025()` will automatically add `a`, `a/b`, and `a/b/c` to the directory list. Explicit directories take precedence (preserving their `deleted` flag).
-
-**Tasks:**
-
-| Task | Status |
-|------|--------|
-| Create `v2025_12_04/encode.py` with `encode_v2025()` | ✓ Done |
-| Create `v2025_12_04/decode.py` with `decode_v2025()` | ✓ Done |
-| Update `validate.py` for `specificationVersion` | ✓ Done |
-| Auto-collect parent directories in `encode_v2025()` | ✓ Done |
-| Update `decode.py` to use `decode_v2025()` | ✓ Done |
-| Update tests | ✓ Done |
-| Remove old `AssetManifest` class | ✓ Done |
-
-## Path Separator Convention
-
-**All paths in manifests use forward slashes (`/`) as the directory separator, regardless of the host operating system.**
-
-This convention ensures manifests are portable across platforms:
-
-| Platform | Filesystem Separator | Manifest Separator |
-|----------|---------------------|-------------------|
-| Windows | `\` (backslash) | `/` (forward slash) |
-| POSIX (Linux, macOS) | `/` (forward slash) | `/` (forward slash) |
-
-**Important platform differences:**
-
-- **On Windows:** The backslash (`\`) is a directory separator. When collecting paths from the filesystem, backslashes are converted to forward slashes for storage in the manifest.
-- **On POSIX:** The backslash (`\`) is a valid character in file and directory names (though rarely used). It is NOT treated as a directory separator. A file named `foo\bar.txt` on POSIX is a single filename containing a backslash, not a file `bar.txt` in directory `foo`.
-
-**Implementation requirements:**
-
-1. **COLLECT operation:** When scanning the filesystem on Windows, use `Path.as_posix()` to convert paths to forward slashes. On POSIX, paths already use forward slashes.
-2. **SUBTREE operation:** The `_normalize_subtree_path()` function converts backslashes to forward slashes in the subtree parameter only when running on Windows.
-3. **JOIN operation:** The `_normalize_prefix()` function converts backslashes to forward slashes in the prefix parameter only when running on Windows.
-4. **All operations:** Path comparisons and manipulations use forward slashes consistently.
-
-**Note:** Operations that accept path parameters (SUBTREE, JOIN) normalize backslashes to forward slashes only when running on Windows. On POSIX systems, backslashes are preserved as valid filename characters.
-
-## Symlink Target Path Consistency
-
-**Symlink targets must use the same path style (absolute or relative) as the manifest's entry paths.**
-
-| Manifest Type | Entry Paths | Symlink Targets |
-|---------------|-------------|-----------------|
-| AbsSnapshot / AbsDiff | Absolute (e.g., `/projects/scene/file.txt`) | Absolute (e.g., `/projects/scene/target.txt`) |
-| RelSnapshot / RelDiff | Relative (e.g., `scene/file.txt`) | Relative (e.g., `scene/target.txt`) |
-
-**Important:** In relative-path manifests, symlink targets are relative to the manifest root, NOT relative to the symlink's location. This differs from on-filesystem symlink representations where targets are typically relative to the symlink's parent directory.
-
-| Context | Symlink Target Interpretation |
-|---------|------------------------------|
-| Filesystem | Relative to symlink's parent directory |
-| Manifest (relative) | Relative to manifest root |
-
-This consistency requirement ensures:
-
-1. **Portability:** Relative manifests can be relocated without breaking symlink references
-2. **Correctness:** Operations like SUBTREE and JOIN can transform symlink targets consistently with entry paths
-3. **Validation:** Tools can verify manifest integrity by checking path style consistency
-
-**Example - Absolute manifest with symlinks:**
-
-```python
-# In an absolute-path manifest, symlink targets are also absolute
-ManifestFilePath(
-    path="/projects/my_scene/link.txt",
-    symlink_target="/projects/my_scene/target.txt",  # Absolute target
-)
-```
-
-**Example - Relative manifest with symlinks:**
-
-```python
-# In a relative-path manifest, symlink targets are relative to manifest root
-# NOT relative to the symlink's parent directory
-ManifestFilePath(
-    path="my_scene/link.txt",
-    symlink_target="my_scene/target.txt",  # Relative to manifest root, not to my_scene/
-)
-```
+1. Simple and flexible in-memory snapshots and diffs shared by composable operations. Code can modify values
+   in ways that doesn't strictly follow the on-disk manifest storage, but the operations and I/O accept
+   and use the data where it makes sense.
+2. File system operations only work with absolute path manifests. This simplifies the definition and implementation
+   of these operations. Conversion to/from relative path manifests is via the SUBTREE and JOIN operations.
+3. **Support v2023 on-disk format via lossy conversion.** When serializing to v2023 format, the following occurs:
+   - Symlinks are collapsed to files/directories or excluded (symlink_policy decides)
+   - Empty directories are not preserved
+   - Deletions are not preserved
+   - Chunk size must be set to WHOLE_FILE_CHUNK_SIZE.
+   - Runnable flags are not preserved
+4. Path separators are always POSIX forward slash '/' in manifest path strings. E.g. on Windows,
+   an absolute path can look like "C:/path/to/file.txt". On Windows, operations should convert '\\'
+   path separators to '/', while on POSIX operations should preserve '\\' within file and directory names.
+5. Symlink targets are always absolute paths, or always relative to the same root that file and directory
+   paths are relative to. This is different than symlink representations on file systems, where they are
+   relative to the symlink's parent directory.
+6. In diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
+   This is necessary for the COMPOSE operation to correctly compose multiple diffs. When applying a diff,
+   a directory deletion means to delete the directory if it is empty, not to recursively delete its contents.
 
 ## Module Organization
 
-The composable operations are implemented in separate modules under `src/deadline/job_attachments/asset_manifests/`:
+The composable operations are implemented in separate modules under `src/deadline/job_attachments/asset_manifests/_operations/`:
 
 | Module | Operation | Description |
 |--------|-----------|-------------|
@@ -410,10 +209,11 @@ The `ContentAddressedDataCache` is an abstract base class that defines the inter
 # In _content_addressed_data_cache.py
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
-import boto3
+from typing import Any, Optional
+
+from ...caches.s3_check_cache import S3CheckCache
 
 @dataclass
 class ContentAddressedDataCache(ABC):
@@ -442,17 +242,20 @@ class S3DataCache(ContentAddressedDataCache):
     """
     s3_bucket: str
     s3_key_prefix: str
-    s3_client: boto3.client  # S3 client with permissions for GetObject, PutObject, HeadObject
-    s3_check_cache: Optional[S3CheckCache] = None
+    s3_client: Any  # boto3 S3 client with permissions for GetObject, PutObject, HeadObject
+    s3_check_cache: Optional[S3CheckCache] = field(default=None)
 
     def get_object_key(self, hash_value: str, algorithm: str) -> str:
         return f"{self.s3_key_prefix}/{hash_value}.{algorithm}"
 
     def object_exists(self, hash_value: str, algorithm: str) -> bool:
         key = self.get_object_key(hash_value, algorithm)
+        cache_key = f"{self.s3_bucket}/{key}"
         # Check local cache first
-        if self.s3_check_cache is not None and self.s3_check_cache.contains(key):
-            return True
+        if self.s3_check_cache is not None:
+            cache_entry = self.s3_check_cache.get_entry(cache_key)
+            if cache_entry is not None:
+                return True
         # Fall back to S3 HeadObject
         ...
 
@@ -474,7 +277,7 @@ class FileSystemDataCache(ContentAddressedDataCache):
     """
     root_path: Path
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Ensure root_path is absolute
         if not self.root_path.is_absolute():
             raise ValueError(f"root_path must be absolute, got: {self.root_path}")
@@ -598,12 +401,12 @@ Fills in hashes for a manifest that was created by `collect_manifest()` or `comp
 
 ```python
 def hash_manifest(
-    manifest: BaseAssetManifest,
+    manifest: AbsManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> AbsManifest:
 ```
 
 **Parameters:**
@@ -616,7 +419,7 @@ def hash_manifest(
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 
-**Returns:** A NEW manifest with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
+**Returns:** A NEW `AbsManifest` (either `AbsSnapshotManifest` or `AbsDiffManifest`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -681,7 +484,6 @@ from deadline.job_attachments.caches.hash_cache import HashCache
 abs_manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
-    version=ManifestVersion.v2025_12_04_beta,
 )
 
 # Hash with a cache for efficiency
@@ -743,7 +545,7 @@ Fills in hashes for a manifest AND uploads file content to a data cache in a pip
 
 ```python
 def hash_upload_manifest(
-    manifest: BaseAssetManifest,
+    manifest: AbsManifest,
     data_cache: ContentAddressedDataCache,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
@@ -751,7 +553,7 @@ def hash_upload_manifest(
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
-) -> BaseAssetManifest:
+) -> AbsManifest:
 ```
 
 **Parameters:**
@@ -767,7 +569,7 @@ def hash_upload_manifest(
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
-**Returns:** A NEW manifest with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
+**Returns:** A NEW `AbsManifest` (either `AbsSnapshotManifest` or `AbsDiffManifest`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -901,8 +703,8 @@ import boto3
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
     hash_upload_manifest,
+    S3DataCache,
 )
-from deadline.job_attachments.asset_manifests._operations._data_cache import S3DataCache
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
@@ -953,8 +755,8 @@ from pathlib import Path
 from deadline.job_attachments.asset_manifests._operations import (
     collect_manifest,
     hash_upload_manifest,
+    FileSystemDataCache,
 )
-from deadline.job_attachments.asset_manifests._operations._data_cache import FileSystemDataCache
 from deadline.job_attachments.caches.hash_cache import HashCache
 
 # Collect the directory tree with absolute paths
@@ -1040,7 +842,7 @@ def download_manifest(
 - `processed_bytes`: Bytes successfully downloaded
 - `total_time`: Total operation time in seconds
 
-**Raises:** 
+**Raises:**
 - `ValueError` if the manifest contains relative paths
 - `AssetSyncCancelledError` if cancelled via progress tracker
 
@@ -1157,8 +959,8 @@ import boto3
 from deadline.job_attachments.asset_manifests._operations import (
     download_manifest,
     join_manifest,
+    S3DataCache,
 )
-from deadline.job_attachments.asset_manifests._operations._data_cache import S3DataCache
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 from deadline.job_attachments.models import FileConflictResolution
 
@@ -1202,8 +1004,8 @@ from pathlib import Path
 from deadline.job_attachments.asset_manifests._operations import (
     download_manifest,
     join_manifest,
+    FileSystemDataCache,
 )
-from deadline.job_attachments.asset_manifests._operations._data_cache import FileSystemDataCache
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load manifest from debug snapshot
@@ -1233,8 +1035,8 @@ print(f"Restored {stats.processed_files} files to /home/user/restored_scene")
 from deadline.job_attachments.asset_manifests._operations import (
     download_manifest,
     join_manifest,
+    S3DataCache,
 )
-from deadline.job_attachments.asset_manifests._operations._data_cache import S3DataCache
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a diff manifest
@@ -1305,9 +1107,9 @@ Applies a filter to manifest entries, returning a new manifest with only matchin
 
 ```python
 def filter_manifest(
-    manifest: BaseAssetManifest,
-    entry_filter: Callable[[Union[BaseManifestPath, BaseManifestDirectoryPath]], bool],
-) -> BaseAssetManifest:
+    manifest: Manifest,
+    entry_filter: Callable[[Union[ManifestFilePath, ManifestDirectoryPath]], bool],
+) -> Manifest:
 ```
 
 **Filter interface:**
@@ -1317,7 +1119,7 @@ The filter is a callable that takes a manifest entry and returns `True` to keep 
 ```python
 # Example: Custom filter for large files only
 def large_files_only(entry):
-    if isinstance(entry, BaseManifestPath) and entry.size is not None:
+    if isinstance(entry, ManifestFilePath) and entry.size is not None:
         return entry.size > 1_000_000  # > 1MB
     return False
 
@@ -1380,14 +1182,14 @@ Computes the difference between two snapshot manifests:
 
 ```python
 def compute_diff_manifest(
-    parent: BaseAssetManifest,
-    current: BaseAssetManifest,
+    parent: SnapshotManifest,
+    current: SnapshotManifest,
     parent_manifest_hash: Optional[str] = None,
     ignore_hashes: bool = False,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     *,
     preserve_runnable: bool = False,
-) -> BaseAssetManifest:
+) -> DiffManifest:
 ```
 
 **Parameters:**
@@ -1423,6 +1225,11 @@ def compute_diff_manifest(
 | Deleted entries | Not tracked | ✓ (deleted=True markers) |
 | Manifest class | AbsSnapshotManifest/RelSnapshotManifest | AbsDiffManifest/RelDiffManifest |
 | parentManifestHash | N/A | ✓ (if provided) |
+
+**Returns:** A `DiffManifest` (either `AbsDiffManifest` or `RelDiffManifest` depending on input path style) with:
+- `parentManifestHash` if provided
+- New/modified entries with full content
+- Deleted entries with `deleted=True` markers
 
 **Entry comparison logic (`_entries_differ()`):**
 
@@ -1496,9 +1303,9 @@ Layers multiple manifests together into a single manifest, as if applying each m
 
 ```python
 def compose_manifests(
-    manifests: List[BaseAssetManifest],
+    manifests: List[Manifest],
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> Manifest:
 ```
 
 **Behavior by version:**
@@ -1577,12 +1384,12 @@ Extracts a subtree from a manifest, producing a new manifest rooted at the speci
 
 ```python
 def subtree_manifest(
-    manifest: BaseAssetManifest,
+    manifest: Manifest,
     subtree: str,
     *,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> RelManifest:
 ```
 
 **Parameters:**
@@ -1635,6 +1442,8 @@ The `subtree` path must match the path style used in the manifest:
 **Output:**
 
 The output manifest always uses relative paths, regardless of whether the input used absolute paths. This makes the result suitable for storage or transport.
+
+**Note:** The `parentManifestHash` field is NOT preserved in the output manifest. Since the subtree operation changes the root path, the original parent manifest hash would be invalid for the new subtree manifest.
 
 **Symlink Handling:**
 
@@ -1769,13 +1578,13 @@ Partitions a manifest into multiple (root, RelSnapshot) pairs, dividing entries 
 
 ```python
 def partition_manifest(
-    manifest: BaseAssetManifest,
+    manifest: Manifest,
     roots: Optional[List[str]] = None,
     *,
     referenced_paths: Optional[List[str]] = None,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> List[Tuple[str, BaseAssetManifest]]:
+) -> List[Tuple[str, RelManifest]]:
 ```
 
 **Parameters:**
@@ -1788,9 +1597,9 @@ def partition_manifest(
 | `symlink_policy` | How to handle symlinks that escape their partition root. Only COLLAPSE, COLLAPSE_ESCAPING, and EXCLUDE are supported. |
 | `print_function_callback` | Progress callback for status messages |
 
-**Returns:** A list of `(root, RelSnapshot)` tuples where:
+**Returns:** A list of `(root, RelManifest)` tuples where:
 - Each `root` is an absolute or relative path string
-- Each `RelSnapshot` is a manifest with paths relative to that root
+- Each `RelManifest` is a manifest with paths relative to that root
 
 **Validation Rules:**
 
@@ -1925,11 +1734,11 @@ Joins a prefix to all paths in a manifest, producing a new manifest with prefixe
 
 ```python
 def join_manifest(
-    manifest: BaseAssetManifest,
+    manifest: Manifest,
     prefix: str,
     *,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> BaseAssetManifest:
+) -> Manifest:
 ```
 
 **Parameters:**

@@ -24,7 +24,7 @@ from deadline.job_attachments.asset_manifests._operations._content_addressed_dat
     FileSystemDataCache,
     S3DataCache,
 )
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsSnapshotManifest,
     ManifestFilePath,
     DEFAULT_FILE_CHUNK_SIZE,

@@ -26,7 +26,7 @@ import os
 import posixpath
 from typing import Any, Callable, List
 
-from ..manifest import (
+from .._manifest import (
     AbsDiffManifest,
     AbsSnapshotManifest,
     Manifest,

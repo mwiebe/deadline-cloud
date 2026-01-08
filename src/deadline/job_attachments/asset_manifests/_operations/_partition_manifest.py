@@ -35,7 +35,7 @@ import os
 import posixpath
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from ..manifest import (
+from .._manifest import (
     AbsDiffManifest,
     AbsSnapshotManifest,
     Manifest,

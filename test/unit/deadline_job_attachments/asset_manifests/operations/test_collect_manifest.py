@@ -35,7 +35,7 @@ from deadline.job_attachments.asset_manifests._operations import (
 from deadline.job_attachments.asset_manifests.versions import (
     SymlinkPolicy,
 )
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsSnapshotManifest,
     DEFAULT_FILE_CHUNK_SIZE,
     WHOLE_FILE_CHUNK_SIZE,

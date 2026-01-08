@@ -33,7 +33,7 @@ from deadline.job_attachments.asset_manifests._operations._hash_upload_manifest 
     _StreamingWorkItem,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsSnapshotManifest,
     ManifestFilePath,
 )

@@ -34,7 +34,7 @@ from typing import Any, Callable, DefaultDict, List, Optional, Tuple
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from ..manifest import (
+from .._manifest import (
     AbsDiffManifest,
     AbsManifest,
     ManifestDirectoryPath,

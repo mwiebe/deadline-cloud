@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from ..manifest import (
+from .._manifest import (
     AbsDiffManifest,
     AbsSnapshotManifest,
     DiffManifest,

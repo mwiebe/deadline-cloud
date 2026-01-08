@@ -28,7 +28,7 @@ from __future__ import annotations
 import fnmatch
 from typing import Callable, List, Optional, Union
 
-from ..manifest import (
+from .._manifest import (
     Manifest,
     ManifestDirectoryPath,
     ManifestFilePath,

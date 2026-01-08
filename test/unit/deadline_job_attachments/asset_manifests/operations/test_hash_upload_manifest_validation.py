@@ -22,7 +22,7 @@ from deadline.job_attachments.asset_manifests._operations import (
     S3DataCache,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsSnapshotManifest,
     ManifestFilePath,
 )

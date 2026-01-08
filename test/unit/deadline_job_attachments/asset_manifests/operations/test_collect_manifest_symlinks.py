@@ -25,7 +25,7 @@ from deadline.job_attachments.asset_manifests._operations import (
 from deadline.job_attachments.asset_manifests.versions import (
     SymlinkPolicy,
 )
-from deadline.job_attachments.asset_manifests.manifest import AbsSnapshotManifest
+from deadline.job_attachments.asset_manifests._manifest import AbsSnapshotManifest
 
 
 class TestPreservePolicy:

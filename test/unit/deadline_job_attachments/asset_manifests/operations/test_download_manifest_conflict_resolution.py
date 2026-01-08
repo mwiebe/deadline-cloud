@@ -22,7 +22,7 @@ from deadline.job_attachments.asset_manifests._operations import (
     subtree_manifest,
     FileSystemDataCache,
 )
-from deadline.job_attachments.asset_manifests.manifest import AbsSnapshotManifest
+from deadline.job_attachments.asset_manifests._manifest import AbsSnapshotManifest
 from deadline.job_attachments.models import FileConflictResolution
 
 

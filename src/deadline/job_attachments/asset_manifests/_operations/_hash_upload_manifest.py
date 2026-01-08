@@ -37,7 +37,7 @@ import logging
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from ..manifest import (
+from .._manifest import (
     AbsManifest,
     ManifestDirectoryPath,
     ManifestFilePath,

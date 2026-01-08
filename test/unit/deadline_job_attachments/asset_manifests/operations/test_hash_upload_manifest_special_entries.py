@@ -25,7 +25,7 @@ from deadline.job_attachments.asset_manifests._operations import (
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.asset_manifests.versions import SymlinkPolicy
-from deadline.job_attachments.asset_manifests.manifest import (
+from deadline.job_attachments.asset_manifests._manifest import (
     AbsDiffManifest,
     AbsSnapshotManifest,
     ManifestFilePath,
