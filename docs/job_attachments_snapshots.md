@@ -985,30 +985,89 @@ Example: To delete directory `/project/old_assets/` containing `model.obj` and `
 /project/old_assets/             (deleted=True, directory)
 ```
 
-**Pipelined Architecture:**
+**Parallel Download Architecture:**
 
-For large downloads, the operation uses a multi-threaded approach:
+The DOWNLOAD operation uses asyncio to coordinate parallel downloads of both regular files and chunked files, with S3 multi-part parallel downloads for large files:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         DOWNLOAD PIPELINE                               │
+│                    ASYNCIO DOWNLOAD COORDINATOR                         │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  ┌─────────┐     ┌─────────┐     ┌─────────┐                           │
-│  │DOWNLOAD │────►│  WRITE  │────►│ VERIFY  │  (optional hash verify)   │
-│  │ Thread  │     │ Thread  │     │ Thread  │                           │
-│  └─────────┘     └─────────┘     └─────────┘                           │
-│       │               │               │                                 │
-│       └───────────────┴───────────────┘                                 │
-│                Memory Pool                                              │
-│           (bounded by max_memory_bytes)                                 │
+│  Regular Files (with multi-part for large files ≥16MB):                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  1. run_in_executor() → pre-allocate temp file + handle conflicts│   │
+│  │  2. For large files: asyncio.gather() parallel byte-range parts │   │
+│  │     For small files: single get_object request                  │   │
+│  │  3. run_in_executor() → atomic replace + mtime update           │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Chunked Files (continuation pattern via add_done_callback):            │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  1. run_in_executor() → pre-allocate temp file + handle conflicts│   │
+│  │     └─► add_done_callback schedules continuation:               │   │
+│  │  2. asyncio.gather() all chunk downloads (parallel via executor)│   │
+│  │     - Large chunks (≥16MB): parallel byte-range parts           │   │
+│  │     - Small chunks: single get_object request                   │   │
+│  │     └─► continuation:                                           │   │
+│  │  3. run_in_executor() → atomic replace + mtime update           │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  All tasks share a single ThreadPoolExecutor(max_workers=N)            │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Both small files and large chunked files are downloaded in parallel using a shared thread pool.
-For chunked files, all chunks of a single file are downloaded in parallel, with each chunk
-written directly to its correct byte offset in a pre-allocated temporary file.
+Both regular files and chunked files download concurrently. For S3 downloads of files or chunks
+larger than 16MB, parallel byte-range requests (8MB parts) are used for improved throughput.
+For chunked files, all chunks download in parallel using `asyncio.gather()`, with each chunk
+written directly to its correct byte offset in a pre-allocated temporary file. The phases are
+chained using `add_done_callback` - when pre-allocation completes, the callback schedules chunk
+downloads; when all chunks complete, finalization runs. If pre-allocation fails, the continuation
+is never scheduled and the error propagates. All file I/O runs via `run_in_executor()` to avoid
+blocking the asyncio event loop.
+
+This architecture maximizes throughput by:
+- Downloading multiple files simultaneously (regular and chunked)
+- Downloading all chunks of chunked files in parallel
+- Using parallel byte-range requests for large files/chunks (S3 multi-part download)
+- Using asyncio for coordination without blocking the thread pool
+
+**S3 Multi-Part Download:**
+
+For S3 downloads, files and chunks larger than `MIN_SIZE_FOR_MULTIPART_DOWNLOAD` (16MB) are
+downloaded using parallel byte-range requests:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE` | 8MB | Size of each byte-range part |
+| `MIN_SIZE_FOR_MULTIPART_DOWNLOAD` | 16MB | Minimum size to use multi-part |
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    S3 MULTI-PART DOWNLOAD                               │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  For a 50MB file with 8MB parts:                                        │
+│                                                                         │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
+│  │ Part 0   │ │ Part 1   │ │ Part 2   │ │ Part 3   │ │ Part 4   │      │
+│  │ 0-8MB    │ │ 8-16MB   │ │ 16-24MB  │ │ 24-32MB  │ │ 32-40MB  │ ...  │
+│  │ Range:   │ │ Range:   │ │ Range:   │ │ Range:   │ │ Range:   │      │
+│  │ 0-8388607│ │ 8388608- │ │ 16777216-│ │ 25165824-│ │ 33554432-│      │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘      │
+│       │            │            │            │            │             │
+│       ▼            ▼            ▼            ▼            ▼             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │              Pre-allocated Temp File (50MB)                     │   │
+│  │  [part 0 region][part 1 region][part 2 region][...][part N]     │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Each part uses S3 GetObject with Range header:                         │
+│    Range: bytes={start}-{end}  (inclusive on both ends)                 │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 **Storage Key Format:**
 
@@ -1027,11 +1086,11 @@ All file downloads are atomic to ensure target files are never in a partial or c
 2. **Atomic move:** After the download completes successfully, `os.replace()` atomically moves the temp file to the final location
 3. **Error cleanup:** If any error occurs during download, the temporary file is deleted
 
-This is particularly important for chunked files (>256MB), where multiple chunks are downloaded in parallel. The target file only appears once all chunks have been successfully downloaded.
+This is particularly important for chunked files (>256MB), where multiple chunks are downloaded in parallel. The target file only appears once all chunks have been successfully downloaded and the asyncio continuation completes the atomic move.
 
 | File Type | Behavior |
 |-----------|----------|
-| Regular file | Download to temp file, then atomic move |
+| Regular file | Pre-allocate temp file, download (multi-part for large), atomic move |
 | Chunked file | Pre-allocate temp file, download all chunks in parallel to their byte offsets, then atomic move after all chunks complete |
 
 **Parallel Chunked File Downloads:**

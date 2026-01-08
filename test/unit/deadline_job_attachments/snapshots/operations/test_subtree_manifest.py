@@ -796,9 +796,7 @@ class TestPathSeparatorHandling:
 
     def test_subtree_with_backslash_in_subtree_param_on_windows(self) -> None:
         """On Windows, backslashes in subtree parameter are normalized."""
-        with patch(
-            "os.name", "nt"
-        ), patch("os.name", "nt"):
+        with patch("os.name", "nt"), patch("os.name", "nt"):
             manifest = self._create_rel_snapshot(
                 files=[
                     {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
