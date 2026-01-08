@@ -192,7 +192,7 @@ Separating structure collection, hashing, and hashing+uploading enables:
 
 ## Module Organization
 
-The composable operations are implemented in separate modules under `src/deadline/job_attachments/asset_manifests/_operations/`:
+The composable operations are implemented in separate modules under `src/deadline/job_attachments/_snapshots/_operations/`:
 
 | Module | Operation | Description |
 |--------|-----------|-------------|
@@ -360,9 +360,9 @@ def collect_manifest(
 
 ```python
 from deadline.job_attachments._snapshots import (
-    collect_manifest
+    collect_manifest,
+    SymlinkPolicy,
 )
-from deadline.job_attachments.asset_manifests.versions import SymlinkPolicy
 
 # Collect files from different locations using absolute paths (default: PRESERVE symlinks)
 manifest = collect_manifest(
@@ -372,7 +372,7 @@ manifest = collect_manifest(
 )
 
 # Paths in manifest are absolute
-for entry in manifest.paths[:2]:
+for entry in manifest.files[:2]:
     print(f"  {entry.path}")  # e.g., "/data/shared/models/car.obj"
 ```
 
@@ -390,7 +390,7 @@ manifest = collect_manifest(
 )
 
 # Symlinks have absolute targets
-for entry in manifest.paths:
+for entry in manifest.files:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
         # e.g., symlink: /projects/my_scene/link.txt -> /projects/my_scene/target.txt
@@ -485,7 +485,6 @@ from deadline.job_attachments._snapshots import (
     collect_manifest,
     hash_manifest,
 )
-from deadline.job_attachments.asset_manifests.versions import ManifestVersion
 from deadline.job_attachments.caches.hash_cache import HashCache
 
 # Collect the directory tree with absolute paths
@@ -503,7 +502,7 @@ with HashCache("/tmp/hash_cache") as cache:
     )
 
 # Now entries have their hashes filled in (paths are still absolute)
-for entry in hashed.paths[:2]:
+for entry in hashed.files[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
     elif entry.chunkhashes:
@@ -538,7 +537,7 @@ diff = compute_diff_manifest(
 hashed_diff = hash_manifest(diff)
 
 # Deleted entries are preserved unchanged
-for entry in hashed_diff.paths:
+for entry in hashed_diff.files:
     if entry.deleted:
         print(f"  deleted: {entry.path}")
     else:
@@ -741,7 +740,7 @@ with HashCache("/tmp/hash_cache") as hash_cache:
         )
 
 # Now entries have their hashes filled in AND files are uploaded (paths are still absolute)
-for entry in hashed.paths[:2]:
+for entry in hashed.files[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
     elif entry.chunkhashes:
@@ -787,7 +786,7 @@ with HashCache("/tmp/hash_cache") as hash_cache:
     )
 
 # Files are now stored in /tmp/debug_snapshot/data/{hash}.xxh128
-print(f"Debug snapshot created with {len(hashed.paths)} entries")
+print(f"Debug snapshot created with {len(hashed.files)} entries")
 ```
 
 **Performance Comparison:**
@@ -1239,8 +1238,6 @@ This ensures deletions are computed correctly within the filtered view.
 ```python
 from deadline.job_attachments._snapshots import (
     filter_manifest,
-)
-from deadline.job_attachments._snapshots._operations._filter_manifest import (
     IncludeExcludePathsFilter,
 )
 
@@ -1251,7 +1248,7 @@ filter = IncludeExcludePathsFilter(
 )
 
 filtered = filter_manifest(manifest, filter)
-print(f"Filtered from {len(manifest.paths)} to {len(filtered.paths)} entries")
+print(f"Filtered from {len(manifest.files)} to {len(filtered.files)} entries")
 
 # Or use a custom filter function
 def python_files_only(entry):
@@ -1367,8 +1364,8 @@ diff = compute_diff_manifest(
 )
 
 # Inspect the diff
-new_files = [p for p in diff.paths if p.path not in {e.path for e in parent.paths}]
-deleted = [p for p in diff.paths if p.deleted]
+new_files = [p for p in diff.files if p.path not in {e.path for e in parent.files}]
+deleted = [p for p in diff.files if p.deleted]
 print(f"New: {len(new_files)}, Deleted: {len(deleted)}")
 print(f"Diff manifest type: {type(diff).__name__}")  # AbsDiffManifest or RelDiffManifest
 print(f"Parent hash: {diff.parentManifestHash[:16]}...")
@@ -1446,8 +1443,8 @@ with open("day2.manifest") as f:
 # Compose into a single snapshot representing the final state
 final = compose_manifests([base, diff1, diff2])
 
-print(f"Final manifest has {len(final.paths)} entries")
-print(f"Manifest type: {final.manifestType}")  # SNAPSHOT
+print(f"Final manifest has {len(final.files)} entries")
+print(f"Manifest type: {type(final).__name__}")  # AbsSnapshotManifest or RelSnapshotManifest
 ```
 
 For v2023 format (layering snapshots):
@@ -1597,7 +1594,7 @@ textures = subtree_manifest(
 )
 
 # Result is a manifest with paths relative to assets/textures/
-for entry in textures.paths:
+for entry in textures.files:
     print(entry.path)  # "wood.png", "metal.png", etc.
 ```
 
@@ -1879,7 +1876,7 @@ with open("textures.manifest") as f:
 # Join with absolute prefix to get absolute paths
 absolute_manifest = join_manifest(manifest, "/projects/scene/assets/textures")
 
-for entry in absolute_manifest.paths:
+for entry in absolute_manifest.files:
     print(entry.path)  # "/projects/scene/assets/textures/wood.png", etc.
 ```
 
