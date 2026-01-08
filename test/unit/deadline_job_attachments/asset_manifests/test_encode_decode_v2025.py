@@ -8,7 +8,7 @@ import json
 import pytest
 
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments.asset_manifests._manifest import (
+from deadline.job_attachments._snapshots import (
     AbsDiffManifest,
     AbsSnapshotManifest,
     ManifestDirectoryPath,

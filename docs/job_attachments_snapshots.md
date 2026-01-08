@@ -359,7 +359,7 @@ def collect_manifest(
 **Example - Collecting from multiple directories:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     collect_manifest
 )
 from deadline.job_attachments.asset_manifests.versions import SymlinkPolicy
@@ -379,7 +379,7 @@ for entry in manifest.paths[:2]:
 **Example - Symlinks are preserved by default:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     collect_manifest
 )
 
@@ -481,7 +481,7 @@ The `parentManifestHash` field is preserved from the input manifest. The manifes
 **Example - Hashing a snapshot:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     collect_manifest,
     hash_manifest,
 )
@@ -521,7 +521,7 @@ Output:
 **Example - Hashing a diff manifest:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     compute_diff_manifest,
     hash_manifest,
 )
@@ -708,7 +708,7 @@ The `parentManifestHash` and `fileChunkSizeBytes` fields are preserved from the 
 
 ```python
 import boto3
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     collect_manifest,
     hash_upload_manifest,
     S3DataCache,
@@ -760,7 +760,7 @@ Output:
 
 ```python
 from pathlib import Path
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     collect_manifest,
     hash_upload_manifest,
     FileSystemDataCache,
@@ -1042,7 +1042,7 @@ Downloaded files have their modification time (`mtime`) set to the value stored 
 
 ```python
 import boto3
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     download_manifest,
     join_manifest,
     S3DataCache,
@@ -1087,7 +1087,7 @@ Total time: 12.34s
 
 ```python
 from pathlib import Path
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     download_manifest,
     join_manifest,
     FileSystemDataCache,
@@ -1118,7 +1118,7 @@ print(f"Restored {stats.processed_files} files to /home/user/restored_scene")
 **Example - Applying a diff manifest:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     download_manifest,
     join_manifest,
     S3DataCache,
@@ -1237,10 +1237,10 @@ This ensures deletions are computed correctly within the filtered view.
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import (
+from deadline.job_attachments._snapshots import (
     filter_manifest,
 )
-from deadline.job_attachments.asset_manifests._operations._filter_manifest import (
+from deadline.job_attachments._snapshots._operations._filter_manifest import (
     IncludeExcludePathsFilter,
 )
 
@@ -1347,7 +1347,7 @@ New files always use the current manifest's `runnable` value (which will be `Fal
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import compute_diff_manifest
+from deadline.job_attachments._snapshots import compute_diff_manifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 from deadline.job_attachments.asset_manifests.hash_algorithms import hash_data, HashAlgorithm
 
@@ -1432,7 +1432,7 @@ For v2025-12-04-beta (with deletion markers):
 **Example:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import compose_manifests
+from deadline.job_attachments._snapshots import compose_manifests
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a base snapshot and incremental diffs
@@ -1583,7 +1583,7 @@ The preserved symlink `alt` originally had target `assets/textures/variants/dark
 **Example - Basic Subtree Extraction:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import subtree_manifest
+from deadline.job_attachments._snapshots import subtree_manifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a manifest rooted at /projects/scene
@@ -1729,7 +1729,7 @@ Symlinks are handled per-partition using the same logic as SUBTREE:
 **Example - Auto-partition on POSIX (no roots provided):**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import partition_manifest
+from deadline.job_attachments._snapshots import partition_manifest
 
 # Manifest with absolute paths under a common root
 # /projects/scene/assets/model.blend
@@ -1869,7 +1869,7 @@ New manifest (absolute paths):
 **Example - Converting Relative to Absolute:**
 
 ```python
-from deadline.job_attachments.asset_manifests._operations import join_manifest
+from deadline.job_attachments._snapshots import join_manifest
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 
 # Load a manifest with relative paths

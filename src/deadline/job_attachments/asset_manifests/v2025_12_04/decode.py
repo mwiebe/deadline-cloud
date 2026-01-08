@@ -15,7 +15,7 @@ import json
 from typing import Any, Dict, List, Optional, Type
 
 from ..hash_algorithms import HashAlgorithm
-from .._manifest import (
+from ..._snapshots import (
     AbsDiffManifest,
     AbsSnapshotManifest,
     Manifest,

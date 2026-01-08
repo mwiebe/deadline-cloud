@@ -18,31 +18,3 @@ class ManifestVersion(str, Enum):
 
     UNDEFINED = "UNDEFINED"
     v2023_03_03 = "2023-03-03"
-
-
-class SymlinkPolicy(str, Enum):
-    """
-    Policy for handling symlinks during manifest collection.
-
-    Policies:
-      COLLAPSE_ESCAPING - Collapse only symlinks that escape the root path.
-          Symlinks pointing outside root are followed and become files/directories.
-          Symlinks pointing within root are preserved as symlink entries.
-      COLLAPSE - Collapse all symlinks into files/directories by following them.
-          The directory tree walk follows symlinks, treating them as their targets.
-      PRESERVE - Keep all symlinks as symlink entries. Only allowed when
-          absolute_paths=True, because escaping symlinks cannot be represented
-          with conforming relative paths.
-      TRANSITIVE_INCLUDE_TARGETS - Keep all symlinks and add their targets to the
-          manifest. Only allowed when absolute_paths=True, because targets outside
-          root can only be stored as absolute paths. Targets within root are already
-          captured by normal collection, so this is meaningful for escaping symlinks.
-      EXCLUDE - Exclude all symlinks from the manifest entirely. Unlike COLLAPSE
-          which turns symlinks into files/directories, this leaves them out.
-    """
-
-    COLLAPSE_ESCAPING = "collapse_escaping"
-    COLLAPSE = "collapse"
-    EXCLUDE = "exclude"
-    PRESERVE = "preserve"
-    TRANSITIVE_INCLUDE_TARGETS = "transitive_include_targets"
