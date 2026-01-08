@@ -820,6 +820,7 @@ def download_manifest(
     manifest: AbsManifest,
     data_cache: DataCache,
     *,
+    hash_cache: Optional[HashCache] = None,
     file_conflict_resolution: FileConflictResolution = FileConflictResolution.OVERWRITE,
     apply_deletes: bool = True,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
@@ -835,12 +836,28 @@ def download_manifest(
 |-----------|-------------|
 | `manifest` | Manifest with absolute paths and hashes. Can be `AbsSnapshotManifest` or `AbsDiffManifest`. |
 | `data_cache` | Data cache to download from (`S3DataCache` or `FileSystemDataCache`) |
-| `file_conflict_resolution` | How to handle existing files (see below). Default `OVERWRITE`. |
+| `hash_cache` | Optional hash cache to skip downloads for files that already have the correct content (see below). |
+| `file_conflict_resolution` | How to handle existing files (see below). Default `OVERWRITE`. Note: When `hash_cache` is provided, files with matching hashes are skipped regardless of this setting. |
 | `apply_deletes` | If `True` (default), apply deletions from diff manifests. If `False`, skip deletions and only download new/modified files. |
 | `symlink_policy` | How to handle symlinks. Default `PRESERVE`. Only `PRESERVE` and `EXCLUDE` are supported. |
 | `max_workers` | Maximum parallel download workers. Default: auto-detect based on S3 pool connections. |
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for download progress and cancellation |
+
+**Hash Cache Skip Optimization:**
+
+When a `hash_cache` is provided, the DOWNLOAD operation checks each file before downloading:
+
+1. If the local file exists and its path+mtime is in the hash cache
+2. And the cached hash matches the expected hash from the manifest
+3. Then the download is skipped (file already has correct content)
+
+This optimization is particularly useful for:
+- **Repeated downloads:** Downloading the same manifest twice skips all files the second time
+- **Incremental updates:** When downloading a new manifest version, only changed files are downloaded
+- **Resume after interruption:** Files successfully downloaded before interruption are skipped
+
+The hash cache is the same cache used by HASH and HASH_UPLOAD operations, so files that were previously hashed or uploaded will have their hashes available for skip detection.
 
 **Returns:** `DownloadResult` dataclass containing:
 
@@ -852,7 +869,7 @@ def download_manifest(
 The `statistics` field contains:
 - `total_files`: Number of files in manifest
 - `processed_files`: Number of files successfully downloaded
-- `skipped_files`: Number of files skipped (already exist with SKIP resolution)
+- `skipped_files`: Number of files skipped (hash cache match or SKIP resolution)
 - `total_bytes`: Total bytes to download
 - `processed_bytes`: Bytes successfully downloaded
 - `total_time`: Total operation time in seconds
@@ -885,6 +902,30 @@ current_hashed = hash_manifest(current_state)
 changes = compute_diff_manifest(parent=local_baseline, current=current_hashed)
 # 'changes' now correctly reflects only real user modifications,
 # not false positives from mtime precision differences
+```
+
+**Example - Using hash cache to skip unchanged files:**
+
+```python
+from deadline.job_attachments.caches.hash_cache import HashCache
+
+# Use a hash cache to skip files that already have correct content
+with HashCache() as hash_cache:
+    # First download - all files are downloaded
+    result1 = download_manifest(
+        manifest=manifest,
+        data_cache=s3_cache,
+        hash_cache=hash_cache,
+    )
+    print(f"Downloaded {result1.statistics.processed_files} files")
+
+    # Second download of same manifest - all files skipped
+    result2 = download_manifest(
+        manifest=manifest,
+        data_cache=s3_cache,
+        hash_cache=hash_cache,
+    )
+    print(f"Skipped {result2.statistics.skipped_files} files (already up to date)")
 ```
 
 **Raises:**

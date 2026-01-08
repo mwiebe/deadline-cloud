@@ -44,6 +44,7 @@ from .._manifest import (
     ManifestFilePath,
     _is_absolute_path,
 )
+from ..hash_algorithms import HashAlgorithm
 from ..versions import SymlinkPolicy
 from ._content_addressed_data_cache import (
     ContentAddressedDataCache,
@@ -63,6 +64,7 @@ from ...exceptions import (
     COMMON_ERROR_GUIDANCE_FOR_S3,
 )
 from ..._utils import _get_long_path_compatible_path
+from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
 logger = logging.getLogger("deadline.job_attachments.download")
 
@@ -106,6 +108,72 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
                 f"Found relative directory path: '{d.path}'. "
                 f"Use join_manifest() to create a manifest with absolute paths."
             )
+
+
+def _check_hash_cache_for_skip(
+    entry: ManifestFilePath,
+    hash_alg: HashAlgorithm,
+    hash_cache: Optional[HashCache],
+) -> Tuple[bool, Optional[int]]:
+    """
+    Check if a file can be skipped because it already exists with the correct hash.
+
+    Uses the hash cache to check if the local file's cached hash matches the
+    expected hash from the manifest. This avoids re-downloading files that
+    already have the correct content.
+
+    Args:
+        entry: The manifest file entry to check
+        hash_alg: The hash algorithm used in the manifest
+        hash_cache: Optional hash cache to check against
+
+    Returns:
+        Tuple of (can_skip, actual_mtime_us):
+        - can_skip: True if the file exists and has the correct hash
+        - actual_mtime_us: The file's mtime in microseconds if can_skip is True, else None
+    """
+    if hash_cache is None or entry.hash is None:
+        return (False, None)
+
+    local_path = _get_long_path_compatible_path(Path(entry.path))
+
+    # File must exist to skip
+    if not local_path.exists() or not local_path.is_file():
+        return (False, None)
+
+    # Get the file's current mtime
+    try:
+        stat_result = local_path.stat()
+        current_mtime_ns = stat_result.st_mtime_ns
+        current_mtime_str = str(current_mtime_ns)
+    except OSError:
+        return (False, None)
+
+    # Check the hash cache for this file
+    # Use resolved path because hash cache always uses resolved paths
+    resolved_path = str(Path(entry.path).resolve())
+    cache_entry = hash_cache.get_entry(
+        file_path_key=resolved_path,
+        hash_algorithm=hash_alg,
+        range_start=0,
+        range_end=WHOLE_FILE_RANGE_END,
+    )
+
+    if cache_entry is None:
+        return (False, None)
+
+    # Check if the cached mtime matches the current file mtime
+    if cache_entry.last_modified_time != current_mtime_str:
+        return (False, None)
+
+    # Check if the cached hash matches the expected hash
+    if cache_entry.file_hash != entry.hash:
+        return (False, None)
+
+    # File exists with correct hash - can skip download
+    actual_mtime_us = current_mtime_ns // 1_000
+    logger.debug(f"Skipping download of {entry.path} - hash cache indicates file is up to date")
+    return (True, actual_mtime_us)
 
 
 def _get_new_copy_file_path(
@@ -254,7 +322,9 @@ def _download_file_from_filesystem(
 def _download_single_file(
     entry: ManifestFilePath,
     hash_alg: str,
+    hash_alg_enum: HashAlgorithm,
     data_cache: ContentAddressedDataCache,
+    hash_cache: Optional[HashCache],
     collision_lock: Lock,
     collision_file_dict: DefaultDict[str, int],
     file_conflict_resolution: FileConflictResolution,
@@ -272,6 +342,11 @@ def _download_single_file(
 
     local_path = _get_long_path_compatible_path(Path(entry.path))
     file_size = entry.size or 0
+
+    # Check hash cache first - if file already has correct content, skip download
+    can_skip, cached_mtime_us = _check_hash_cache_for_skip(entry, hash_alg_enum, hash_cache)
+    if can_skip:
+        return (file_size, local_path, True, cached_mtime_us)
 
     # Handle file conflicts
     if local_path.exists():
@@ -317,7 +392,24 @@ def _download_single_file(
 
     # Get the actual filesystem mtime (may differ from requested due to OS precision)
     # Use st_mtime_ns with integer division to avoid floating point precision issues
-    actual_mtime_us = local_path.stat().st_mtime_ns // 1_000
+    stat_result = local_path.stat()
+    actual_mtime_ns = stat_result.st_mtime_ns
+    actual_mtime_us = actual_mtime_ns // 1_000
+
+    # Update hash cache with the downloaded file's hash and actual mtime
+    # Use resolved path because hash cache always uses resolved paths
+    if hash_cache is not None and entry.hash is not None:
+        resolved_path = str(local_path.resolve())
+        hash_cache.put_entry(
+            HashCacheEntry(
+                file_path=resolved_path,
+                hash_algorithm=hash_alg_enum,
+                file_hash=entry.hash,
+                last_modified_time=str(actual_mtime_ns),
+                range_start=0,
+                range_end=WHOLE_FILE_RANGE_END,
+            )
+        )
 
     logger.debug(f"Downloaded {entry.path} to {local_path}")
     return (bytes_downloaded, local_path, False, actual_mtime_us)
@@ -682,6 +774,7 @@ def download_manifest(
     manifest: AbsManifest,
     data_cache: ContentAddressedDataCache,
     *,
+    hash_cache: Optional[HashCache] = None,
     file_conflict_resolution: FileConflictResolution = FileConflictResolution.OVERWRITE,
     apply_deletes: bool = True,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
@@ -700,7 +793,13 @@ def download_manifest(
         manifest: Manifest with absolute paths and hashes. Can be
             AbsSnapshotManifest or AbsDiffManifest.
         data_cache: Data cache to download from (S3DataCache or FileSystemDataCache)
+        hash_cache: Optional hash cache to check for files that already have the
+            correct content. If a file exists locally and its cached hash matches
+            the expected hash from the manifest, the download is skipped. This
+            avoids re-downloading files that are already up to date.
         file_conflict_resolution: How to handle existing files. Default OVERWRITE.
+            Note: When hash_cache is provided, files with matching hashes are
+            skipped regardless of this setting.
         apply_deletes: If True (default), apply deletions from diff manifests.
             If False, skip deletions and only download new/modified files.
         symlink_policy: How to handle symlinks. Default PRESERVE.
@@ -733,6 +832,7 @@ def download_manifest(
         )
 
     hash_alg = manifest.hashAlg.value
+    hash_alg_enum = manifest.hashAlg
 
     # Determine number of workers
     if max_workers is None:
@@ -828,7 +928,9 @@ def download_manifest(
                         _download_single_file,
                         entry,
                         hash_alg,
+                        hash_alg_enum,
                         data_cache,
+                        hash_cache,
                         collision_lock,
                         collision_file_dict,
                         file_conflict_resolution,
