@@ -50,7 +50,7 @@ class TestCollectManifestAbsolutePaths:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         # Path should be absolute (POSIX format)
@@ -65,7 +65,7 @@ class TestCollectManifestAbsolutePaths:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         # Find the file entry (not directory)

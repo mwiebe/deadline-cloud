@@ -46,7 +46,7 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         cache_key = str(Path(collected.files[0].path).resolve())
 
@@ -70,7 +70,7 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         mtime_str = str(collected.files[0].mtime)
         cache_key = str(Path(collected.files[0].path).resolve())
@@ -101,7 +101,7 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         cache_key = str(Path(collected.files[0].path).resolve())
 
@@ -131,7 +131,7 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         mtime_str = str(collected.files[0].mtime)
         cache_key = str(Path(collected.files[0].path).resolve())
@@ -162,7 +162,7 @@ class TestHashManifestWithCache:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         hashed = hash_manifest(collected, hash_cache=None)
 

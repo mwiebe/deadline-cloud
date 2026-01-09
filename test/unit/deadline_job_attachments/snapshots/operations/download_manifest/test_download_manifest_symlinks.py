@@ -93,7 +93,7 @@ class TestDownloadManifestSymlinks:
         download_manifest(
             manifest=download_manifest_obj,
             data_cache=data_cache,
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
 
         downloaded_link = download_dir / "link.txt"
@@ -117,5 +117,5 @@ class TestDownloadManifestSymlinks:
             download_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
-                symlink_policy=SymlinkPolicy.COLLAPSE,
+                symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
             )

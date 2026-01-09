@@ -167,7 +167,7 @@ class TestBrokenSymlinks:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
             print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
@@ -189,7 +189,7 @@ class TestBrokenSymlinks:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
             print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
@@ -223,7 +223,7 @@ class TestBrokenSymlinks:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
 
         paths = {p.path for p in manifest.files}
@@ -467,7 +467,7 @@ class TestPrintFunctionCallback:
         collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
             print_function_callback=lambda msg: messages.append(str(msg)),
         )
 

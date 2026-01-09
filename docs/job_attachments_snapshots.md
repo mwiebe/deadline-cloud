@@ -311,7 +311,7 @@ def collect_manifest(
     filenames: List[Path | str],
     *,
     optional_filenames: Optional[List[Path | str]] = None,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsSnapshotManifest:
@@ -324,7 +324,7 @@ def collect_manifest(
 | `directories` | (positional) List of directory paths whose full contents are collected. All paths must exist and be directories. Empty directories are included in the manifest. |
 | `filenames` | (positional) List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
 | `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
-| `symlink_policy` | How to handle symlinks during collection (see below). Default `PRESERVE`. |
+| `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
 | `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = use `DEFAULT_FILE_CHUNK_SIZE` (256MB). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 
@@ -332,11 +332,12 @@ def collect_manifest(
 
 | Policy | Description |
 |--------|-------------|
-| `PRESERVE` | Keep all symlinks as symlink entries with absolute targets. (default) |
-| `COLLAPSE` | Follow all symlinks, treating them as files/directories. |
+| `COLLAPSE_ESCAPING` | Preserve symlinks whose targets are within the collected paths; collapse symlinks whose targets are outside (escaping symlinks) to files/directories. (default) |
+| `COLLAPSE_ALL` | Follow all symlinks, treating them as files/directories. |
+| `PRESERVE` | Keep all symlinks as symlink entries with absolute targets. |
 | `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. |
-| `EXCLUDE` | Skip all symlinks entirely. |
-| `COLLAPSE_ESCAPING` | Preserve symlinks whose targets are within the collected paths; collapse symlinks whose targets are outside (escaping symlinks) to files/directories. |
+| `EXCLUDE_ALL` | Skip all symlinks entirely. |
+| `EXCLUDE_ESCAPING` | Preserve symlinks whose targets are within the collected paths; exclude symlinks whose targets are outside (escaping symlinks). |
 
 **Validation Rules:**
 
@@ -364,7 +365,7 @@ from deadline.job_attachments._snapshots import (
     SymlinkPolicy,
 )
 
-# Collect files from different locations using absolute paths (default: PRESERVE symlinks)
+# Collect files from different locations using absolute paths (default: COLLAPSE_ESCAPING)
 manifest = collect_manifest(
     ["/data/shared/models", "/data/shared/textures"],  # directories (positional)
     ["/home/user/project/scene.blend"],                 # filenames (positional)
@@ -376,20 +377,22 @@ for entry in manifest.files[:2]:
     print(f"  {entry.path}")  # e.g., "/data/shared/models/car.obj"
 ```
 
-**Example - Symlinks are preserved by default:**
+**Example - Escaping symlinks are collapsed by default:**
 
 ```python
 from deadline.job_attachments._snapshots import (
     collect_manifest
 )
 
-# Collect with symlinks preserved (default behavior)
+# Collect with COLLAPSE_ESCAPING (default behavior)
+# Symlinks pointing within the collected paths are preserved
+# Symlinks pointing outside are collapsed to files/directories
 manifest = collect_manifest(
     ["/projects/my_scene"],  # directories
     [],                       # filenames (empty list)
 )
 
-# Symlinks have absolute targets
+# Non-escaping symlinks have absolute targets
 for entry in manifest.files:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
@@ -838,7 +841,7 @@ def download_manifest(
 | `hash_cache` | Optional hash cache to skip downloads for files that already have the correct content (see below). |
 | `file_conflict_resolution` | How to handle existing files (see below). Default `OVERWRITE`. Note: When `hash_cache` is provided, files with matching hashes are skipped regardless of this setting. |
 | `apply_deletes` | If `True` (default), apply deletions from diff manifests. If `False`, skip deletions and only download new/modified files. |
-| `symlink_policy` | How to handle symlinks. Default `PRESERVE`. Only `PRESERVE` and `EXCLUDE` are supported. |
+| `symlink_policy` | How to handle symlinks. Default `PRESERVE`. Only `PRESERVE` and `EXCLUDE_ALL` are supported. |
 | `max_workers` | Maximum parallel download workers. Default: auto-detect based on S3 pool connections. |
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for download progress and cancellation |
@@ -1638,11 +1641,21 @@ When re-rooting a manifest, symlinks that were previously "within root" may now 
 
 | Policy | Behavior for Escaping Symlinks |
 |--------|-------------------------------|
-| `COLLAPSE` | Replace all symlinks with their target's content (if target is in original manifest) |
+| `COLLAPSE_ALL` | Collapse every symlink in the result (regardless of whether it escapes). |
 | `COLLAPSE_ESCAPING` | Collapse only symlinks escaping the new subtree; preserve symlinks within subtree |
-| `EXCLUDE` | Remove symlinks that escape the new subtree |
+| `EXCLUDE_ALL` | Exclude every symlink from the result (regardless of whether it escapes). |
+| `EXCLUDE_ESCAPING` | Exclude only symlinks escaping the new subtree; preserve symlinks within subtree |
 
 **Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported for SUBTREE. Since the output always uses relative paths, escaping symlinks cannot be represented—a relative symlink target like `../outside/file.txt` would point outside the manifest root, which is invalid. Therefore, escaping symlinks must either be collapsed or excluded.
+
+**Symlink Policy Behavior in SUBTREE:**
+
+| Policy | Symlinks within subtree | Symlinks escaping subtree |
+|--------|------------------------|---------------------------|
+| `COLLAPSE_ALL` | Collapsed to file/directory | Collapsed to file/directory |
+| `COLLAPSE_ESCAPING` | Preserved (target rebased) | Collapsed to file/directory |
+| `EXCLUDE_ALL` | Excluded | Excluded |
+| `EXCLUDE_ESCAPING` | Preserved (target rebased) | Excluded |
 
 **Note:** Unlike COLLECT, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
 
@@ -1723,11 +1736,11 @@ textures = subtree_manifest(
 )
 # Result: "current" becomes a regular file with latest.png's hash/size/mtime
 
-# With EXCLUDE: symlink is removed
+# With EXCLUDE_ALL: symlink is removed
 textures = subtree_manifest(
     manifest=full_manifest,
     subtree="assets/textures",
-    symlink_policy=SymlinkPolicy.EXCLUDE,
+    symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
 )
 # Result: only "wood.png" is included
 ```

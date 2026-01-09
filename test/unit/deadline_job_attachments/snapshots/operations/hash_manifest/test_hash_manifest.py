@@ -44,7 +44,7 @@ class TestHashManifestBasic:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         assert collected.files[0].hash is None
 
@@ -63,7 +63,7 @@ class TestHashManifestBasic:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         hashed = hash_manifest(collected)
 
@@ -78,7 +78,7 @@ class TestHashManifestBasic:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         hashed = hash_manifest(collected)
 
@@ -96,7 +96,7 @@ class TestHashManifestBasic:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         hashed = hash_manifest(collected)
 
@@ -112,7 +112,7 @@ class TestHashManifestBasic:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         hashed = hash_manifest(collected)
 
@@ -125,7 +125,7 @@ class TestHashManifestBasic:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         hashed = hash_manifest(collected)
 
@@ -193,7 +193,7 @@ class TestProgressCallback:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         messages: List[str] = []

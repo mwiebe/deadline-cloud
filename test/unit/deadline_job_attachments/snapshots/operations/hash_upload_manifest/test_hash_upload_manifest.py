@@ -133,7 +133,7 @@ class TestHashUploadManifestBasicFileSystem:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         collected_files = [
@@ -371,7 +371,7 @@ class TestHashUploadManifestBasicS3:
         collected = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         data_cache = self._create_s3_data_cache()

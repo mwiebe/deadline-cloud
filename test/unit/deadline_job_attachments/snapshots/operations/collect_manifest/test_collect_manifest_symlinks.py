@@ -193,7 +193,7 @@ class TestCollapsePolicy:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         assert isinstance(manifest, AbsSnapshotManifest)
@@ -217,7 +217,7 @@ class TestCollapsePolicy:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         paths = {p.path for p in manifest.files}
@@ -244,7 +244,7 @@ class TestCollapsePolicy:
         manifest = collect_manifest(
             [root],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         # The file should be accessible through the symlink chain
@@ -265,7 +265,7 @@ class TestCollapsePolicy:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         # All three should be collected as regular files
@@ -294,7 +294,7 @@ class TestExcludePolicy:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
 
         assert isinstance(manifest, AbsSnapshotManifest)
@@ -313,7 +313,7 @@ class TestExcludePolicy:
         manifest = collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
 
         paths = {p.path for p in manifest.files}
@@ -339,7 +339,7 @@ class TestExcludePolicy:
         collect_manifest(
             [tmp_path],
             [],
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
             print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
@@ -496,7 +496,7 @@ class TestSymlinkInFilenames:
         manifest = collect_manifest(
             [],
             [link],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         assert len(manifest.files) == 1

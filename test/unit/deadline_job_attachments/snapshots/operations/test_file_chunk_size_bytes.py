@@ -44,7 +44,7 @@ class TestCollectManifestFileChunkSizeBytes:
         manifest = collect_manifest(
             directories=[tmp_path],
             filenames=[],
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         # Default is DEFAULT_FILE_CHUNK_SIZE (256MB)
@@ -59,7 +59,7 @@ class TestCollectManifestFileChunkSizeBytes:
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=custom_chunk_size,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         assert manifest.fileChunkSizeBytes == custom_chunk_size
@@ -72,7 +72,7 @@ class TestCollectManifestFileChunkSizeBytes:
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
         # WHOLE_FILE_CHUNK_SIZE (-1) means no chunking
@@ -370,7 +370,7 @@ class TestEndToEndFileChunkSizeBytes:
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=custom_chunk_size,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         assert collected.fileChunkSizeBytes == custom_chunk_size
 
@@ -392,7 +392,7 @@ class TestEndToEndFileChunkSizeBytes:
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=custom_chunk_size,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         assert collected.fileChunkSizeBytes == custom_chunk_size
 
@@ -417,7 +417,7 @@ class TestEndToEndFileChunkSizeBytes:
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=collect_chunk_size,
-            symlink_policy=SymlinkPolicy.COLLAPSE,
+            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
         assert collected.fileChunkSizeBytes == collect_chunk_size
 

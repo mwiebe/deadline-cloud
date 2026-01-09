@@ -690,13 +690,104 @@ class TestPartitionManifestSymlinks:
         result = partition_manifest(
             manifest,
             roots=["project"],
-            symlink_policy=SymlinkPolicy.EXCLUDE,
+            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
 
         _, project_manifest = result[0]
         paths = {p.path for p in project_manifest.files}
         assert "src/link" not in paths
         assert "src/main.py" in paths
+
+    def test_escaping_symlink_excluded_with_exclude_escaping(self) -> None:
+        """Escaping symlinks are excluded with EXCLUDE_ESCAPING policy."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "project/src/link", "symlink_target": "shared/lib.py"},
+                {"path": "shared/lib.py", "hash": "h2", "size": 200, "mtime": 2000},
+            ],
+            dirs=[
+                {"path": "project"},
+                {"path": "project/src"},
+                {"path": "shared"},
+            ],
+        )
+
+        result = partition_manifest(
+            manifest,
+            roots=["project", "shared"],
+            symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
+        )
+
+        # Find the project partition
+        project_partition = next((m for r, m in result if r == "project"), None)
+        assert project_partition is not None
+
+        # The escaping symlink should be excluded
+        paths = {p.path for p in project_partition.files}
+        assert "src/link" not in paths
+        assert "src/main.py" in paths
+
+    def test_non_escaping_symlink_preserved_with_exclude_escaping(self) -> None:
+        """Non-escaping symlinks are preserved with EXCLUDE_ESCAPING policy."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "project/src/link", "symlink_target": "project/src/main.py"},
+            ],
+            dirs=[{"path": "project"}, {"path": "project/src"}],
+        )
+
+        result = partition_manifest(
+            manifest,
+            roots=["project"],
+            symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
+        )
+
+        _, project_manifest = result[0]
+        link_entry = next((p for p in project_manifest.files if p.path == "src/link"), None)
+        assert link_entry is not None
+        # Non-escaping symlink should be preserved
+        assert link_entry.symlink_target == "src/main.py"
+
+    def test_exclude_escaping_vs_collapse_escaping(self) -> None:
+        """EXCLUDE_ESCAPING excludes while COLLAPSE_ESCAPING collapses escaping symlinks."""
+        manifest = self._create_manifest(
+            files=[
+                {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "project/src/link", "symlink_target": "shared/lib.py"},
+                {"path": "shared/lib.py", "hash": "h2", "size": 200, "mtime": 2000},
+            ],
+            dirs=[
+                {"path": "project"},
+                {"path": "project/src"},
+                {"path": "shared"},
+            ],
+        )
+
+        # EXCLUDE_ESCAPING: symlink is excluded
+        result_exclude = partition_manifest(
+            manifest,
+            roots=["project", "shared"],
+            symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
+        )
+        project_exclude = next((m for r, m in result_exclude if r == "project"), None)
+        assert project_exclude is not None
+        paths_exclude = {p.path for p in project_exclude.files}
+        assert "src/link" not in paths_exclude
+
+        # COLLAPSE_ESCAPING: symlink is collapsed
+        result_collapse = partition_manifest(
+            manifest,
+            roots=["project", "shared"],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        )
+        project_collapse = next((m for r, m in result_collapse if r == "project"), None)
+        assert project_collapse is not None
+        link_entry = next((p for p in project_collapse.files if p.path == "src/link"), None)
+        assert link_entry is not None
+        assert link_entry.symlink_target is None
+        assert link_entry.hash == "h2"
 
 
 class TestPartitionManifestOrdering:

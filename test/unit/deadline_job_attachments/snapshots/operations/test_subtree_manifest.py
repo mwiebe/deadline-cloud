@@ -402,11 +402,117 @@ class TestSubtreeManifestSymlinks:
             dirs=[{"path": "assets"}, {"path": "assets/textures"}],
         )
 
-        result = subtree_manifest(manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE)
+        result = subtree_manifest(
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE_ALL
+        )
 
         paths = {p.path for p in result.files}
         assert "current" not in paths
         assert "wood.png" in paths
+
+    def test_escaping_symlink_excluded_with_exclude_escaping(self) -> None:
+        """Escaping symlinks are excluded with EXCLUDE_ESCAPING policy."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                # Target is relative to manifest root - points outside subtree
+                {"path": "assets/textures/current", "symlink_target": "assets/shared/latest.png"},
+                {"path": "assets/shared/latest.png", "hash": "h2", "size": 200, "mtime": 2000},
+            ],
+            dirs=[
+                {"path": "assets"},
+                {"path": "assets/textures"},
+                {"path": "assets/shared"},
+            ],
+        )
+
+        result = subtree_manifest(
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING
+        )
+
+        paths = {p.path for p in result.files}
+        # "current" should be excluded (escaping symlink)
+        assert "current" not in paths
+        assert "wood.png" in paths
+
+    def test_non_escaping_symlink_preserved_with_exclude_escaping(self) -> None:
+        """Non-escaping symlinks are preserved with EXCLUDE_ESCAPING policy."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                # Target is within subtree
+                {"path": "assets/textures/current", "symlink_target": "assets/textures/wood.png"},
+            ],
+            dirs=[{"path": "assets"}, {"path": "assets/textures"}],
+        )
+
+        result = subtree_manifest(
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING
+        )
+
+        paths_by_name = {p.path: p for p in result.files}
+        # "current" should be preserved (non-escaping symlink)
+        assert "current" in paths_by_name
+        assert paths_by_name["current"].symlink_target == "wood.png"
+
+    def test_exclude_escaping_vs_collapse_escaping(self) -> None:
+        """EXCLUDE_ESCAPING excludes while COLLAPSE_ESCAPING collapses escaping symlinks."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
+                # Target is relative to manifest root - points outside subtree
+                {"path": "assets/textures/current", "symlink_target": "assets/shared/latest.png"},
+                {"path": "assets/shared/latest.png", "hash": "h2", "size": 200, "mtime": 2000},
+            ],
+            dirs=[
+                {"path": "assets"},
+                {"path": "assets/textures"},
+                {"path": "assets/shared"},
+            ],
+        )
+
+        # EXCLUDE_ESCAPING: symlink is excluded
+        result_exclude = subtree_manifest(
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING
+        )
+        paths_exclude = {p.path for p in result_exclude.files}
+        assert "current" not in paths_exclude
+
+        # COLLAPSE_ESCAPING: symlink is collapsed
+        result_collapse = subtree_manifest(
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+        )
+        paths_collapse = {p.path: p for p in result_collapse.files}
+        assert "current" in paths_collapse
+        assert paths_collapse["current"].symlink_target is None
+        assert paths_collapse["current"].hash == "h2"
+
+    def test_exclude_escaping_directory_symlink(self) -> None:
+        """Directory symlinks escaping subtree are excluded with EXCLUDE_ESCAPING."""
+        manifest = self._create_rel_snapshot(
+            files=[
+                # Symlink to directory outside subtree
+                {"path": "assets/textures/link", "symlink_target": "assets/shared/v2"},
+                {"path": "assets/shared/v2/a.png", "hash": "h1", "size": 100, "mtime": 1000},
+                {"path": "assets/shared/v2/b.png", "hash": "h2", "size": 200, "mtime": 2000},
+            ],
+            dirs=[
+                {"path": "assets"},
+                {"path": "assets/textures"},
+                {"path": "assets/shared"},
+                {"path": "assets/shared/v2"},
+            ],
+        )
+
+        result = subtree_manifest(
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING
+        )
+
+        paths = {p.path for p in result.files}
+        # The symlink "link" should be excluded (no contents appear)
+        assert "link" not in paths
+        assert "link/a.png" not in paths
+        assert "link/b.png" not in paths
 
     def test_collapse_all_symlinks(self) -> None:
         """All symlinks are collapsed with COLLAPSE policy."""
@@ -420,7 +526,7 @@ class TestSubtreeManifestSymlinks:
         )
 
         result = subtree_manifest(
-            manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE
+            manifest, "assets/textures", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
         )
 
         paths_by_name = {p.path: p for p in result.files}

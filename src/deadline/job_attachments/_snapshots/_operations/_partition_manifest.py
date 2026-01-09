@@ -85,7 +85,7 @@ def partition_manifest(
         raise ValueError(
             f"symlink_policy={symlink_policy.value} is not supported for PARTITION operation. "
             f"Output must use relative paths, so escaping symlinks cannot be preserved. "
-            f"Use COLLAPSE, COLLAPSE_ESCAPING, or EXCLUDE instead."
+            f"Use COLLAPSE_ALL, COLLAPSE_ESCAPING, EXCLUDE_ALL, or EXCLUDE_ESCAPING instead."
         )
 
     # Normalize roots

@@ -58,8 +58,12 @@ def subtree_manifest(
     Args:
         manifest: The source manifest to extract from
         subtree: Path to the subtree root (relative or absolute, must match manifest path style)
-        symlink_policy: How to handle symlinks that escape the new subtree root.
-                       Only COLLAPSE, COLLAPSE_ESCAPING, and EXCLUDE are supported.
+        symlink_policy: How to handle symlinks in the subtree.
+                       - COLLAPSE_ALL: Collapse every symlink in the result.
+                       - COLLAPSE_ESCAPING: Collapse only symlinks whose targets escape the subtree.
+                       - EXCLUDE_ALL: Exclude every symlink from the result.
+                       - EXCLUDE_ESCAPING: Exclude only symlinks whose targets escape the subtree.
+                       PRESERVE and TRANSITIVE_INCLUDE_TARGETS are not supported.
         print_function_callback: Progress callback for status messages
 
     Returns:
@@ -79,7 +83,7 @@ def subtree_manifest(
         raise ValueError(
             f"symlink_policy={symlink_policy.value} is not supported for SUBTREE operation. "
             f"Output must use relative paths, so escaping symlinks cannot be preserved. "
-            f"Use COLLAPSE, COLLAPSE_ESCAPING, or EXCLUDE instead."
+            f"Use COLLAPSE_ALL, COLLAPSE_ESCAPING, EXCLUDE_ALL, or EXCLUDE_ESCAPING instead."
         )
 
     # Normalize subtree path
@@ -328,13 +332,21 @@ def _handle_symlink_in_subtree(
     Handle a symlink entry when extracting a subtree.
 
     Returns a tuple of (list of entries to add, total size added).
+
+    Policy behavior:
+    - COLLAPSE_ALL: Collapse every symlink regardless of target location.
+    - COLLAPSE_ESCAPING: Collapse only symlinks whose targets escape the subtree;
+                         preserve symlinks whose targets are within the subtree.
+    - EXCLUDE_ALL: Exclude every symlink regardless of target location.
+    - EXCLUDE_ESCAPING: Exclude only symlinks whose targets escape the subtree;
+                        preserve symlinks whose targets are within the subtree.
     """
     # Check if the target is within the new subtree
     # (symlink_target is already relative to manifest root)
     target_in_subtree = _is_within_subtree(symlink_target, subtree)
 
-    # COLLAPSE policy: collapse ALL symlinks regardless of whether they escape
-    if symlink_policy == SymlinkPolicy.COLLAPSE:
+    # COLLAPSE_ALL policy: collapse ALL symlinks regardless of whether they escape
+    if symlink_policy == SymlinkPolicy.COLLAPSE_ALL:
         return _collapse_symlink(
             rebased_path=rebased_path,
             target=symlink_target,
@@ -343,8 +355,14 @@ def _handle_symlink_in_subtree(
             print_function_callback=print_function_callback,
         )
 
+    # EXCLUDE_ALL policy: exclude ALL symlinks regardless of whether they escape
+    if symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
+        print_function_callback(f"Excluded symlink: {rebased_path}")
+        return ([], 0)
+
+    # For COLLAPSE_ESCAPING and EXCLUDE_ESCAPING, preserve symlinks within subtree
     if target_in_subtree:
-        # Target is within subtree - symlink doesn't escape
+        # Target is within subtree - symlink doesn't escape, preserve it
         # Rebase the symlink target relative to the new root
         rebased_target = _rebase_path(symlink_target, subtree)
         print_function_callback(f"Preserved symlink: {rebased_path} -> {rebased_target}")
@@ -359,11 +377,11 @@ def _handle_symlink_in_subtree(
         )
 
     # Target escapes the subtree - handle according to policy
-    if symlink_policy == SymlinkPolicy.EXCLUDE:
+    if symlink_policy == SymlinkPolicy.EXCLUDE_ESCAPING:
         print_function_callback(f"Excluded escaping symlink: {rebased_path}")
         return ([], 0)
 
-    # COLLAPSE_ESCAPING - collapse the symlink
+    # COLLAPSE_ESCAPING - collapse the escaping symlink
     return _collapse_symlink(
         rebased_path=rebased_path,
         target=symlink_target,

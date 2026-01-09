@@ -40,7 +40,7 @@ def collect_manifest(
     filenames: List[Path | str],
     *,
     optional_filenames: Optional[List[Path | str]] = None,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsSnapshotManifest:
@@ -62,13 +62,15 @@ def collect_manifest(
         optional_filenames: List of file/symlink paths to include if they exist.
             Missing files are silently ignored.
         symlink_policy: How to handle symlinks during collection:
-            - COLLAPSE: Follow all symlinks, treating them as files/directories.
-            - PRESERVE: Keep all symlinks with absolute targets. (default)
-            - TRANSITIVE_INCLUDE_TARGETS: Keep symlinks and add their targets.
-            - EXCLUDE: Skip all symlinks entirely.
             - COLLAPSE_ESCAPING: Preserve symlinks whose targets are within the
               collected paths; collapse symlinks whose targets are outside
-              (escaping symlinks) to files/directories.
+              (escaping symlinks) to files/directories. (default)
+            - COLLAPSE_ALL: Follow all symlinks, treating them as files/directories.
+            - PRESERVE: Keep all symlinks with absolute targets.
+            - TRANSITIVE_INCLUDE_TARGETS: Keep symlinks and add their targets.
+            - EXCLUDE_ALL: Skip all symlinks entirely.
+            - EXCLUDE_ESCAPING: Preserve symlinks whose targets are within the
+              collected paths; exclude symlinks whose targets are outside.
         file_chunk_size_bytes: Chunk size for large file hashing.
             - None: Use DEFAULT_FILE_CHUNK_SIZE (256MB) (default)
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
@@ -158,7 +160,7 @@ def _collect_manifest_impl(
     file_entries: List[ManifestFilePath] = []
     dir_entries: List[ManifestDirectoryPath] = []
     total_size = 0
-    followlinks = symlink_policy == SymlinkPolicy.COLLAPSE
+    followlinks = symlink_policy == SymlinkPolicy.COLLAPSE_ALL
     collected_paths: Set[str] = set()
     transitive_targets: List[Path] = []
 
@@ -230,7 +232,7 @@ def _collect_manifest_impl(
                 print_function_callback(f"Skipping inaccessible file {entry_path}: {e}")
 
     def process_deferred_symlink(full_path: Path, entry_path: str, is_directory: bool) -> None:
-        """Process a deferred symlink for COLLAPSE_ESCAPING policy."""
+        """Process a deferred symlink for COLLAPSE_ESCAPING or EXCLUDE_ESCAPING policy."""
         nonlocal total_size
 
         if entry_path in collected_paths:
@@ -250,25 +252,36 @@ def _collect_manifest_impl(
             kind = "symlink dir" if is_directory else "symlink"
             print_function_callback(f"Collected {kind} (non-escaping): {entry_path}")
         else:
-            # Target is outside collected paths - collapse
-            if is_directory:
-                # Queue for directory symlink collection
-                escaping_dir_symlinks.append((entry_path, target))
-                print_function_callback(f"Collapsing escaping dir symlink: {entry_path}")
-            else:
-                # Collapse file symlink
-                try:
-                    target_stat = full_path.stat(follow_symlinks=True)
-                    file_entry = _create_unhashed_file_entry(full_path, entry_path, target_stat)
-                    file_entries.append(file_entry)
-                    collected_paths.add(entry_path)
-                    total_size += file_entry.size or 0
-                    print_function_callback(f"Collected (collapsed escaping symlink): {entry_path}")
-                except OSError as e:
-                    print_function_callback(f"Skipping broken symlink {entry_path}: {e}")
+            # Target is outside collected paths - handle based on policy
+            if symlink_policy == SymlinkPolicy.EXCLUDE_ESCAPING:
+                # Exclude escaping symlinks entirely
+                kind = "dir symlink" if is_directory else "symlink"
+                print_function_callback(f"Excluding escaping {kind}: {entry_path}")
+            elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
+                # Collapse escaping symlinks
+                if is_directory:
+                    # Queue for directory symlink collection
+                    escaping_dir_symlinks.append((entry_path, target))
+                    print_function_callback(f"Collapsing escaping dir symlink: {entry_path}")
+                else:
+                    # Collapse file symlink
+                    try:
+                        target_stat = full_path.stat(follow_symlinks=True)
+                        file_entry = _create_unhashed_file_entry(full_path, entry_path, target_stat)
+                        file_entries.append(file_entry)
+                        collected_paths.add(entry_path)
+                        total_size += file_entry.size or 0
+                        print_function_callback(
+                            f"Collected (collapsed escaping symlink): {entry_path}"
+                        )
+                    except OSError as e:
+                        print_function_callback(f"Skipping broken symlink {entry_path}: {e}")
 
     # Determine if we need two-pass processing
-    use_two_pass = symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING
+    use_two_pass = symlink_policy in (
+        SymlinkPolicy.COLLAPSE_ESCAPING,
+        SymlinkPolicy.EXCLUDE_ESCAPING,
+    )
 
     # =========================================================================
     # Pass 1: Collect all paths (defer symlinks for COLLAPSE_ESCAPING)
@@ -311,7 +324,7 @@ def _collect_manifest_impl(
                             if transitive_target is not None:
                                 transitive_targets.append(transitive_target)
                             if should_follow:
-                                if symlink_policy == SymlinkPolicy.COLLAPSE:
+                                if symlink_policy == SymlinkPolicy.COLLAPSE_ALL:
                                     pass  # os.walk will follow it
                                 else:
                                     dirnames.remove(name)
@@ -349,7 +362,7 @@ def _collect_manifest_impl(
                                 transitive_targets.append(transitive_target)
                             if should_follow:
                                 if symlink_target_is_dir:
-                                    if symlink_policy == SymlinkPolicy.COLLAPSE:
+                                    if symlink_policy == SymlinkPolicy.COLLAPSE_ALL:
                                         rel_path = full_path.absolute().as_posix()
                                         target = _get_symlink_absolute_target(full_path)
                                         escaping_dir_symlinks.append((rel_path, target))
@@ -488,16 +501,16 @@ def _handle_symlink(
         None if symlink should be skipped entirely.
         Otherwise a tuple of:
         - entry: ManifestFilePath to add (or None if no entry)
-        - should_follow: Whether to follow the symlink (for COLLAPSE)
+        - should_follow: Whether to follow the symlink (for COLLAPSE_ALL)
         - transitive_target: Path to add transitively (for TRANSITIVE_INCLUDE_TARGETS)
     """
     entry_path = full_path.absolute().as_posix()
 
-    if symlink_policy == SymlinkPolicy.EXCLUDE:
+    if symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
         print_function_callback(f"Excluding symlink: {entry_path}")
         return None
 
-    elif symlink_policy == SymlinkPolicy.COLLAPSE:
+    elif symlink_policy == SymlinkPolicy.COLLAPSE_ALL:
         if is_directory:
             print_function_callback(f"Following symlink dir: {entry_path}")
             return (None, True, None)
@@ -526,6 +539,10 @@ def _handle_symlink(
     elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
         # This should not be called for COLLAPSE_ESCAPING - it uses two-pass
         raise ValueError("COLLAPSE_ESCAPING should use two-pass processing, not _handle_symlink")
+
+    elif symlink_policy == SymlinkPolicy.EXCLUDE_ESCAPING:
+        # This should not be called for EXCLUDE_ESCAPING - it uses two-pass
+        raise ValueError("EXCLUDE_ESCAPING should use two-pass processing, not _handle_symlink")
 
     else:
         raise ValueError(f"Unknown symlink policy: {symlink_policy}")

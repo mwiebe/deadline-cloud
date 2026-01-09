@@ -1212,9 +1212,9 @@ def download_manifest(
     _validate_absolute_paths(manifest)
 
     # Validate symlink_policy
-    if symlink_policy not in (SymlinkPolicy.PRESERVE, SymlinkPolicy.EXCLUDE):
+    if symlink_policy not in (SymlinkPolicy.PRESERVE, SymlinkPolicy.EXCLUDE_ALL):
         raise ValueError(
-            f"DOWNLOAD operation only supports PRESERVE or EXCLUDE symlink policies. "
+            f"DOWNLOAD operation only supports PRESERVE or EXCLUDE_ALL symlink policies. "
             f"Got: {symlink_policy.value}"
         )
 
