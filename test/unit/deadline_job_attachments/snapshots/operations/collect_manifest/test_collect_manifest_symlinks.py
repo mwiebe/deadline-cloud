@@ -5,8 +5,8 @@ Tests for collect_manifest symlink handling.
 
 These tests cover:
 - Symlink chain handling with PRESERVE policy
-- COLLAPSE policy with file and directory symlinks
-- EXCLUDE policy
+- COLLAPSE_ALL policy with file and directory symlinks
+- EXCLUDE_ALL policy
 - TRANSITIVE_INCLUDE_TARGETS policy basics
 - Symlink target resolution
 """
@@ -181,10 +181,10 @@ class TestSymlinkChains:
 
 
 class TestCollapsePolicy:
-    """Tests for COLLAPSE symlink policy."""
+    """Tests for COLLAPSE_ALL symlink policy."""
 
     def test_collapse_follows_file_symlinks(self, tmp_path: Path) -> None:
-        """COLLAPSE policy follows file symlinks and collects target content."""
+        """COLLAPSE_ALL policy follows file symlinks and collects target content."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
@@ -207,7 +207,7 @@ class TestCollapsePolicy:
         assert link_entry.size == len("content")
 
     def test_collapse_follows_directory_symlinks(self, tmp_path: Path) -> None:
-        """COLLAPSE policy follows directory symlinks."""
+        """COLLAPSE_ALL policy follows directory symlinks."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
@@ -225,7 +225,7 @@ class TestCollapsePolicy:
         assert (subdir / "file.txt").as_posix() in paths
 
     def test_collapse_nested_directory_symlinks(self, tmp_path: Path) -> None:
-        """COLLAPSE policy follows nested directory symlinks."""
+        """COLLAPSE_ALL policy follows nested directory symlinks."""
         # Create: root/link1 -> subdir1, subdir1/link2 -> subdir2, subdir2/file.txt
         subdir2 = tmp_path / "subdir2"
         subdir2.mkdir()
@@ -249,11 +249,11 @@ class TestCollapsePolicy:
 
         # The file should be accessible through the symlink chain
         paths = {p.path for p in manifest.files}
-        # With COLLAPSE, os.walk follows symlinks, so we should see the file
+        # With COLLAPSE_ALL, os.walk follows symlinks, so we should see the file
         assert any("file.txt" in p for p in paths)
 
     def test_collapse_symlink_chain(self, tmp_path: Path) -> None:
-        """COLLAPSE policy follows symlink chains to final target."""
+        """COLLAPSE_ALL policy follows symlink chains to final target."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link1 = tmp_path / "link1.txt"
@@ -282,10 +282,10 @@ class TestCollapsePolicy:
 
 
 class TestExcludePolicy:
-    """Tests for EXCLUDE symlink policy."""
+    """Tests for EXCLUDE_ALL symlink policy."""
 
     def test_exclude_skips_file_symlinks(self, tmp_path: Path) -> None:
-        """EXCLUDE policy skips file symlinks entirely."""
+        """EXCLUDE_ALL policy skips file symlinks entirely."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
@@ -303,7 +303,7 @@ class TestExcludePolicy:
         assert link.as_posix() not in paths
 
     def test_exclude_skips_directory_symlinks(self, tmp_path: Path) -> None:
-        """EXCLUDE policy skips directory symlinks."""
+        """EXCLUDE_ALL policy skips directory symlinks."""
         subdir = tmp_path / "subdir"
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
@@ -328,7 +328,7 @@ class TestExcludePolicy:
         assert link.as_posix() not in dir_paths
 
     def test_exclude_logs_callback(self, tmp_path: Path) -> None:
-        """EXCLUDE policy logs excluded symlinks via callback."""
+        """EXCLUDE_ALL policy logs excluded symlinks via callback."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"
@@ -487,7 +487,7 @@ class TestSymlinkInFilenames:
         assert manifest.files[0].symlink_target == target.as_posix()
 
     def test_symlink_in_filenames_collapsed(self, tmp_path: Path) -> None:
-        """Symlink passed via filenames is collapsed with COLLAPSE policy."""
+        """Symlink passed via filenames is collapsed with COLLAPSE_ALL policy."""
         target = tmp_path / "target.txt"
         target.write_text("content")
         link = tmp_path / "link.txt"

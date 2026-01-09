@@ -1803,7 +1803,7 @@ def partition_manifest(
 | `manifest` | Source manifest (absolute or relative paths) |
 | `roots` | Optional list of root paths to partition by. No root may be a subpath of another. |
 | `referenced_paths` | Optional list of paths referenced by the workload. These paths must be within one of the resulting roots, affecting auto-root determination even if no files exist under them. |
-| `symlink_policy` | How to handle symlinks that escape their partition root. Only COLLAPSE, COLLAPSE_ESCAPING, and EXCLUDE are supported. |
+| `symlink_policy` | How to handle symlinks that escape their partition root. Only COLLAPSE_ALL, COLLAPSE_ESCAPING, and EXCLUDE_ALL are supported. |
 | `print_function_callback` | Progress callback for status messages |
 
 **Returns:** A list of `(root, RelManifest)` tuples where:

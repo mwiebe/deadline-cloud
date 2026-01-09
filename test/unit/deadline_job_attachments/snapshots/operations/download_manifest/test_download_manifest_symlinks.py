@@ -71,7 +71,7 @@ class TestDownloadManifestSymlinks:
         assert downloaded_link.is_symlink()
 
     def test_symlink_exclude(self, tmp_path: Path) -> None:
-        """Test EXCLUDE symlink policy skips symlinks."""
+        """Test EXCLUDE_ALL symlink policy skips symlinks."""
         source_dir = tmp_path / "source"
         source_dir.mkdir()
         cache_root = tmp_path / "cache"

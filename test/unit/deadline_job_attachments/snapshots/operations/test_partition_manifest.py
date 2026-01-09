@@ -678,7 +678,7 @@ class TestPartitionManifestSymlinks:
         assert link_entry.hash == "h2"
 
     def test_escaping_symlink_excluded(self) -> None:
-        """Escaping symlinks are excluded with EXCLUDE policy."""
+        """Escaping symlinks are excluded with EXCLUDE_ALL policy."""
         manifest = self._create_manifest(
             files=[
                 {"path": "project/src/main.py", "hash": "h1", "size": 100, "mtime": 1000},

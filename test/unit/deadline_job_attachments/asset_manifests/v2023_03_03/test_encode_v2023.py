@@ -167,7 +167,7 @@ class TestEncodeV2023SymlinkHandling:
         assert paths_by_name["link.txt"]["size"] == 100
 
     def test_encode_collapse_symlinks_explicit(self) -> None:
-        """Explicit COLLAPSE policy collapses symlinks."""
+        """Explicit COLLAPSE_ALL policy collapses symlinks."""
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             files=[
@@ -178,14 +178,14 @@ class TestEncodeV2023SymlinkHandling:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = encode_v2023(manifest, symlink_policy=SymlinkPolicy.COLLAPSE)
+        result = encode_v2023(manifest, symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
         data = json.loads(result)
 
         paths_by_name = {p["path"]: p for p in data["paths"]}
         assert paths_by_name["link.txt"]["hash"] == "h1"
 
     def test_encode_exclude_symlinks(self) -> None:
-        """EXCLUDE policy removes symlinks from output."""
+        """EXCLUDE_ALL policy removes symlinks from output."""
         manifest = RelSnapshotManifest(
             hash_alg=HashAlgorithm.XXH128,
             files=[
@@ -196,7 +196,7 @@ class TestEncodeV2023SymlinkHandling:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = encode_v2023(manifest, symlink_policy=SymlinkPolicy.EXCLUDE)
+        result = encode_v2023(manifest, symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
         data = json.loads(result)
 
         # Only target.txt should remain
@@ -373,4 +373,4 @@ class TestEncodeV2023StrictMode:
 
         # Symlink to missing target will be excluded, leaving empty manifest
         with pytest.raises(ManifestDecodeValidationError, match="at least one"):
-            encode_v2023(manifest, symlink_policy=SymlinkPolicy.EXCLUDE)
+            encode_v2023(manifest, symlink_policy=SymlinkPolicy.EXCLUDE_ALL)

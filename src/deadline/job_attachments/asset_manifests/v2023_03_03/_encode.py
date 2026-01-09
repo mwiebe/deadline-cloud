@@ -32,7 +32,7 @@ def encode_v2023(
     manifest: RelManifest,
     *,
     strict: bool = True,
-    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE,
+    symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ALL,
 ) -> str:
     """
     Encode a RelManifest to v2023-03-03 JSON format.
@@ -49,16 +49,16 @@ def encode_v2023(
             deleted entries, or unhashed files). If False, these are silently
             skipped or ignored.
         symlink_policy: How to handle symlinks:
-            - COLLAPSE (default): Collapse symlinks to their target content using
+            - COLLAPSE_ALL (default): Collapse symlinks to their target content using
               subtree_manifest with symlink_policy=COLLAPSE.
-            - EXCLUDE: Silently skip symlink entries.
+            - EXCLUDE_ALL: Silently skip symlink entries.
 
     Returns:
         Canonical JSON string with manifestVersion "2023-03-03"
 
     Raises:
         ManifestDecodeValidationError: If manifest contains unsupported features
-            and strict=True, or if symlink_policy is not COLLAPSE or EXCLUDE.
+            and strict=True, or if symlink_policy is not COLLAPSE_ALL or EXCLUDE_ALL.
         AssertionError: If manifest.fileChunkSizeBytes is not WHOLE_FILE_CHUNK_SIZE.
     """
     # v2023 format doesn't support chunking - manifest must use whole-file hashing
@@ -68,9 +68,9 @@ def encode_v2023(
     )
 
     # Validate symlink_policy
-    if symlink_policy not in (SymlinkPolicy.COLLAPSE, SymlinkPolicy.EXCLUDE):
+    if symlink_policy not in (SymlinkPolicy.COLLAPSE_ALL, SymlinkPolicy.EXCLUDE_ALL):
         raise ManifestDecodeValidationError(
-            f"symlink_policy must be COLLAPSE or EXCLUDE for v2023 encoding, "
+            f"symlink_policy must be COLLAPSE_ALL or EXCLUDE_ALL for v2023 encoding, "
             f"got {symlink_policy.value}"
         )
 

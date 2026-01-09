@@ -1423,7 +1423,7 @@ def download_manifest(
                 progress_tracker.increase_processed(1, 0)
                 progress_tracker.report_progress()
                 print_function_callback(f"Created symlink: {entry.path}")
-        # If EXCLUDE, symlinks are skipped (already not in total_files count)
+        # If EXCLUDE_ALL, symlinks are skipped (already not in total_files count)
 
     except AssetSyncCancelledError:
         raise AssetSyncCancelledError(

@@ -66,7 +66,7 @@ def partition_manifest(
                          must be within one of the resulting roots, affecting auto-root
                          determination even if no files exist under them.
         symlink_policy: How to handle symlinks that escape their partition root.
-                       Only COLLAPSE, COLLAPSE_ESCAPING, and EXCLUDE are supported.
+                       Only COLLAPSE_ALL, COLLAPSE_ESCAPING, and EXCLUDE_ALL are supported.
         print_function_callback: Progress callback for status messages
 
     Returns:

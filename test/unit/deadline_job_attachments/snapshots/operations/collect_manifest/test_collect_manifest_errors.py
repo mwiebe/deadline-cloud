@@ -157,7 +157,7 @@ class TestBrokenSymlinks:
     """Tests for broken symlink handling."""
 
     def test_broken_file_symlink_skipped_with_collapse(self, tmp_path: Path) -> None:
-        """Broken file symlink is skipped with COLLAPSE policy."""
+        """Broken file symlink is skipped with COLLAPSE_ALL policy."""
         # Create a symlink to a non-existent target
         link = tmp_path / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
@@ -179,7 +179,7 @@ class TestBrokenSymlinks:
         assert any("broken" in msg.lower() or "skipping" in msg.lower() for msg in messages)
 
     def test_broken_dir_symlink_skipped_with_collapse(self, tmp_path: Path) -> None:
-        """Broken directory symlink is skipped with COLLAPSE policy."""
+        """Broken directory symlink is skipped with COLLAPSE_ALL policy."""
         # Create a symlink to a non-existent directory
         link = tmp_path / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
@@ -216,7 +216,7 @@ class TestBrokenSymlinks:
         assert paths_by_name[link.as_posix()].symlink_target == nonexistent.as_posix()
 
     def test_broken_symlink_excluded_with_exclude(self, tmp_path: Path) -> None:
-        """Broken symlink is excluded with EXCLUDE policy."""
+        """Broken symlink is excluded with EXCLUDE_ALL policy."""
         link = tmp_path / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 

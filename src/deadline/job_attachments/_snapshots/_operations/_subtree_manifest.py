@@ -395,7 +395,7 @@ def _identity_subtree_manifest(
         if entry.symlink_target is not None:
             symlink_target = entry.symlink_target
 
-            if symlink_policy == SymlinkPolicy.COLLAPSE:
+            if symlink_policy == SymlinkPolicy.COLLAPSE_ALL:
                 # Collapse all symlinks
                 new_entries, new_size = _collapse_symlink(
                     rebased_path=entry.path,

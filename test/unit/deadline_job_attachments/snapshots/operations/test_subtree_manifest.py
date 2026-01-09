@@ -392,7 +392,7 @@ class TestSubtreeManifestSymlinks:
         assert paths_by_name["current"].size == 200
 
     def test_escaping_symlink_excluded(self) -> None:
-        """Escaping symlinks are excluded with EXCLUDE policy."""
+        """Escaping symlinks are excluded with EXCLUDE_ALL policy."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
@@ -515,7 +515,7 @@ class TestSubtreeManifestSymlinks:
         assert "link/b.png" not in paths
 
     def test_collapse_all_symlinks(self) -> None:
-        """All symlinks are collapsed with COLLAPSE policy."""
+        """All symlinks are collapsed with COLLAPSE_ALL policy."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "assets/textures/wood.png", "hash": "h1", "size": 100, "mtime": 1000},
@@ -1126,7 +1126,7 @@ class TestIdentitySubtree:
         assert result_dot.totalSize == result_empty.totalSize
 
     def test_identity_subtree_collapse_policy_collapses_all_symlinks(self) -> None:
-        """Identity subtree with COLLAPSE policy collapses all symlinks."""
+        """Identity subtree with COLLAPSE_ALL policy collapses all symlinks."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "target.txt", "hash": "h1", "size": 100, "mtime": 1000},
@@ -1134,7 +1134,7 @@ class TestIdentitySubtree:
             ],
         )
 
-        result = subtree_manifest(manifest, ".", symlink_policy=SymlinkPolicy.COLLAPSE)
+        result = subtree_manifest(manifest, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
         paths_by_name = {p.path: p for p in result.files}
         # Symlink should be collapsed to file content
@@ -1144,7 +1144,7 @@ class TestIdentitySubtree:
         assert paths_by_name["link_to_target"].size == 100
 
     def test_identity_subtree_exclude_policy_excludes_all_symlinks(self) -> None:
-        """Identity subtree with EXCLUDE policy excludes all symlinks."""
+        """Identity subtree with EXCLUDE_ALL policy excludes all symlinks."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "target.txt", "hash": "h1", "size": 100, "mtime": 1000},
@@ -1152,7 +1152,7 @@ class TestIdentitySubtree:
             ],
         )
 
-        result = subtree_manifest(manifest, ".", symlink_policy=SymlinkPolicy.EXCLUDE)
+        result = subtree_manifest(manifest, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         paths = {p.path for p in result.files}
         # Symlink should be excluded
@@ -1234,7 +1234,7 @@ class TestIdentitySubtree:
         assert result.totalSize == 300
 
     def test_identity_subtree_collapse_directory_symlink(self) -> None:
-        """Identity subtree with COLLAPSE collapses directory symlinks."""
+        """Identity subtree with COLLAPSE_ALL collapses directory symlinks."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "link_to_dir", "symlink_target": "actual_dir"},
@@ -1244,7 +1244,7 @@ class TestIdentitySubtree:
             dirs=[{"path": "actual_dir"}],
         )
 
-        result = subtree_manifest(manifest, ".", symlink_policy=SymlinkPolicy.COLLAPSE)
+        result = subtree_manifest(manifest, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
         paths = {p.path for p in result.files}
         # Directory symlink should be expanded
@@ -1286,7 +1286,7 @@ class TestSubtreeInvariant:
         )
 
     def test_invariant_collapse_policy(self) -> None:
-        """Two-step subtree with COLLAPSE equals single-step subtree with COLLAPSE."""
+        """Two-step subtree with COLLAPSE_ALL equals single-step subtree with COLLAPSE."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "subdir/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
@@ -1297,11 +1297,13 @@ class TestSubtreeInvariant:
         )
 
         # Single-step: SUBTREE(manifest, "subdir", COLLAPSE)
-        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE)
+        single_step = subtree_manifest(
+            manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
+        )
 
         # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE)
+        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
         # Results should be equivalent
         single_paths = {(p.path, p.hash, p.size) for p in single_step.files}
@@ -1309,11 +1311,11 @@ class TestSubtreeInvariant:
         assert single_paths == two_paths
 
     def test_invariant_exclude_policy(self) -> None:
-        """Two-step subtree with EXCLUDE equals single-step subtree with EXCLUDE.
+        """Two-step subtree with EXCLUDE_ALL equals single-step subtree with EXCLUDE.
 
         Note: This invariant only holds when there are no non-escaping symlinks.
         Non-escaping symlinks are preserved in step1 (COLLAPSE_ESCAPING) but
-        excluded in step2 (EXCLUDE), breaking the invariant.
+        excluded in step2 (EXCLUDE_ALL), breaking the invariant.
         """
         # Use a manifest with NO symlinks to test the invariant
         manifest = self._create_rel_snapshot(
@@ -1324,12 +1326,12 @@ class TestSubtreeInvariant:
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE)
-        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE)
+        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE_ALL)
+        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
-        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE)
+        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE_ALL)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE)
+        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         # Results should be equivalent
         single_paths = {(p.path, p.hash, p.size) for p in single_step.files}
@@ -1337,15 +1339,15 @@ class TestSubtreeInvariant:
         assert single_paths == two_paths
 
     def test_invariant_exclude_exception_non_escaping_symlink(self) -> None:
-        """Non-escaping symlinks break the invariant for EXCLUDE policy.
+        """Non-escaping symlinks break the invariant for EXCLUDE_ALL policy.
 
-        For regular subtree with EXCLUDE: only ESCAPING symlinks are excluded,
+        For regular subtree with EXCLUDE_ALL: only ESCAPING symlinks are excluded,
         non-escaping symlinks are preserved (rebased).
 
         For identity subtree with EXCLUDE: ALL symlinks are excluded.
 
-        So: SUBTREE("subdir", EXCLUDE) preserves non-escaping symlinks,
-        but SUBTREE("subdir", COLLAPSE_ESCAPING) + SUBTREE(".", EXCLUDE)
+        So: SUBTREE("subdir", EXCLUDE_ALL) preserves non-escaping symlinks,
+        but SUBTREE("subdir", COLLAPSE_ESCAPING) + SUBTREE(".", EXCLUDE_ALL)
         excludes them in the second step.
         """
         manifest = self._create_rel_snapshot(
@@ -1359,11 +1361,11 @@ class TestSubtreeInvariant:
         )
 
         # Single-step: SUBTREE(manifest, "subdir", EXCLUDE) - preserves non-escaping symlinks
-        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE)
+        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE)
+        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         # Single-step PRESERVES the non-escaping symlink (only escaping ones are excluded)
         single_paths = {p.path for p in single_step.files}
@@ -1388,11 +1390,13 @@ class TestSubtreeInvariant:
         )
 
         # Single-step: SUBTREE(manifest, "subdir", COLLAPSE)
-        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE)
+        single_step = subtree_manifest(
+            manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
+        )
 
         # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE)
+        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
         # Results should be equivalent - escaping symlink is collapsed in both cases
         single_paths = {(p.path, p.hash, p.size) for p in single_step.files}
@@ -1408,7 +1412,7 @@ class TestSubtreeInvariant:
         This is the documented exception to the invariant: when using COLLAPSE_ESCAPING
         in the first step, escaping symlinks are collapsed. If the target is outside
         the subtree, the symlink is replaced with the target's content. In the second
-        step with EXCLUDE, there's no symlink left to exclude.
+        step with EXCLUDE_ALL, there's no symlink left to exclude.
         """
         manifest = self._create_rel_snapshot(
             files=[
@@ -1420,11 +1424,11 @@ class TestSubtreeInvariant:
         )
 
         # Single-step: SUBTREE(manifest, "subdir", EXCLUDE)
-        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE)
+        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE)
+        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         # Single-step excludes the escaping symlink
         single_paths = {p.path for p in single_step.files}
@@ -1446,11 +1450,13 @@ class TestSubtreeInvariant:
         )
 
         # Single-step: SUBTREE(manifest, "subdir", COLLAPSE)
-        single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE)
+        single_step = subtree_manifest(
+            manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
+        )
 
         # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
-        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE)
+        two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
         # Results should be equivalent
         single_paths = {(p.path, p.hash, p.size) for p in single_step.files}
