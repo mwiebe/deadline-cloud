@@ -117,7 +117,7 @@ class TestDownloadManifestHashCacheSkip:
 
             # Patch the filesystem copy function to track calls
             with patch(
-                "deadline.job_attachments._snapshots._operations._download_manifest._download_file_from_filesystem"
+                "deadline.job_attachments._snapshots._operations._download_manifest_file_system.download_file_from_filesystem"
             ) as mock_download:
                 # Second download - should skip without calling download function
                 result = download_manifest(

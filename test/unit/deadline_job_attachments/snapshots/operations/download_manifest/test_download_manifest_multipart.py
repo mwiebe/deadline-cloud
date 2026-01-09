@@ -23,6 +23,7 @@ from deadline.job_attachments._snapshots._manifest import ManifestFilePath
 from deadline.job_attachments._snapshots._content_addressed_data_cache import S3DataCache
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 import deadline.job_attachments._snapshots._operations._download_manifest as download_module
+import deadline.job_attachments._snapshots._operations._download_manifest_s3 as s3_module
 
 
 class TestMultipartDownloadRegularFiles:
@@ -79,19 +80,21 @@ class TestMultipartDownloadRegularFiles:
         )
 
         # Save original values
-        original_min_size = download_module.MIN_SIZE_FOR_MULTIPART_DOWNLOAD
-        original_part_size = download_module.DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        original_min_size = s3_module.MIN_SIZE_FOR_MULTIPART_DOWNLOAD
+        original_part_size = s3_module.DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
 
         try:
-            # Directly modify the module constants
+            # Directly modify the module constants in both modules
+            s3_module.MIN_SIZE_FOR_MULTIPART_DOWNLOAD = 64
+            s3_module.DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = 32
             download_module.MIN_SIZE_FOR_MULTIPART_DOWNLOAD = 64
-            download_module.DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = 32
 
             result = download_manifest(manifest=manifest, data_cache=data_cache)
         finally:
             # Restore original values
+            s3_module.MIN_SIZE_FOR_MULTIPART_DOWNLOAD = original_min_size
+            s3_module.DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = original_part_size
             download_module.MIN_SIZE_FOR_MULTIPART_DOWNLOAD = original_min_size
-            download_module.DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = original_part_size
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -142,9 +145,10 @@ class TestMultipartDownloadRegularFiles:
             total_size=len(file_content),
         )
 
-        # Patch the constant directly on the module object
-        with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            result = download_manifest(manifest=manifest, data_cache=data_cache)
+        # Patch the constant directly on both modules
+        with patch.object(s3_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+            with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+                result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -214,10 +218,11 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=256,  # Chunk size in manifest
         )
 
-        # Patch the constants directly on the module object
-        with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(download_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        # Patch the constants directly on both modules
+        with patch.object(s3_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+            with patch.object(s3_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
+                with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+                    result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -262,9 +267,10 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=256,
         )
 
-        # Patch the constant directly on the module object
-        with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            result = download_manifest(manifest=manifest, data_cache=data_cache)
+        # Patch the constant directly on both modules
+        with patch.object(s3_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+            with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+                result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -319,10 +325,11 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=chunk_size,
         )
 
-        # Patch the constants directly on the module object
-        with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(download_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        # Patch the constants directly on both modules
+        with patch.object(s3_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+            with patch.object(s3_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
+                with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+                    result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -410,10 +417,11 @@ class TestMultipartDownloadMixedFiles:
             total_size=len(small_content) + len(large_content),
         )
 
-        # Patch the constants directly on the module object
-        with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(download_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        # Patch the constants directly on both modules
+        with patch.object(s3_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+            with patch.object(s3_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
+                with patch.object(download_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
+                    result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify both files downloaded correctly
         assert small_path.exists()

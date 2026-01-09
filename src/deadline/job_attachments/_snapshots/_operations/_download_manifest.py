@@ -63,22 +63,27 @@ from ...exceptions import (
     AssetSyncCancelledError,
     JobAttachmentsS3ClientError,
     JobAttachmentS3BotoCoreError,
-    COMMON_ERROR_GUIDANCE_FOR_S3,
 )
 from ..._utils import _get_long_path_compatible_path
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
+
+# Import S3-specific functions
+from ._download_manifest_s3 import (
+    download_s3_multipart_async,
+    download_s3_chunk_to_offset,
+    download_s3_chunk_multipart_async,
+    MIN_SIZE_FOR_MULTIPART_DOWNLOAD,
+)
+
+# Import filesystem-specific functions
+from ._download_manifest_file_system import (
+    download_fs_chunk_to_offset,
+)
 
 logger = logging.getLogger("deadline.job_attachments.download")
 
 # Default number of parallel download workers
 DEFAULT_MAX_WORKERS = 10
-
-# Part size for multi-part parallel downloads (8MB)
-# Files/chunks larger than this will be downloaded in parallel parts
-DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = 8 * 1024 * 1024  # 8MB
-
-# Minimum file size to use multi-part download (files smaller than this use single request)
-MIN_SIZE_FOR_MULTIPART_DOWNLOAD = 16 * 1024 * 1024  # 16MB
 
 
 @dataclass
@@ -216,280 +221,6 @@ def _get_new_copy_file_path(
         return new_file_path
 
 
-def _download_file_from_s3(
-    s3_client: Any,
-    s3_bucket: str,
-    s3_key: str,
-    local_path: Path,
-    expected_size: Optional[int],
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Download a single file from S3 to local filesystem atomically.
-
-    Downloads to a temporary file first, then atomically moves to the target path.
-    This ensures the target file is never in a partial/corrupt state.
-
-    Returns the number of bytes downloaded.
-    """
-    import secrets
-    from boto3.s3.transfer import TransferConfig
-
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Create temp file path beside the target
-    temp_suffix = secrets.token_hex(5)
-    temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-
-    config = TransferConfig()
-    bytes_downloaded = 0
-
-    def progress_callback(bytes_amount: int) -> None:
-        nonlocal bytes_downloaded
-        bytes_downloaded += bytes_amount
-        if progress_tracker:
-            progress_tracker.track_progress_callback(bytes_amount)
-
-    try:
-        s3_client.download_file(
-            Bucket=s3_bucket,
-            Key=s3_key,
-            Filename=str(temp_path),
-            Config=config,
-            Callback=progress_callback,
-        )
-        # Atomically move temp file to target
-        os.replace(temp_path, local_path)
-        return bytes_downloaded
-    except ClientError as exc:
-        status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-        status_code_guidance = {
-            **COMMON_ERROR_GUIDANCE_FOR_S3,
-            403: (
-                "Forbidden or Access denied. Please check your AWS credentials, and ensure "
-                "that your AWS IAM Role or User has the 's3:GetObject' permission."
-            ),
-            404: "Not found. Please check your bucket name and object key.",
-        }
-        raise JobAttachmentsS3ClientError(
-            action="downloading file",
-            status_code=status_code,
-            bucket_name=s3_bucket,
-            key_or_prefix=s3_key,
-            message=f"{status_code_guidance.get(status_code, '')} {str(exc)}",
-        ) from exc
-    except BotoCoreError as bce:
-        raise JobAttachmentS3BotoCoreError(
-            action="downloading file",
-            error_details=str(bce),
-        ) from bce
-    finally:
-        # Clean up temp file if it still exists (i.e., on error before os.replace)
-        temp_path.unlink(missing_ok=True)
-
-
-def _download_file_from_filesystem(
-    source_path: Path,
-    local_path: Path,
-    expected_size: Optional[int],
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Copy a file from filesystem cache to local filesystem atomically.
-
-    Copies to a temporary file first, then atomically moves to the target path.
-    This ensures the target file is never in a partial/corrupt state.
-
-    Returns the number of bytes copied.
-    """
-    import secrets
-    import shutil
-
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Create temp file path beside the target
-    temp_suffix = secrets.token_hex(5)
-    temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-
-    try:
-        # Copy to temp file
-        shutil.copy2(source_path, temp_path)
-
-        file_size = temp_path.stat().st_size
-        if progress_tracker:
-            progress_tracker.track_progress_callback(file_size)
-
-        # Atomically move temp file to target
-        os.replace(temp_path, local_path)
-
-        return file_size
-    finally:
-        # Clean up temp file if it still exists (i.e., on error before os.replace)
-        temp_path.unlink(missing_ok=True)
-
-
-def _download_s3_part_to_offset(
-    s3_client: Any,
-    s3_bucket: str,
-    s3_key: str,
-    temp_path: Path,
-    offset: int,
-    part_start: int,
-    part_end: int,
-    part_idx: int,
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Download a byte range from S3 and write it to a specific offset in the temp file.
-
-    Uses S3 GetObject with Range header to download a specific byte range.
-    Each thread opens its own file handle and seeks to the correct offset.
-    Since parts write to non-overlapping regions, no locking is needed.
-
-    Args:
-        s3_client: The boto3 S3 client.
-        s3_bucket: The S3 bucket name.
-        s3_key: The S3 object key.
-        temp_path: Path to the pre-allocated temp file.
-        offset: The byte offset in the temp file where this part should be written.
-        part_start: The start byte in the S3 object (inclusive).
-        part_end: The end byte in the S3 object (inclusive).
-        part_idx: The index of this part (for logging/error messages).
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        The number of bytes written.
-    """
-    try:
-        # Use Range header for byte-range request (inclusive on both ends)
-        range_header = f"bytes={part_start}-{part_end}"
-        response = s3_client.get_object(
-            Bucket=s3_bucket,
-            Key=s3_key,
-            Range=range_header,
-        )
-
-        # Read the part data
-        part_data = response["Body"].read()
-        bytes_written = len(part_data)
-
-        # Write to the pre-allocated file at the correct offset
-        with open(temp_path, "r+b") as f:
-            f.seek(offset)
-            f.write(part_data)
-
-        if progress_tracker:
-            progress_tracker.track_progress_callback(bytes_written)
-
-        return bytes_written
-
-    except ClientError as exc:
-        status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-        status_code_guidance = {
-            **COMMON_ERROR_GUIDANCE_FOR_S3,
-            403: (
-                "Forbidden or Access denied. Please check your AWS credentials, and ensure "
-                "that your AWS IAM Role or User has the 's3:GetObject' permission."
-            ),
-            404: "Not found. Please check your bucket name and object key.",
-            416: "Range not satisfiable. The requested byte range is invalid.",
-        }
-        raise JobAttachmentsS3ClientError(
-            action=f"downloading part {part_idx}",
-            status_code=status_code,
-            bucket_name=s3_bucket,
-            key_or_prefix=s3_key,
-            message=f"{status_code_guidance.get(status_code, '')} {str(exc)}",
-        ) from exc
-    except BotoCoreError as bce:
-        raise JobAttachmentS3BotoCoreError(
-            action=f"downloading part {part_idx}",
-            error_details=str(bce),
-        ) from bce
-
-
-async def _download_s3_multipart_async(
-    s3_client: Any,
-    s3_bucket: str,
-    s3_key: str,
-    temp_path: Path,
-    file_size: int,
-    executor: concurrent.futures.ThreadPoolExecutor,
-    progress_tracker: Optional[ProgressTracker],
-    part_size: Optional[int] = None,
-) -> int:
-    """
-    Download an S3 object using parallel byte-range requests.
-
-    Divides the file into parts and downloads each part in parallel using
-    the shared thread pool. Each part is written directly to its correct
-    offset in the pre-allocated temp file.
-
-    Args:
-        s3_client: The boto3 S3 client.
-        s3_bucket: The S3 bucket name.
-        s3_key: The S3 object key.
-        temp_path: Path to the pre-allocated temp file.
-        file_size: The total size of the file in bytes.
-        executor: The shared ThreadPoolExecutor for parallel downloads.
-        progress_tracker: Optional progress tracker for download progress.
-        part_size: Size of each part in bytes. If None, uses DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE.
-
-    Returns:
-        The total number of bytes downloaded.
-    """
-    loop = asyncio.get_running_loop()
-
-    # Use default part size if not specified (read at runtime for testability)
-    if part_size is None:
-        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-
-    # Calculate parts
-    num_parts = (file_size + part_size - 1) // part_size  # Ceiling division
-    part_tasks: List[asyncio.Future[int]] = []
-
-    for part_idx in range(num_parts):
-        part_start = part_idx * part_size
-        part_end = min(part_start + part_size - 1, file_size - 1)  # Inclusive end
-        offset = part_start  # Offset in temp file matches offset in S3 object
-
-        task = loop.run_in_executor(
-            executor,
-            _download_s3_part_to_offset,
-            s3_client,
-            s3_bucket,
-            s3_key,
-            temp_path,
-            offset,
-            part_start,
-            part_end,
-            part_idx,
-            progress_tracker,
-        )
-        part_tasks.append(task)
-
-    # Wait for all parts to complete
-    part_results = await asyncio.gather(*part_tasks, return_exceptions=True)
-
-    # Check for errors
-    errors: List[Exception] = []
-    total_bytes = 0
-    for part_idx, result in enumerate(part_results):
-        if isinstance(result, BaseException):
-            logger.error(f"Failed to download part {part_idx} of {s3_key}: {result}")
-            if isinstance(result, Exception):
-                errors.append(result)
-            else:
-                raise result
-        else:
-            total_bytes += result
-
-    if errors:
-        raise errors[0]
-
-    return total_bytes
-
-
 async def _download_single_file_async(
     entry: ManifestFilePath,
     hash_alg: str,
@@ -593,7 +324,7 @@ async def _download_single_file_async(
 
             # Use multi-part download for large files
             if file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-                bytes_downloaded = await _download_s3_multipart_async(
+                bytes_downloaded = await download_s3_multipart_async(
                     s3_client=data_cache.s3_client,
                     s3_bucket=data_cache.s3_bucket,
                     s3_key=s3_key,
@@ -688,225 +419,139 @@ async def _download_single_file_async(
         temp_path.unlink(missing_ok=True)
 
 
-def _download_single_file(
-    entry: ManifestFilePath,
+def _download_chunk_to_offset(
+    chunk_hash: str,
+    chunk_idx: int,
+    temp_path: Path,
+    offset: int,
     hash_alg: str,
-    hash_alg_enum: HashAlgorithm,
     data_cache: ContentAddressedDataCache,
-    hash_cache: Optional[HashCache],
-    collision_lock: Lock,
-    collision_file_dict: DefaultDict[str, int],
-    file_conflict_resolution: FileConflictResolution,
     progress_tracker: Optional[ProgressTracker],
-) -> Tuple[int, Optional[Path], bool, Optional[int]]:
+) -> int:
     """
-    Download a single file entry from the data cache.
+    Download a single chunk and write it to a specific offset in the temp file.
+
+    Each thread opens its own file handle and seeks to the correct offset before
+    writing. Since chunks write to non-overlapping regions, no locking is needed.
+
+    This is the synchronous version used for small chunks. For large chunks,
+    use _download_chunk_to_offset_async which supports multi-part parallel downloads.
+
+    Args:
+        chunk_hash: The hash of the chunk to download.
+        chunk_idx: The index of this chunk (for logging).
+        temp_path: Path to the pre-allocated temp file.
+        offset: The byte offset where this chunk should be written.
+        hash_alg: The hash algorithm string (e.g., "xxh128").
+        data_cache: The data cache to download from.
+        progress_tracker: Optional progress tracker for download progress.
 
     Returns:
-        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
-        actual_mtime_us is the actual filesystem mtime in microseconds, or None if skipped.
+        The number of bytes written.
     """
-    if entry.hash is None:
-        raise ValueError(f"File entry '{entry.path}' has no hash")
-
-    local_path = _get_long_path_compatible_path(Path(entry.path))
-    file_size = entry.size or 0
-
-    # Check hash cache first - if file already has correct content, skip download
-    can_skip, cached_mtime_us = _check_hash_cache_for_skip(entry, hash_alg_enum, hash_cache)
-    if can_skip:
-        return (file_size, local_path, True, cached_mtime_us)
-
-    # Handle file conflicts
-    if local_path.exists():
-        if file_conflict_resolution == FileConflictResolution.SKIP:
-            return (file_size, None, True, None)
-        elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
-            pass  # Continue to download
-        elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-            local_path = _get_new_copy_file_path(local_path, collision_lock, collision_file_dict)
-            local_path = _get_long_path_compatible_path(local_path)
-        else:
-            raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
-
-    # Create parent directories
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Download based on data cache type
     if isinstance(data_cache, S3DataCache):
-        s3_key = data_cache.get_object_key(entry.hash, hash_alg)
-        bytes_downloaded = _download_file_from_s3(
+        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
+        return download_s3_chunk_to_offset(
             s3_client=data_cache.s3_client,
             s3_bucket=data_cache.s3_bucket,
             s3_key=s3_key,
-            local_path=local_path,
-            expected_size=entry.size,
+            chunk_idx=chunk_idx,
+            temp_path=temp_path,
+            offset=offset,
             progress_tracker=progress_tracker,
         )
     elif isinstance(data_cache, FileSystemDataCache):
-        source_path = Path(data_cache.get_object_key(entry.hash, hash_alg))
-        bytes_downloaded = _download_file_from_filesystem(
+        source_path = Path(data_cache.get_object_key(chunk_hash, hash_alg))
+        return download_fs_chunk_to_offset(
             source_path=source_path,
-            local_path=local_path,
-            expected_size=entry.size,
+            chunk_idx=chunk_idx,
+            temp_path=temp_path,
+            offset=offset,
             progress_tracker=progress_tracker,
         )
     else:
         raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
 
-    # Restore modification time if available
-    if entry.mtime is not None:
-        mtime_seconds = entry.mtime / 1_000_000  # Convert from microseconds
-        os.utime(local_path, (mtime_seconds, mtime_seconds))
 
-    # Get the actual filesystem mtime (may differ from requested due to OS precision)
-    # Use st_mtime_ns with integer division to avoid floating point precision issues
-    stat_result = local_path.stat()
-    actual_mtime_ns = stat_result.st_mtime_ns
-    actual_mtime_us = actual_mtime_ns // 1_000
-
-    # Update hash cache with the downloaded file's hash and actual mtime
-    # Use resolved path because hash cache always uses resolved paths
-    if hash_cache is not None and entry.hash is not None:
-        resolved_path = str(local_path.resolve())
-        hash_cache.put_entry(
-            HashCacheEntry(
-                file_path=resolved_path,
-                hash_algorithm=hash_alg_enum,
-                file_hash=entry.hash,
-                last_modified_time=str(actual_mtime_ns),
-                range_start=0,
-                range_end=WHOLE_FILE_RANGE_END,
-            )
-        )
-
-    logger.debug(f"Downloaded {entry.path} to {local_path}")
-    return (bytes_downloaded, local_path, False, actual_mtime_us)
-
-
-def _download_chunked_file(
-    entry: ManifestFilePath,
+async def _download_chunk_to_offset_async(
+    chunk_hash: str,
+    chunk_idx: int,
+    temp_path: Path,
+    offset: int,
+    chunk_size: int,
     hash_alg: str,
     data_cache: ContentAddressedDataCache,
-    chunk_size_bytes: int,
     executor: concurrent.futures.ThreadPoolExecutor,
-    collision_lock: Lock,
-    collision_file_dict: DefaultDict[str, int],
-    file_conflict_resolution: FileConflictResolution,
     progress_tracker: Optional[ProgressTracker],
-) -> Tuple[int, Optional[Path], bool, Optional[int]]:
+) -> int:
     """
-    Download a chunked file (>256MB) by downloading all chunks in parallel.
+    Download a chunk with parallel multi-part support for large chunks.
 
-    Pre-allocates a temporary file to the exact size, then downloads all chunks
-    in parallel with each chunk writing to its correct byte offset. After all
-    chunks complete, atomically moves the temp file to the target path.
-
-    This ensures the target file is never in a partial/corrupt state, and
-    maximizes throughput by downloading chunks concurrently.
-
-    Note: This function is called from the asyncio event loop via run_in_executor
-    for the setup/teardown phases, while chunk downloads run in the thread pool.
+    For S3 chunks larger than MIN_SIZE_FOR_MULTIPART_DOWNLOAD, uses parallel
+    byte-range requests. Smaller chunks use single-request download.
 
     Args:
-        entry: The manifest file entry with chunkhashes.
+        chunk_hash: The hash of the chunk to download.
+        chunk_idx: The index of this chunk (for logging).
+        temp_path: Path to the pre-allocated temp file.
+        offset: The byte offset in the temp file where this chunk starts.
+        chunk_size: The size of this chunk in bytes.
         hash_alg: The hash algorithm string (e.g., "xxh128").
         data_cache: The data cache to download from.
-        chunk_size_bytes: The chunk size in bytes from the manifest.
         executor: The shared ThreadPoolExecutor for parallel downloads.
-        collision_lock: Lock for thread-safe collision tracking.
-        collision_file_dict: Dict for tracking file name collisions.
-        file_conflict_resolution: How to handle existing files.
         progress_tracker: Optional progress tracker for download progress.
 
     Returns:
-        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
-        actual_mtime_us is the actual filesystem mtime in microseconds, or None if skipped.
+        The number of bytes written.
     """
-    import secrets
+    loop = asyncio.get_running_loop()
 
-    if entry.chunkhashes is None:
-        raise ValueError(f"Chunked file entry '{entry.path}' has no chunkhashes")
+    if isinstance(data_cache, S3DataCache):
+        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
 
-    local_path = _get_long_path_compatible_path(Path(entry.path))
-    file_size = entry.size or 0
-
-    # Handle file conflicts
-    if local_path.exists():
-        if file_conflict_resolution == FileConflictResolution.SKIP:
-            return (file_size, None, True, None)
-        elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
-            pass  # Continue to download
-        elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-            local_path = _get_new_copy_file_path(local_path, collision_lock, collision_file_dict)
-            local_path = _get_long_path_compatible_path(local_path)
-        else:
-            raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
-
-    # Create parent directories
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Create temp file path beside the target for atomic write
-    temp_suffix = secrets.token_hex(5)
-    temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-
-    try:
-        # Pre-allocate the temp file to the exact size
-        # This creates a sparse file on filesystems that support it
-        with open(temp_path, "wb") as f:
-            f.truncate(file_size)
-
-        # Submit all chunk downloads in parallel
-        futures: Dict[concurrent.futures.Future[int], int] = {}
-        for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
-            offset = chunk_idx * chunk_size_bytes
-            future = executor.submit(
-                _download_chunk_to_offset,
-                chunk_hash=chunk_hash,
+        # Use multi-part download for large chunks
+        if chunk_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+            return await download_s3_chunk_multipart_async(
+                s3_client=data_cache.s3_client,
+                s3_bucket=data_cache.s3_bucket,
+                s3_key=s3_key,
                 chunk_idx=chunk_idx,
                 temp_path=temp_path,
                 offset=offset,
-                hash_alg=hash_alg,
-                data_cache=data_cache,
+                chunk_size=chunk_size,
+                executor=executor,
                 progress_tracker=progress_tracker,
             )
-            futures[future] = chunk_idx
+        else:
+            # Small chunk - use single request (run in executor)
+            return await loop.run_in_executor(
+                executor,
+                _download_chunk_to_offset,
+                chunk_hash,
+                chunk_idx,
+                temp_path,
+                offset,
+                hash_alg,
+                data_cache,
+                progress_tracker,
+            )
 
-        # Wait for all chunks to complete and collect results
-        total_bytes = 0
-        errors: List[Exception] = []
+    elif isinstance(data_cache, FileSystemDataCache):
+        # Filesystem cache - always use single-threaded copy
+        return await loop.run_in_executor(
+            executor,
+            _download_chunk_to_offset,
+            chunk_hash,
+            chunk_idx,
+            temp_path,
+            offset,
+            hash_alg,
+            data_cache,
+            progress_tracker,
+        )
 
-        for future in concurrent.futures.as_completed(futures):
-            chunk_idx = futures[future]
-            try:
-                chunk_bytes = future.result()
-                total_bytes += chunk_bytes
-            except Exception as e:
-                logger.error(f"Failed to download chunk {chunk_idx} of {entry.path}: {e}")
-                errors.append(e)
-
-        # If any chunk failed, raise the first error
-        if errors:
-            raise errors[0]
-
-        # Atomically move temp file to target
-        os.replace(temp_path, local_path)
-
-        # Restore modification time if available
-        if entry.mtime is not None:
-            mtime_seconds = entry.mtime / 1_000_000  # Convert from microseconds
-            os.utime(local_path, (mtime_seconds, mtime_seconds))
-
-        # Get the actual filesystem mtime (may differ from requested due to OS precision)
-        # Use st_mtime_ns with integer division to avoid floating point precision issues
-        actual_mtime_us = local_path.stat().st_mtime_ns // 1_000
-
-        logger.debug(f"Downloaded chunked file {entry.path} ({len(entry.chunkhashes)} chunks)")
-        return (total_bytes, local_path, False, actual_mtime_us)
-
-    finally:
-        # Clean up temp file if it still exists (i.e., on error before os.replace)
-        temp_path.unlink(missing_ok=True)
+    else:
+        raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
 
 
 async def _download_chunked_file_async(
@@ -1116,219 +761,6 @@ async def _download_chunked_file_async(
 
     # Single await for the entire operation
     return await result_future
-
-
-def _download_chunk_to_offset(
-    chunk_hash: str,
-    chunk_idx: int,
-    temp_path: Path,
-    offset: int,
-    hash_alg: str,
-    data_cache: ContentAddressedDataCache,
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Download a single chunk and write it to a specific offset in the temp file.
-
-    Each thread opens its own file handle and seeks to the correct offset before
-    writing. Since chunks write to non-overlapping regions, no locking is needed.
-
-    This is the synchronous version used for small chunks. For large chunks,
-    use _download_chunk_to_offset_async which supports multi-part parallel downloads.
-
-    Args:
-        chunk_hash: The hash of the chunk to download.
-        chunk_idx: The index of this chunk (for logging).
-        temp_path: Path to the pre-allocated temp file.
-        offset: The byte offset where this chunk should be written.
-        hash_alg: The hash algorithm string (e.g., "xxh128").
-        data_cache: The data cache to download from.
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        The number of bytes written.
-    """
-    if isinstance(data_cache, S3DataCache):
-        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
-
-        try:
-            # Use get_object to download the entire chunk in one request
-            response = data_cache.s3_client.get_object(
-                Bucket=data_cache.s3_bucket,
-                Key=s3_key,
-            )
-            chunk_data = response["Body"].read()
-
-            # Write to the pre-allocated file at the correct offset
-            with open(temp_path, "r+b") as f:
-                f.seek(offset)
-                f.write(chunk_data)
-
-            if progress_tracker:
-                progress_tracker.track_progress_callback(len(chunk_data))
-
-            return len(chunk_data)
-
-        except ClientError as exc:
-            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-            status_code_guidance = {
-                **COMMON_ERROR_GUIDANCE_FOR_S3,
-                403: (
-                    "Forbidden or Access denied. Please check your AWS credentials, and ensure "
-                    "that your AWS IAM Role or User has the 's3:GetObject' permission."
-                ),
-                404: "Not found. Please check your bucket name and object key.",
-            }
-            raise JobAttachmentsS3ClientError(
-                action=f"downloading chunk {chunk_idx}",
-                status_code=status_code,
-                bucket_name=data_cache.s3_bucket,
-                key_or_prefix=s3_key,
-                message=f"{status_code_guidance.get(status_code, '')} {str(exc)}",
-            ) from exc
-        except BotoCoreError as bce:
-            raise JobAttachmentS3BotoCoreError(
-                action=f"downloading chunk {chunk_idx}",
-                error_details=str(bce),
-            ) from bce
-
-    elif isinstance(data_cache, FileSystemDataCache):
-        source_path = Path(data_cache.get_object_key(chunk_hash, hash_alg))
-
-        # Read the chunk from the filesystem cache
-        with open(source_path, "rb") as chunk_file:
-            chunk_data = chunk_file.read()
-
-        # Write to the pre-allocated file at the correct offset
-        with open(temp_path, "r+b") as f:
-            f.seek(offset)
-            f.write(chunk_data)
-
-        if progress_tracker:
-            progress_tracker.track_progress_callback(len(chunk_data))
-
-        return len(chunk_data)
-
-    else:
-        raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
-
-
-async def _download_chunk_to_offset_async(
-    chunk_hash: str,
-    chunk_idx: int,
-    temp_path: Path,
-    offset: int,
-    chunk_size: int,
-    hash_alg: str,
-    data_cache: ContentAddressedDataCache,
-    executor: concurrent.futures.ThreadPoolExecutor,
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Download a chunk with parallel multi-part support for large chunks.
-
-    For S3 chunks larger than MIN_SIZE_FOR_MULTIPART_DOWNLOAD, uses parallel
-    byte-range requests. Smaller chunks use single-request download.
-
-    Args:
-        chunk_hash: The hash of the chunk to download.
-        chunk_idx: The index of this chunk (for logging).
-        temp_path: Path to the pre-allocated temp file.
-        offset: The byte offset in the temp file where this chunk starts.
-        chunk_size: The size of this chunk in bytes.
-        hash_alg: The hash algorithm string (e.g., "xxh128").
-        data_cache: The data cache to download from.
-        executor: The shared ThreadPoolExecutor for parallel downloads.
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        The number of bytes written.
-    """
-    loop = asyncio.get_running_loop()
-
-    if isinstance(data_cache, S3DataCache):
-        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
-
-        # Use multi-part download for large chunks
-        if chunk_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-            # Download parts in parallel, writing to correct offsets in temp file
-            part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-            num_parts = (chunk_size + part_size - 1) // part_size
-            part_tasks: List[asyncio.Future[int]] = []
-
-            for part_idx in range(num_parts):
-                part_start = part_idx * part_size
-                part_end = min(part_start + part_size - 1, chunk_size - 1)
-                # Offset in temp file = chunk offset + part offset within chunk
-                file_offset = offset + part_start
-
-                task = loop.run_in_executor(
-                    executor,
-                    _download_s3_part_to_offset,
-                    data_cache.s3_client,
-                    data_cache.s3_bucket,
-                    s3_key,
-                    temp_path,
-                    file_offset,
-                    part_start,
-                    part_end,
-                    part_idx,
-                    progress_tracker,
-                )
-                part_tasks.append(task)
-
-            # Wait for all parts
-            part_results = await asyncio.gather(*part_tasks, return_exceptions=True)
-
-            # Check for errors
-            errors: List[Exception] = []
-            total_bytes = 0
-            for part_idx, result in enumerate(part_results):
-                if isinstance(result, BaseException):
-                    logger.error(
-                        f"Failed to download part {part_idx} of chunk {chunk_idx}: {result}"
-                    )
-                    if isinstance(result, Exception):
-                        errors.append(result)
-                    else:
-                        raise result
-                else:
-                    total_bytes += result
-
-            if errors:
-                raise errors[0]
-
-            return total_bytes
-        else:
-            # Small chunk - use single request (run in executor)
-            return await loop.run_in_executor(
-                executor,
-                _download_chunk_to_offset,
-                chunk_hash,
-                chunk_idx,
-                temp_path,
-                offset,
-                hash_alg,
-                data_cache,
-                progress_tracker,
-            )
-
-    elif isinstance(data_cache, FileSystemDataCache):
-        # Filesystem cache - always use single-threaded copy
-        return await loop.run_in_executor(
-            executor,
-            _download_chunk_to_offset,
-            chunk_hash,
-            chunk_idx,
-            temp_path,
-            offset,
-            hash_alg,
-            data_cache,
-            progress_tracker,
-        )
-
-    else:
-        raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
 
 
 def _create_symlink(entry: ManifestFilePath) -> None:
