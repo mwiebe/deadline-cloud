@@ -7,22 +7,22 @@ This module implements the HASH_UPLOAD operation from the composable manifest op
     HASH_UPLOAD: (AbsManifest, DataCache) → AbsManifest (with hashes filled in) + data cache writes
 
 The operation combines hashing and uploading into a single pass over the data:
-- Reads file chunks into memory
-- Hashes each chunk
+- Reads file chunks into memory while computing the hash as bytes stream in
 - Writes to data cache before freeing memory
 
 This avoids reading files twice (once for hashing, once for uploading) and provides
 significant performance improvements for large datasets.
 
 The pipeline uses bounded memory to prevent OOM conditions and a shared thread pool
-for all stages (READ, HASH, UPLOAD). Work items flow through stages as tasks submitted
+for both stages (READ+HASH, UPLOAD). Work items flow through stages as tasks submitted
 to the executor, with memory allocation providing natural backpressure.
 
 Architecture:
-- All stages run in a shared ThreadPoolExecutor with configurable max_workers
-- Each work item progresses: READ task → HASH task → UPLOAD task
-- Memory pool bounds total in-flight data; READ blocks when memory is exhausted
-- No stage starvation: all stages compete fairly for executor threads
+- Both stages run in a shared ThreadPoolExecutor with configurable max_workers
+- Each work item progresses: READ+HASH task → UPLOAD task
+- Memory pool bounds total in-flight data; READ+HASH blocks when memory is exhausted
+- No stage starvation: both stages compete fairly for executor threads
+- READ and HASH are combined so hashing occurs while bytes stream into the buffer
 
 All composable operations use v2025 structure and semantics internally. Support for
 v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
@@ -243,16 +243,17 @@ class _MemoryPool:
 
 class _TaskBasedPipeline:
     """
-    Task-based pipeline using a shared thread pool for all stages.
+    Task-based pipeline using a shared thread pool for both stages.
 
     Instead of dedicated threads per stage, work items flow through stages
     as tasks submitted to a shared ThreadPoolExecutor. This provides:
-    - Fair scheduling: all stages compete equally for executor threads
+    - Fair scheduling: both stages compete equally for executor threads
     - No starvation: no stage has a dedicated thread that could starve
-    - Memory bounding: READ blocks on memory allocation (intentional backpressure)
+    - Memory bounding: READ+HASH blocks on memory allocation (intentional backpressure)
     - Better thread utilization: threads aren't idle waiting on queues
+    - Streaming efficiency: hashing occurs while bytes stream into the buffer
 
-    Flow: READ task → HASH task → UPLOAD task → completion
+    Flow: READ+HASH task → UPLOAD task → completion
     """
 
     def __init__(
@@ -293,8 +294,8 @@ class _TaskBasedPipeline:
         """Submit a work item to start processing through the pipeline."""
         with self._lock:
             self._pending_count += 1
-        # Start with READ stage
-        self._executor.submit(self._do_read, item)
+        # Start with combined READ+HASH stage
+        self._executor.submit(self._do_read_and_hash, item)
 
     def wait_for_completion(self) -> List[WorkItem]:
         """Wait for all submitted items to complete and return results."""
@@ -337,15 +338,19 @@ class _TaskBasedPipeline:
             return self._fs_write_locks[hash_key]
 
     # =========================================================================
-    # READ Stage
+    # READ+HASH Stage (Combined for CPU cache efficiency)
     # =========================================================================
 
-    def _do_read(self, item: WorkItem) -> None:
+    def _do_read_and_hash(self, item: WorkItem) -> None:
         """
-        READ stage: Read file data from disk.
+        Combined READ+HASH stage: Read file data and compute hash while bytes stream into buffer.
 
-        For _ChunkWorkItem: allocate memory, read chunk data, submit HASH task.
-        For _StreamingWorkItem: pass through to HASH (streaming happens there).
+        For _ChunkWorkItem: allocate memory, read chunk data, hash as bytes stream in, submit UPLOAD task.
+        For _StreamingWorkItem: stream through file computing hash as we read, submit UPLOAD task.
+
+        Combining read and hash improves performance by computing the hash while bytes
+        are streaming into the memory buffer, rather than re-processing the buffer
+        in a separate stage.
         """
         try:
             # Check for prior error - don't start new work
@@ -355,12 +360,13 @@ class _TaskBasedPipeline:
                     return
 
             if isinstance(item, _StreamingWorkItem):
-                # Streaming items don't load data into memory here
-                # Submit directly to HASH stage
-                self._executor.submit(self._do_hash, item)
+                # Streaming items compute hash while reading (already combined)
+                item.file_hash = self._stream_hash_file(item.file_path)
+                # Submit directly to UPLOAD stage
+                self._executor.submit(self._do_upload, item)
                 return
 
-            # _ChunkWorkItem: read chunk data
+            # _ChunkWorkItem: read chunk data and hash immediately
             chunk_size = item.chunk_end - item.chunk_start
 
             # Block until we have memory available (backpressure)
@@ -370,53 +376,19 @@ class _TaskBasedPipeline:
                 with open(item.file_path, "rb") as f:
                     f.seek(item.chunk_start)
                     item.data = f.read(chunk_size)
+
+                # Hash while data is fresh in memory
+                if item.data is not None:
+                    item.chunk_hash = hash_data(item.data, self._hash_alg)
             except Exception:
                 # Release memory on error
                 self._memory_pool.release(chunk_size)
                 raise
 
-            # Submit to HASH stage
-            self._executor.submit(self._do_hash, item)
-
-        except Exception as e:
-            self._record_error(e)
-            self._decrement_pending()
-
-    # =========================================================================
-    # HASH Stage
-    # =========================================================================
-
-    def _do_hash(self, item: WorkItem) -> None:
-        """
-        HASH stage: Compute hash of data.
-
-        For _ChunkWorkItem: hash in-memory data, submit UPLOAD task.
-        For _StreamingWorkItem: stream through file to compute hash, submit UPLOAD task.
-        """
-        try:
-            # Check for prior error
-            with self._error_lock:
-                if self._error is not None:
-                    # Release memory if we have data
-                    if isinstance(item, _ChunkWorkItem) and item.data is not None:
-                        self._memory_pool.release(len(item.data))
-                    self._decrement_pending()
-                    return
-
-            if isinstance(item, _StreamingWorkItem):
-                # Stream through file to compute hash
-                item.file_hash = self._stream_hash_file(item.file_path)
-            elif item.data is not None:
-                # Hash in-memory data
-                item.chunk_hash = hash_data(item.data, self._hash_alg)
-
             # Submit to UPLOAD stage
             self._executor.submit(self._do_upload, item)
 
         except Exception as e:
-            # Release memory on error
-            if isinstance(item, _ChunkWorkItem) and item.data is not None:
-                self._memory_pool.release(len(item.data))
             self._record_error(e)
             self._decrement_pending()
 
@@ -424,8 +396,8 @@ class _TaskBasedPipeline:
         """
         Compute hash of a file by streaming through it.
 
-        Reads the file in chunks, updating the hash incrementally,
-        and discards the data to avoid memory issues.
+        Reads the file in chunks, updating the hash incrementally as each
+        chunk streams in, and discards the data to avoid memory issues.
         """
         import xxhash
 
@@ -909,9 +881,13 @@ def _run_pipeline(
     """
     Run the task-based pipeline on work items using a shared thread pool.
 
-    All stages (READ, HASH, UPLOAD) run as tasks in the same ThreadPoolExecutor.
+    Both stages (READ+HASH, UPLOAD) run as tasks in the same ThreadPoolExecutor.
     Work items flow through stages as tasks, with memory allocation providing
     natural backpressure when the pool is exhausted.
+
+    The READ and HASH operations are combined into a single stage so that hashing
+    occurs while bytes are streaming into the memory buffer, rather than
+    re-processing the buffer in a separate stage.
 
     Args:
         work_items: List of work items to process (chunks and/or streaming items)
@@ -992,10 +968,11 @@ def hash_upload_manifest(
 
     Pipeline Architecture:
         The operation uses a task-based pipeline with a shared ThreadPoolExecutor:
-        - All stages (READ, HASH, UPLOAD) run as tasks in the same thread pool
-        - Work items flow: READ task → HASH task → UPLOAD task → completion
-        - Memory pool bounds total in-flight data; READ blocks when exhausted
-        - No stage starvation: all stages compete fairly for executor threads
+        - Both stages (READ+HASH, UPLOAD) run as tasks in the same thread pool
+        - Work items flow: READ+HASH task → UPLOAD task → completion
+        - Memory pool bounds total in-flight data; READ+HASH blocks when exhausted
+        - No stage starvation: both stages compete fairly for executor threads
+        - READ and HASH are combined so hashing occurs while data is hot in CPU cache
 
     Chunking Behavior:
         - If effective chunk size is WHOLE_FILE_CHUNK_SIZE (-1): all files are hashed

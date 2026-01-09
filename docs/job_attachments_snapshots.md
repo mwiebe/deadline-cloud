@@ -64,8 +64,9 @@ Here are the operations for working with data snapshots:
 │         Requires absolute paths; raises error for relative paths.       │
 │                                                                         │
 │  3. HASH_UPLOAD: (AbsManifest, DataCache) → AbsManifest                 │
-│         Pipelines read/hash/upload for all files, returning a           │
-│         manifest with hashes populated.                                 │
+│         Pipelines read+hash/upload for all files, returning a           │
+│         manifest with hashes populated. Read and hash are combined      │
+│         so hashing occurs while bytes are hot in CPU cache.             │
 │                                                                         │
 │  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadResult                 │
 │         Downloads files from a data cache to local filesystem,          │
@@ -165,7 +166,7 @@ Separating structure collection, hashing, and hashing+uploading enables:
 - **Fast diff comparison:** Compare manifests by mtime/size without hashing unchanged files
 - **Hash cache integration:** Only hash files with cache misses
 - **Deferred hashing:** Collect structure first, hash only what's needed
-- **Reduced redundant reads:** The HASH_UPLOAD operation reads chunks of files to memory, then performs a hash + upload instead of one read for hash and a second read for upload.
+- **Reduced redundant reads:** The HASH_UPLOAD operation combines read+hash into a single stage, computing the hash while bytes stream into the memory buffer, then uploads. This avoids reading files twice (once for hash, once for upload).
 
 ## Design Choices
 
@@ -585,36 +586,38 @@ def hash_upload_manifest(
 
 **Pipelined Architecture:**
 
-The operation uses a multi-threaded pipeline with three stages:
+The operation uses a multi-threaded pipeline with two stages:
 
 ```
-┌─────────┐     ┌─────────┐     ┌─────────┐
-│  READ   │────►│  HASH   │────►│ UPLOAD  │
-│ Thread  │     │ Thread  │     │ Thread  │
-└─────────┘     └─────────┘     └─────────┘
-     │               │               │
-     └───────────────┴───────────────┘
+┌─────────────────┐     ┌─────────┐
+│  READ + HASH    │────►│ UPLOAD  │
+│     Thread      │     │ Thread  │
+└─────────────────┘     └─────────┘
+         │                   │
+         └───────────────────┘
               Memory Pool
          (bounded by max_memory_bytes)
 ```
 
-1. **READ stage:** Reads file chunks from disk into memory buffers
-2. **HASH stage:** Computes XXH128 hash of each chunk in memory
-3. **UPLOAD stage:** Uploads the chunk to the data cache using the hash as the object key
+1. **READ+HASH stage:** Reads file chunks from disk and computes XXH128 hash while bytes are streaming into the memory buffer
+2. **UPLOAD stage:** Uploads the chunk to the data cache using the hash as the object key
+
+The combined READ+HASH stage improves performance by computing the hash as data streams in,
+rather than re-processing the memory buffer in a separate stage.
 
 **Chunking Behavior (controlled by `manifest.fileChunkSizeBytes`):**
 
 | `fileChunkSizeBytes` | File Size | Processing |
 |---------------------|-----------|------------|
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | Single chunk: read → hash → upload (default) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | Single chunk: read+hash → upload (default) |
 | `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Multiple chunks through pipeline |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | Single pass: read → hash → upload |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Two-pass: (1) stream hash, (2) stream upload |
-| Positive int (e.g., 64MB) | ≤ chunk size | Single chunk: read → hash → upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | Single pass: read+hash → upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Two-pass: (1) stream read+hash, (2) stream read+upload |
+| Positive int (e.g., 64MB) | ≤ chunk size | Single chunk: read+hash → upload |
 | Positive int (e.g., 64MB) | > chunk size | Multiple chunks through pipeline |
 
 When chunking is disabled (`WHOLE_FILE_CHUNK_SIZE`) and a file is larger than `max_memory_bytes`:
-- **Pass 1:** Stream through file to compute hash (discard data to avoid OOM)
+- **Pass 1:** Stream through file computing hash as bytes are read (discard data to avoid OOM)
 - **Pass 2:** Stream through file again to upload
 
 When chunking is enabled (positive `fileChunkSizeBytes`):
@@ -623,10 +626,10 @@ When chunking is enabled (positive `fileChunkSizeBytes`):
 
 **Memory Management:**
 
-The pipeline constrains total memory usage across all stages:
+The pipeline constrains total memory usage across both stages:
 
-- When `max_memory_bytes` is reached, the READ stage blocks until UPLOAD completes and frees memory
-- Each chunk occupies memory from READ through UPLOAD completion
+- When `max_memory_bytes` is reached, the READ+HASH stage blocks until UPLOAD completes and frees memory
+- Each chunk occupies memory from READ+HASH through UPLOAD completion
 
 **Default Memory Limit Calculation:**
 
@@ -684,9 +687,9 @@ For `FileSystemDataCache`, the `object_exists()` method checks the local filesys
 
 | Entry Type | Action |
 |------------|--------|
-| Regular file (fits in memory or no chunking) | Read → Hash → Upload (single pass) |
-| Large file (> memory, no chunking) | Stream hash → Stream upload (two-pass) |
-| Large file (chunking enabled) | Read → Hash → Upload (per chunk) |
+| Regular file (fits in memory or no chunking) | Read+Hash → Upload (single pass) |
+| Large file (> memory, no chunking) | Stream read+hash → Stream upload (two-pass) |
+| Large file (chunking enabled) | Read+Hash → Upload (per chunk) |
 | Symlink | Pass through unchanged (no upload) |
 | Deleted marker | Pass through unchanged (no upload) |
 | Directory | Pass through unchanged (no upload) |
