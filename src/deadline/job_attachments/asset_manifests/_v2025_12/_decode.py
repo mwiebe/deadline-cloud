@@ -25,7 +25,7 @@ from ..._snapshots import (
     RelSnapshotManifest,
 )
 from ...exceptions import ManifestDecodeValidationError
-from .validate import validate_manifest_2025_12
+from ._validate import validate_manifest_2025_12
 
 
 # Specification version to manifest class mapping

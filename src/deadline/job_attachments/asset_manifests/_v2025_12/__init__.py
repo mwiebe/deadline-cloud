@@ -9,8 +9,8 @@ which uses a specificationVersion field to identify the manifest type.
 This format is under development and subject to change. Do not use in production.
 """
 
-from .decode import decode_v2025
-from .encode import encode_v2025
+from ._decode import decode_v2025
+from ._encode import encode_v2025
 
 __all__ = [
     "encode_v2025",

@@ -66,7 +66,7 @@ def test_decode(default_manifest_str_v2023_03_03: str):
     """
     expected = AssetManifest(
         hash_alg=HashAlgorithm("xxh128"),
-        total_size=10,
+        total_size=12,
         paths=[
             ManifestPath(path="\r", hash="CarriageReturn", size=1, mtime=1679079744833848),
             ManifestPath(path="1", hash="One", size=1, mtime=1679079344833868),

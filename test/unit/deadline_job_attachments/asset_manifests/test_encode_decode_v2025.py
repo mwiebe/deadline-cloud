@@ -16,7 +16,7 @@ from deadline.job_attachments._snapshots import (
     RelDiffManifest,
     RelSnapshotManifest,
 )
-from deadline.job_attachments.asset_manifests.v2025_12_04 import (
+from deadline.job_attachments.asset_manifests._v2025_12 import (
     decode_v2025,
     encode_v2025,
 )

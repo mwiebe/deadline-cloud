@@ -1587,9 +1587,18 @@ def subtree_manifest(
 | Parameter | Description |
 |-----------|-------------|
 | `manifest` | The source manifest to extract from |
-| `subtree` | Path to the subtree root (relative or absolute, must match manifest path style) |
+| `subtree` | Path to the subtree root, or `"."` or `""` for identity transformation (see below) |
 | `symlink_policy` | How to handle symlinks that escape the new subtree root (see below) |
 | `print_function_callback` | Progress callback for status messages |
+
+**Identity Subtree (`subtree="."` or `subtree=""`):**
+
+When `subtree="."` or `subtree=""`, the operation acts as an identity transformation that applies the `symlink_policy` without rebasing paths. This is useful for:
+- Collapsing all symlinks in a manifest before serialization to v2023 format
+- Excluding all symlinks from a manifest
+- Processing symlinks without changing the directory structure
+
+The identity subtree requires a manifest with relative paths (since the output is always `RelManifest`).
 
 **Conceptual Model:**
 

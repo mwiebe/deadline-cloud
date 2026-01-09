@@ -57,7 +57,8 @@ def subtree_manifest(
 
     Args:
         manifest: The source manifest to extract from
-        subtree: Path to the subtree root (relative or absolute, must match manifest path style)
+        subtree: Path to the subtree root (relative or absolute, must match manifest path style).
+                 Use "." or "" to apply symlink_policy without rebasing paths (identity subtree).
         symlink_policy: How to handle symlinks in the subtree.
                        - COLLAPSE_ALL: Collapse every symlink in the result.
                        - COLLAPSE_ESCAPING: Collapse only symlinks whose targets escape the subtree.
@@ -68,15 +69,19 @@ def subtree_manifest(
 
     Returns:
         A new manifest with:
-        - Only entries within the subtree
-        - Paths rebased relative to the new root
+        - Only entries within the subtree (all entries if subtree="." or "")
+        - Paths rebased relative to the new root (unchanged if subtree="." or "")
         - Symlinks handled according to symlink_policy
         - Always returns RelSnapshotManifest or RelDiffManifest (relative paths)
 
     Raises:
         ValueError: If subtree path style doesn't match manifest path style
         ValueError: If symlink_policy is PRESERVE or TRANSITIVE_INCLUDE_TARGETS
-        ValueError: If subtree path is empty
+
+    Note:
+        When subtree="." or "", this operation acts as an identity transformation that
+        only applies the symlink_policy. This is useful for collapsing or excluding
+        symlinks without changing the path structure.
     """
     # Validate symlink_policy
     if symlink_policy in (SymlinkPolicy.PRESERVE, SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS):
@@ -88,8 +93,14 @@ def subtree_manifest(
 
     # Normalize subtree path
     subtree = _normalize_subtree_path(subtree)
+
+    # Special case: "" or "." means identity subtree (apply symlink_policy only)
     if not subtree or subtree == ".":
-        raise ValueError("subtree path cannot be empty or '.'")
+        return _identity_subtree_manifest(
+            manifest=manifest,
+            symlink_policy=symlink_policy,
+            print_function_callback=print_function_callback,
+        )
 
     # Validate path style consistency
     _validate_path_style_consistency(manifest, subtree)
@@ -315,6 +326,137 @@ def _subtree_manifest(
             dirs=result_dirs,
             files=result_paths,
             total_size=total_size,
+        )
+
+
+def _identity_subtree_manifest(
+    manifest: Manifest,
+    symlink_policy: SymlinkPolicy,
+    print_function_callback: Callable[[Any], None],
+) -> RelManifest:
+    """
+    Apply symlink_policy to a manifest without rebasing paths.
+
+    This is the special case when subtree="." - it acts as an identity
+    transformation that only processes symlinks according to the policy.
+
+    For relative-path manifests, paths are unchanged.
+    For absolute-path manifests, this raises an error since the output
+    must be a RelManifest.
+    """
+    # Check if manifest uses absolute paths
+    for entry in manifest.files:
+        if _is_absolute_path(entry.path):
+            raise ValueError(
+                "subtree='.' requires a manifest with relative paths. "
+                "Use a specific subtree path for absolute-path manifests."
+            )
+        break
+    for dir_entry in manifest.dirs:
+        if _is_absolute_path(dir_entry.path):
+            raise ValueError(
+                "subtree='.' requires a manifest with relative paths. "
+                "Use a specific subtree path for absolute-path manifests."
+            )
+        break
+
+    # Build lookup tables for collapse operations
+    file_lookup: Dict[str, ManifestFilePath] = {e.path: e for e in manifest.files}
+
+    # Build dir_lookup from explicit dirs AND implicit parent directories of files
+    dir_lookup: Set[str] = {d.path for d in manifest.dirs}
+    for entry in manifest.files:
+        parent = posixpath.dirname(entry.path)
+        seen_parents: Set[str] = set()
+        while parent and parent != "." and parent not in seen_parents:
+            seen_parents.add(parent)
+            dir_lookup.add(parent)
+            new_parent = posixpath.dirname(parent)
+            if new_parent == parent:
+                break
+            parent = new_parent
+
+    result_paths: List[ManifestFilePath] = []
+    result_dirs: List[ManifestDirectoryPath] = []
+    total_size = 0
+
+    # Copy directories unchanged
+    for dir_entry in manifest.dirs:
+        result_dirs.append(
+            ManifestDirectoryPath(
+                path=dir_entry.path,
+                deleted=dir_entry.deleted,
+            )
+        )
+
+    # Process files and symlinks
+    for entry in manifest.files:
+        # Handle symlinks
+        if entry.symlink_target is not None:
+            symlink_target = entry.symlink_target
+
+            if symlink_policy == SymlinkPolicy.COLLAPSE:
+                # Collapse all symlinks
+                new_entries, new_size = _collapse_symlink(
+                    rebased_path=entry.path,
+                    target=symlink_target,
+                    file_lookup=file_lookup,
+                    dir_lookup=dir_lookup,
+                    print_function_callback=print_function_callback,
+                )
+                result_paths.extend(new_entries)
+                total_size += new_size
+            elif symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
+                # Exclude all symlinks
+                print_function_callback(f"Excluded symlink: {entry.path}")
+            else:
+                # COLLAPSE_ESCAPING: For identity subtree, no symlinks "escape"
+                # since there's no subtree boundary. Preserve all symlinks.
+                result_paths.append(
+                    ManifestFilePath(
+                        path=entry.path,
+                        symlink_target=symlink_target,
+                    )
+                )
+                print_function_callback(f"Preserved symlink: {entry.path} -> {symlink_target}")
+        else:
+            # Regular file or deleted marker - copy unchanged
+            result_paths.append(
+                ManifestFilePath(
+                    path=entry.path,
+                    hash=entry.hash,
+                    size=entry.size,
+                    mtime=entry.mtime,
+                    runnable=entry.runnable,
+                    chunkhashes=entry.chunkhashes,
+                    symlink_target=None,
+                    deleted=entry.deleted,
+                )
+            )
+            if not entry.deleted and entry.size is not None:
+                total_size += entry.size
+            print_function_callback(f"Included: {entry.path}")
+
+    # Determine output type: preserve snapshot/diff
+    is_snapshot = isinstance(manifest, (AbsSnapshotManifest, RelSnapshotManifest))
+
+    if is_snapshot:
+        return RelSnapshotManifest(
+            hash_alg=manifest.hashAlg,
+            dirs=result_dirs,
+            files=result_paths,
+            total_size=total_size,
+            parent_manifest_hash=manifest.parentManifestHash,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
+        )
+    else:
+        return RelDiffManifest(
+            hash_alg=manifest.hashAlg,
+            dirs=result_dirs,
+            files=result_paths,
+            total_size=total_size,
+            parent_manifest_hash=manifest.parentManifestHash,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
 
 

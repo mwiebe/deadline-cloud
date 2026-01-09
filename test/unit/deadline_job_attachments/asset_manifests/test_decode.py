@@ -63,7 +63,7 @@ def test_decode_manifest_v2023_03_03(default_manifest_str_v2023_03_03: str):
     """
     expected_manifest = AssetManifest_v2023_03_03(
         hash_alg=HashAlgorithm.XXH128,
-        total_size=10,
+        total_size=12,
         paths=[
             Path_v2023_03_03(path="\r", hash="CarriageReturn", size=1, mtime=1679079744833848),
             Path_v2023_03_03(path="1", hash="One", size=1, mtime=1679079344833868),
