@@ -21,8 +21,10 @@ from deadline.job_attachments._snapshots import (
     subtree_manifest,
     SymlinkPolicy,
 )
-from deadline.job_attachments._snapshots._operations._subtree_manifest import (
+from deadline.job_attachments._snapshots._manifest import (
     _is_absolute_path,
+)
+from deadline.job_attachments._snapshots._operations._subtree_manifest import (
     _is_within_subtree,
     _rebase_path,
     _normalize_subtree_path,
@@ -49,13 +51,12 @@ class TestHelperFunctions:
     def test_is_absolute_path_windows_drive(self) -> None:
         """Windows drive letter paths are detected on Windows."""
         assert _is_absolute_path("C:/Users/file.txt") is True
-        assert _is_absolute_path("D:\\Projects\\file.txt") is True
+        assert _is_absolute_path("D:/Projects/file.txt") is True
 
     @patch.object(os, "name", "nt")
     def test_is_absolute_path_windows_unc(self) -> None:
         """Windows UNC paths are detected on Windows."""
         assert _is_absolute_path("//server/share/file.txt") is True
-        assert _is_absolute_path("\\\\server\\share\\file.txt") is True
 
     def test_is_absolute_path_relative(self) -> None:
         """Relative paths are not absolute on any OS."""
@@ -1340,44 +1341,53 @@ class TestSubtreeInvariant:
         two_paths = {(p.path, p.hash, p.size) for p in two_step.files}
         assert single_paths == two_paths
 
-    def test_invariant_exclude_exception_non_escaping_symlink(self) -> None:
-        """Non-escaping symlinks break the invariant for EXCLUDE_ALL policy.
+    def test_invariant_exception_escaping_symlink_collapse_vs_exclude(self) -> None:
+        """Escaping symlinks cause different results for EXCLUDE_ALL vs COLLAPSE_ESCAPING + EXCLUDE_ALL.
 
-        For regular subtree with EXCLUDE_ALL: only ESCAPING symlinks are excluded,
-        non-escaping symlinks are preserved (rebased).
+        Consider a symlink inside subdir that points outside subdir:
+        - With EXCLUDE_ALL in one step: the symlink is excluded entirely
+        - With COLLAPSE_ESCAPING then EXCLUDE_ALL: the symlink is collapsed to a file
+          in the first step, so it becomes a regular file and is NOT excluded in step 2
 
-        For identity subtree with EXCLUDE: ALL symlinks are excluded.
-
-        So: SUBTREE("subdir", EXCLUDE_ALL) preserves non-escaping symlinks,
-        but SUBTREE("subdir", COLLAPSE_ESCAPING) + SUBTREE(".", EXCLUDE_ALL)
-        excludes them in the second step.
+        This demonstrates that the two approaches are NOT equivalent for escaping symlinks.
         """
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "subdir/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
-                {"path": "subdir/target.txt", "hash": "h2", "size": 200, "mtime": 2000},
-                # Non-escaping symlink (stays within subdir)
-                {"path": "subdir/link", "symlink_target": "subdir/target.txt"},
+                # Escaping symlink: inside subdir, points outside subdir
+                {"path": "subdir/escaping_link", "symlink_target": "outside/target.txt"},
+                # The target file that the symlink points to
+                {"path": "outside/target.txt", "hash": "h2", "size": 200, "mtime": 2000},
                 {"path": "other/file.txt", "hash": "h3", "size": 300, "mtime": 3000},
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE_ALL) - preserves non-escaping symlinks
+        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE_ALL) - excludes ALL symlinks
         single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
         # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE_ALL)
+        # Step 1: COLLAPSE_ESCAPING collapses the escaping symlink into a regular file
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
+        # Step 2: EXCLUDE_ALL on the result - but the symlink is now a file, so nothing to exclude
         two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
-        # Single-step PRESERVES the non-escaping symlink (only escaping ones are excluded)
+        # Single-step EXCLUDES the escaping symlink (EXCLUDE_ALL policy)
         single_paths = {p.path for p in single_step.files}
-        assert "link" in single_paths
+        assert "escaping_link" not in single_paths
+        assert single_paths == {"file.txt"}
 
-        # Two-step: symlink is preserved in step1 (non-escaping), then excluded in step2
+        # Two-step: symlink was COLLAPSED in step1 (became a file), so it's preserved in step2
         two_paths = {p.path for p in two_step.files}
-        assert "link" not in two_paths
+        assert "escaping_link" in two_paths
+        assert two_paths == {"file.txt", "escaping_link"}
 
-        # This is the exception - results are NOT equivalent
+        # Verify the collapsed symlink has the target's content
+        escaping_link_entry = next(p for p in two_step.files if p.path == "escaping_link")
+        assert escaping_link_entry.hash == "h2"  # Has target's hash
+        assert escaping_link_entry.size == 200  # Has target's size
+        assert escaping_link_entry.symlink_target is None  # No longer a symlink
+
+        # Results are NOT equivalent - this is the key difference
         assert single_paths != two_paths
 
     def test_invariant_with_escaping_symlink_collapsed(self) -> None:

@@ -35,6 +35,7 @@ from .._manifest import (
     RelDiffManifest,
     RelManifest,
     RelSnapshotManifest,
+    _is_absolute_path,
 )
 
 
@@ -130,23 +131,6 @@ def _normalize_prefix(prefix: str) -> str:
     # Remove trailing slash (but preserve leading slash for absolute paths)
     prefix = prefix.rstrip("/")
     return prefix
-
-
-def _is_absolute_path(path: str) -> bool:
-    """Check if a path is absolute.
-
-    Handles both POSIX and Windows-style absolute paths.
-    """
-    # POSIX absolute
-    if path.startswith("/"):
-        return True
-    # Windows drive letter (e.g., C:/)
-    if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
-        return True
-    # Windows UNC path (e.g., //server/share)
-    if path.startswith("//"):
-        return True
-    return False
 
 
 def _get_output_manifest_type(

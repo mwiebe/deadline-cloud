@@ -42,6 +42,7 @@ from .._manifest import (
     RelManifest,
     RelSnapshotManifest,
     SymlinkPolicy,
+    _is_absolute_path,
 )
 
 
@@ -128,21 +129,6 @@ def _normalize_subtree_path(subtree: str) -> str:
     if subtree != "/":
         subtree = subtree.rstrip("/")
     return subtree
-
-
-def _is_absolute_path(path: str) -> bool:
-    """Check if a path is absolute for the host OS."""
-    if os.name == "nt":
-        # Windows drive letter (e.g., C:/)
-        if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
-            return True
-        # Windows UNC path
-        if path.startswith("//") or path.startswith("\\\\"):
-            return True
-    # POSIX absolute (consider it absolute on Windows, even though it's half-absolute)
-    if path.startswith("/"):
-        return True
-    return False
 
 
 def _validate_path_style_consistency(manifest: Manifest, subtree: str) -> None:
