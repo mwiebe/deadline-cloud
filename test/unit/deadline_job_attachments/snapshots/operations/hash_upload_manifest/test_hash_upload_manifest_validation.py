@@ -20,7 +20,7 @@ from deadline.job_attachments._snapshots import (
     hash_upload_manifest,
     FileSystemDataCache,
     S3DataCache,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -44,7 +44,7 @@ class TestInputValidationFileSystem:
         cache_root = tmp_path / "cache"
         cache_root.mkdir()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -74,7 +74,7 @@ class TestInputValidationFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -116,7 +116,7 @@ class TestInputValidationS3:
 
     def test_rejects_relative_paths(self) -> None:
         """Test that manifest with relative paths raises ValueError."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -144,7 +144,7 @@ class TestInputValidationS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

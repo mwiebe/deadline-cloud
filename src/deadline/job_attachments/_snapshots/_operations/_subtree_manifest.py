@@ -4,7 +4,7 @@
 Module for extracting a subtree from a manifest.
 
 This module implements the SUBTREE operation from the composable manifest operations design:
-    SUBTREE: (Manifest, subtree_path) → RelManifest
+    SUBTREE: (AnyManifest, subtree_path) → RelManifest
 
 The SUBTREE operation extracts a portion of a manifest rooted at a subdirectory,
 producing a new manifest with paths relative to the new root.
@@ -13,7 +13,7 @@ Key behaviors:
 - Filters to entries within the subtree
 - Rebases paths relative to the new root (strips the subtree prefix)
 - Handles symlinks according to symlink_policy
-- Output always uses relative paths (RelSnapshotManifest or RelDiffManifest)
+- Output always uses relative paths (Snapshot or SnapshotDiff)
 
 Path Style Requirements:
 - The subtree path must match the manifest's path style (both relative or both absolute)
@@ -34,20 +34,20 @@ import posixpath
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .._manifest import (
-    AbsSnapshotManifest,
-    Manifest,
+    AbsSnapshot,
+    AnyManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
+    Snapshot,
+    SnapshotDiff,
     RelManifest,
-    RelSnapshotManifest,
     SymlinkPolicy,
     _is_absolute_path,
 )
 
 
 def subtree_manifest(
-    manifest: Manifest,
+    manifest: AnyManifest,
     subtree: str,
     *,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -73,7 +73,7 @@ def subtree_manifest(
         - Only entries within the subtree (all entries if subtree="." or "")
         - Paths rebased relative to the new root (unchanged if subtree="." or "")
         - Symlinks handled according to symlink_policy
-        - Always returns RelSnapshotManifest or RelDiffManifest (relative paths)
+        - Always returns Snapshot or SnapshotDiff (relative paths)
 
     Raises:
         ValueError: If subtree path style doesn't match manifest path style
@@ -131,7 +131,7 @@ def _normalize_subtree_path(subtree: str) -> str:
     return subtree
 
 
-def _validate_path_style_consistency(manifest: Manifest, subtree: str) -> None:
+def _validate_path_style_consistency(manifest: AnyManifest, subtree: str) -> None:
     """
     Validate that the subtree path style matches the manifest's path style.
 
@@ -199,7 +199,7 @@ def _rebase_path(path: str, subtree: str) -> str:
 
 
 def _subtree_manifest(
-    manifest: Manifest,
+    manifest: AnyManifest,
     subtree: str,
     symlink_policy: SymlinkPolicy,
     print_function_callback: Callable[[Any], None],
@@ -297,17 +297,17 @@ def _subtree_manifest(
     # Determine output type: always relative, preserve snapshot/diff
     # Note: parentManifestHash is NOT preserved because the subtree operation
     # changes the root path, making the original parent manifest hash invalid.
-    is_snapshot = isinstance(manifest, (AbsSnapshotManifest, RelSnapshotManifest))
+    is_snapshot = isinstance(manifest, (AbsSnapshot, Snapshot))
 
     if is_snapshot:
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=manifest.hashAlg,
             dirs=result_dirs,
             files=result_paths,
             total_size=total_size,
         )
     else:
-        return RelDiffManifest(
+        return SnapshotDiff(
             hash_alg=manifest.hashAlg,
             dirs=result_dirs,
             files=result_paths,
@@ -316,7 +316,7 @@ def _subtree_manifest(
 
 
 def _identity_subtree_manifest(
-    manifest: Manifest,
+    manifest: AnyManifest,
     symlink_policy: SymlinkPolicy,
     print_function_callback: Callable[[Any], None],
 ) -> RelManifest:
@@ -424,10 +424,10 @@ def _identity_subtree_manifest(
             print_function_callback(f"Included: {entry.path}")
 
     # Determine output type: preserve snapshot/diff
-    is_snapshot = isinstance(manifest, (AbsSnapshotManifest, RelSnapshotManifest))
+    is_snapshot = isinstance(manifest, (AbsSnapshot, Snapshot))
 
     if is_snapshot:
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=manifest.hashAlg,
             dirs=result_dirs,
             files=result_paths,
@@ -436,7 +436,7 @@ def _identity_subtree_manifest(
             file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
     else:
-        return RelDiffManifest(
+        return SnapshotDiff(
             hash_alg=manifest.hashAlg,
             dirs=result_dirs,
             files=result_paths,

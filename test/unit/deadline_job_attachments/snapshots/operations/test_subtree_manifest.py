@@ -31,9 +31,9 @@ from deadline.job_attachments._snapshots._operations._subtree_manifest import (
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
-    AbsSnapshotManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
+    AbsSnapshot,
+    Snapshot,
+    SnapshotDiff,
     ManifestFilePath,
     ManifestDirectoryPath,
 )
@@ -111,8 +111,8 @@ class TestSubtreeManifestRelative:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -120,7 +120,7 @@ class TestSubtreeManifestRelative:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -144,7 +144,7 @@ class TestSubtreeManifestRelative:
 
         result = subtree_manifest(manifest, "assets/textures")
 
-        assert isinstance(result, RelSnapshotManifest)
+        assert isinstance(result, Snapshot)
         file_paths = {p.path for p in result.files}
         assert file_paths == {"wood.png", "metal.png"}
 
@@ -271,8 +271,8 @@ class TestSubtreeManifestDiff:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelDiffManifest:
-        """Helper to create a RelDiffManifest."""
+    ) -> SnapshotDiff:
+        """Helper to create a SnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -280,7 +280,7 @@ class TestSubtreeManifestDiff:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelDiffManifest(
+        return SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -302,7 +302,7 @@ class TestSubtreeManifestDiff:
 
         result = subtree_manifest(manifest, "assets/textures")
 
-        assert isinstance(result, RelDiffManifest)
+        assert isinstance(result, SnapshotDiff)
         assert len(result.files) == 1
         assert result.files[0].path == "old.png"
         assert result.files[0].deleted is True
@@ -329,8 +329,8 @@ class TestSubtreeManifestSymlinks:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -338,7 +338,7 @@ class TestSubtreeManifestSymlinks:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -567,11 +567,11 @@ class TestSubtreeManifestValidation:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -582,11 +582,11 @@ class TestSubtreeManifestValidation:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    ) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -681,8 +681,8 @@ class TestSubtreeManifestAbsolutePaths:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    ) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -690,7 +690,7 @@ class TestSubtreeManifestAbsolutePaths:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -728,8 +728,8 @@ class TestSubtreeManifestAbsolutePaths:
 
         result = subtree_manifest(manifest, f"{base}/assets/textures")
 
-        # Output should be RelSnapshotManifest with relative paths
-        assert isinstance(result, RelSnapshotManifest)
+        # Output should be Snapshot with relative paths
+        assert isinstance(result, Snapshot)
         file_paths = {p.path for p in result.files}
         assert file_paths == {"wood.png", "metal.png"}
         # Verify paths are relative (don't start with / or drive letter)
@@ -774,8 +774,8 @@ class TestSubtreeManifestDirectorySymlinks:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -783,7 +783,7 @@ class TestSubtreeManifestDirectorySymlinks:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -887,8 +887,8 @@ class TestPathSeparatorHandling:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -896,7 +896,7 @@ class TestPathSeparatorHandling:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -946,8 +946,8 @@ class TestSubtreeManifestUNCPaths:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    ) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -955,7 +955,7 @@ class TestSubtreeManifestUNCPaths:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -1066,8 +1066,8 @@ class TestIdentitySubtree:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -1075,7 +1075,7 @@ class TestIdentitySubtree:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -1270,8 +1270,8 @@ class TestSubtreeInvariant:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -1279,7 +1279,7 @@ class TestSubtreeInvariant:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,

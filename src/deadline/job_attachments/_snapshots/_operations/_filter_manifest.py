@@ -4,7 +4,7 @@
 Module for filtering manifest entries using a flexible filter interface.
 
 This module implements the FILTER operation from the composable manifest operations design:
-    FILTER: Manifest → Manifest (with only matching entries)
+    FILTER: AnyManifest → AnyManifest (with only matching entries)
 
 The FILTER operation is critical for diff computation:
 - Both parent and current manifests must be filtered with the SAME filter
@@ -26,16 +26,19 @@ deletions, and other v2025-only features.
 from __future__ import annotations
 
 import fnmatch
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, TypeVar, Union, cast
 
 from .._manifest import (
-    Manifest,
+    AnyManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
 )
 
 # Type alias for manifest entries
 ManifestEntry = Union[ManifestFilePath, ManifestDirectoryPath]
+
+# TypeVar for preserving manifest type through filter
+M = TypeVar("M", bound=AnyManifest)
 
 
 class IncludeExcludePathsFilter:
@@ -118,9 +121,9 @@ def _matches_patterns(path: str, include: List[str], exclude: List[str]) -> bool
 
 
 def filter_manifest(
-    manifest: Manifest,
+    manifest: M,
     entry_filter: Callable[[ManifestEntry], bool],
-) -> Manifest:
+) -> M:
     """
     Apply a filter to a manifest's entries.
 
@@ -128,10 +131,10 @@ def filter_manifest(
     - Filters file/symlink entries using the provided filter
     - Filters directory entries using the provided filter
     - Returns a NEW manifest with only matching entries
-    - Preserves manifest type (AbsSnapshot, RelSnapshot, AbsDiff, RelDiff)
+    - Preserves manifest type (AbsSnapshot, Snapshot, AbsSnapshotDiff, SnapshotDiff)
 
     Args:
-        manifest: The manifest to filter (any Manifest subclass)
+        manifest: The manifest to filter (any manifest type)
         entry_filter: A callable that takes a manifest entry and returns True to keep it
 
     Returns:
@@ -190,10 +193,13 @@ def filter_manifest(
 
     # Return the same manifest type as input
     manifest_type = type(manifest)
-    return manifest_type(
-        hash_alg=manifest.hashAlg,
-        dirs=filtered_dirs,
-        files=filtered_paths,
-        total_size=total_size,
-        parent_manifest_hash=manifest.parentManifestHash,
+    return cast(
+        M,
+        manifest_type(
+            hash_alg=manifest.hashAlg,
+            dirs=filtered_dirs,
+            files=filtered_paths,
+            total_size=total_size,
+            parent_manifest_hash=manifest.parentManifestHash,
+        ),
     )

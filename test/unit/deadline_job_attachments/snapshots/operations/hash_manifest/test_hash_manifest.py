@@ -19,8 +19,8 @@ from deadline.job_attachments._snapshots import (
     hash_manifest,
     collect_manifest,
     SymlinkPolicy,
-    AbsDiffManifest,
-    AbsSnapshotManifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
 )
@@ -148,7 +148,7 @@ class TestHashManifestBasic:
         assert hashed.files[0].runnable == collected.files[0].runnable
 
     def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
-        """Hashing AbsSnapshotManifest returns AbsSnapshotManifest."""
+        """Hashing AbsSnapshot returns AbsSnapshot."""
         (tmp_path / "test.txt").write_text("test")
 
         collected = collect_manifest(
@@ -158,7 +158,7 @@ class TestHashManifestBasic:
         )
         hashed = hash_manifest(collected)
 
-        assert isinstance(hashed, AbsSnapshotManifest)
+        assert isinstance(hashed, AbsSnapshot)
 
 
 class TestGetOrComputeHash:
@@ -233,7 +233,7 @@ class TestHashDiffManifest:
         file_stat = test_file.stat()
         abs_path = str(test_file).replace("\\", "/")
 
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -253,7 +253,7 @@ class TestHashDiffManifest:
         assert hashed.files[0].hash is not None
         assert hashed.files[0].hash != ""
         assert len(hashed.files[0].hash) == 32
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash == "parent123"
 
     def test_diff_manifest_mixed_entries(self, tmp_path: Path) -> None:
@@ -268,7 +268,7 @@ class TestHashDiffManifest:
         mod_stat = modified_file.stat()
         mod_path = str(modified_file).replace("\\", "/")
 
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="/new/dir", deleted=False),
@@ -298,7 +298,7 @@ class TestHashDiffManifest:
 
         hashed = hash_manifest(diff_manifest)
 
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash == "parent789"
 
         assert len(hashed.dirs) == 2
@@ -322,7 +322,7 @@ class TestHashDiffManifest:
         file_stat = test_file.stat()
         abs_path = str(test_file).replace("\\", "/")
 
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -339,7 +339,7 @@ class TestHashDiffManifest:
 
         hashed = hash_manifest(diff_manifest)
 
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash is None
 
 
@@ -347,13 +347,13 @@ class TestManifestTypePreservation:
     """Tests verifying that manifest types are preserved through hashing."""
 
     def test_abs_snapshot_returns_abs_snapshot(self, tmp_path: Path) -> None:
-        """AbsSnapshotManifest input returns AbsSnapshotManifest output."""
+        """AbsSnapshot input returns AbsSnapshot output."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -369,16 +369,16 @@ class TestManifestTypePreservation:
 
         hashed = hash_manifest(manifest)
 
-        assert isinstance(hashed, AbsSnapshotManifest)
+        assert isinstance(hashed, AbsSnapshot)
 
     def test_abs_diff_returns_abs_diff(self, tmp_path: Path) -> None:
-        """AbsDiffManifest input returns AbsDiffManifest output."""
+        """AbsSnapshotDiff input returns AbsSnapshotDiff output."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        manifest = AbsDiffManifest(
+        manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -395,7 +395,7 @@ class TestManifestTypePreservation:
 
         hashed = hash_manifest(manifest)
 
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash == "parent123"
 
     def test_snapshot_manifest_type_preserved(self, tmp_path: Path) -> None:
@@ -409,8 +409,8 @@ class TestManifestTypePreservation:
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
 
-        assert isinstance(collected, AbsSnapshotManifest)
+        assert isinstance(collected, AbsSnapshot)
 
         hashed = hash_manifest(collected)
 
-        assert isinstance(hashed, AbsSnapshotManifest)
+        assert isinstance(hashed, AbsSnapshot)

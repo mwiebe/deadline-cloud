@@ -34,20 +34,18 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 from deadline.job_attachments._snapshots import (
     ManifestFilePath,
     ManifestDirectoryPath,
-    AbsSnapshotManifest,
-    AbsDiffManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    Snapshot,
+    SnapshotDiff,
 )
 
 
 class TestComputeDiffManifestAbsSnapshot:
-    """Tests for diff computation with AbsSnapshotManifest."""
+    """Tests for diff computation with AbsSnapshot."""
 
-    def _create_manifest(
-        self, files: List[dict], dirs: List[dict] | None = None
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -55,7 +53,7 @@ class TestComputeDiffManifestAbsSnapshot:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -73,7 +71,7 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert isinstance(diff, AbsDiffManifest)
+        assert isinstance(diff, AbsSnapshotDiff)
         assert len(diff.files) == 0
         assert len(diff.dirs) == 0
 
@@ -349,7 +347,7 @@ class TestComputeDiffManifestAbsSnapshot:
         assert diff.totalSize == 100
 
     def test_returns_abs_diff_manifest(self) -> None:
-        """Diff of AbsSnapshotManifests returns AbsDiffManifest."""
+        """Diff of AbsSnapshots returns AbsSnapshotDiff."""
         parent = self._create_manifest(
             [{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
@@ -359,16 +357,14 @@ class TestComputeDiffManifestAbsSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert isinstance(diff, AbsDiffManifest)
+        assert isinstance(diff, AbsSnapshotDiff)
 
 
 class TestComputeDiffManifestRelSnapshot:
-    """Tests for diff computation with RelSnapshotManifest."""
+    """Tests for diff computation with Snapshot."""
 
-    def _create_manifest(
-        self, files: List[dict], dirs: List[dict] | None = None
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -376,7 +372,7 @@ class TestComputeDiffManifestRelSnapshot:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -394,7 +390,7 @@ class TestComputeDiffManifestRelSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert isinstance(diff, RelDiffManifest)
+        assert isinstance(diff, SnapshotDiff)
         assert len(diff.files) == 0
         assert len(diff.dirs) == 0
 
@@ -435,7 +431,7 @@ class TestComputeDiffManifestRelSnapshot:
         assert deleted_entry.deleted is True
 
     def test_returns_rel_diff_manifest(self) -> None:
-        """Diff of RelSnapshotManifests returns RelDiffManifest."""
+        """Diff of Snapshots returns SnapshotDiff."""
         parent = self._create_manifest([{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}])
         current = self._create_manifest(
             [{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
@@ -443,7 +439,7 @@ class TestComputeDiffManifestRelSnapshot:
 
         diff = compute_diff_manifest(parent, current)
 
-        assert isinstance(diff, RelDiffManifest)
+        assert isinstance(diff, SnapshotDiff)
 
 
 class TestComputeDiffManifestValidation:
@@ -451,13 +447,13 @@ class TestComputeDiffManifestValidation:
 
     def test_path_type_mismatch_raises_error(self) -> None:
         """Mismatched path types (abs vs rel) raise ValueError."""
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
             total_size=0,
         )
-        current = RelSnapshotManifest(
+        current = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
@@ -489,7 +485,7 @@ class TestComputeDiffWithFilter:
         Without filtering parent, texture.png would incorrectly appear as deleted.
         With filtering both, only new.blend appears as added.
         """
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -498,7 +494,7 @@ class TestComputeDiffWithFilter:
             ],
             total_size=300,
         )
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -513,8 +509,8 @@ class TestComputeDiffWithFilter:
         filter_obj = IncludeExcludePathsFilter(include=["*.blend"])
         filtered_parent = filter_manifest(parent, filter_obj)
         filtered_current = filter_manifest(current, filter_obj)
-        assert isinstance(filtered_parent, AbsSnapshotManifest)
-        assert isinstance(filtered_current, AbsSnapshotManifest)
+        assert isinstance(filtered_parent, AbsSnapshot)
+        assert isinstance(filtered_current, AbsSnapshot)
 
         diff = compute_diff_manifest(filtered_parent, filtered_current)
 
@@ -531,15 +527,15 @@ class TestComputeDiffWithFilter:
 class TestIgnoreHashesMode:
     """Tests for ignore_hashes mode (fast diff without hash comparison)."""
 
-    def _create_manifest(self, files: List[dict]) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    def _create_manifest(self, files: List[dict]) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=file_entries,
@@ -592,15 +588,15 @@ class TestIgnoreHashesMode:
 class TestPreserveRunnableMode:
     """Tests for preserve_runnable mode (Windows compatibility)."""
 
-    def _create_manifest(self, files: List[dict]) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    def _create_manifest(self, files: List[dict]) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         total_size = sum(
             f.get("size", 0) or 0
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=file_entries,
@@ -789,13 +785,13 @@ class TestProgressCallback:
 
     def test_callback_for_new_files(self) -> None:
         """Progress callback is called for new files."""
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
             total_size=0,
         )
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="/new.txt", hash="h1", size=10, mtime=1000)],
@@ -809,13 +805,13 @@ class TestProgressCallback:
 
     def test_callback_for_modified_files(self) -> None:
         """Progress callback is called for modified files."""
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="/file.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="/file.txt", hash="h2", size=10, mtime=2000)],
@@ -829,13 +825,13 @@ class TestProgressCallback:
 
     def test_callback_for_deleted_files(self) -> None:
         """Progress callback is called for deleted files."""
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="/deleted.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
@@ -849,13 +845,13 @@ class TestProgressCallback:
 
     def test_callback_for_deleted_directories(self) -> None:
         """Progress callback is called for deleted directories."""
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="/old_dir")],
             files=[],
             total_size=0,
         )
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
@@ -875,10 +871,8 @@ class TestDirectoryDeletionSemantics:
     a non-empty directory, all its contents must be explicitly deleted first.
     """
 
-    def _create_manifest(
-        self, files: List[dict], dirs: List[dict] | None = None
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -886,7 +880,7 @@ class TestDirectoryDeletionSemantics:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,

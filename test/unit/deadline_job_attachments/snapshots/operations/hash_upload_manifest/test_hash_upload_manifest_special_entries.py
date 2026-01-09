@@ -23,8 +23,8 @@ from deadline.job_attachments._snapshots import (
     FileSystemDataCache,
     S3DataCache,
     SymlinkPolicy,
-    AbsDiffManifest,
-    AbsSnapshotManifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -63,7 +63,7 @@ class TestSymlinkPassthroughFileSystem:
         )
 
         filtered_files = [f for f in collected.files if "cache" not in f.path]
-        filtered_manifest = AbsSnapshotManifest(
+        filtered_manifest = AbsSnapshot(
             hash_alg=collected.hashAlg,
             files=filtered_files,
             dirs=[d for d in collected.dirs if "cache" not in d.path],
@@ -163,7 +163,7 @@ class TestDeletedEntryPassthroughFileSystem:
         """Test that deleted entries in diff manifests pass through unchanged."""
         cache_root = tmp_path / "cache"
 
-        manifest = AbsDiffManifest(
+        manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -214,7 +214,7 @@ class TestDeletedEntryPassthroughS3:
 
     def test_deleted_entries_pass_through(self) -> None:
         """Test that deleted entries in diff manifests pass through unchanged."""
-        manifest = AbsDiffManifest(
+        manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[

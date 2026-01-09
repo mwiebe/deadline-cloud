@@ -30,10 +30,10 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 from deadline.job_attachments._snapshots import (
     ManifestFilePath,
     ManifestDirectoryPath,
-    AbsSnapshotManifest,
-    AbsDiffManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    Snapshot,
+    SnapshotDiff,
 )
 
 
@@ -89,57 +89,55 @@ class TestHelperFunctions:
         assert _is_absolute_path("../file.txt") is False
 
     def test_get_output_manifest_type_rel_snapshot_rel_prefix(self) -> None:
-        """RelSnapshotManifest + relative prefix -> RelSnapshotManifest."""
-        manifest = RelSnapshotManifest(
+        """Snapshot + relative prefix -> Snapshot."""
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "prefix")
-        assert result is RelSnapshotManifest
+        assert result is Snapshot
 
     def test_get_output_manifest_type_rel_snapshot_abs_prefix(self) -> None:
-        """RelSnapshotManifest + absolute prefix -> AbsSnapshotManifest."""
-        manifest = RelSnapshotManifest(
+        """Snapshot + absolute prefix -> AbsSnapshot."""
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "/prefix")
-        assert result is AbsSnapshotManifest
+        assert result is AbsSnapshot
 
     def test_get_output_manifest_type_rel_diff_rel_prefix(self) -> None:
-        """RelDiffManifest + relative prefix -> RelDiffManifest."""
-        manifest = RelDiffManifest(
+        """SnapshotDiff + relative prefix -> SnapshotDiff."""
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "prefix")
-        assert result is RelDiffManifest
+        assert result is SnapshotDiff
 
     def test_get_output_manifest_type_rel_diff_abs_prefix(self) -> None:
-        """RelDiffManifest + absolute prefix -> AbsDiffManifest."""
-        manifest = RelDiffManifest(
+        """SnapshotDiff + absolute prefix -> AbsSnapshotDiff."""
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
             total_size=10,
         )
         result = _get_output_manifest_type(manifest, "/prefix")
-        assert result is AbsDiffManifest
+        assert result is AbsSnapshotDiff
 
 
 class TestJoinManifestRelSnapshot:
-    """Tests for RelSnapshotManifest joining."""
+    """Tests for Snapshot joining."""
 
-    def _create_manifest(
-        self, files: List[dict], dirs: List[dict] | None = None
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -147,7 +145,7 @@ class TestJoinManifestRelSnapshot:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -250,22 +248,22 @@ class TestJoinManifestRelSnapshot:
         assert result.files[0].chunkhashes == ["c1", "c2"]
 
     def test_returns_rel_snapshot_manifest(self) -> None:
-        """Joining RelSnapshotManifest returns RelSnapshotManifest."""
+        """Joining Snapshot returns Snapshot."""
         manifest = self._create_manifest(
             files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
 
         result = join_manifest(manifest, "prefix")
 
-        assert isinstance(result, RelSnapshotManifest)
+        assert isinstance(result, Snapshot)
 
 
 class TestJoinManifestAbsSnapshot:
-    """Tests for joining with absolute prefix to produce AbsSnapshotManifest."""
+    """Tests for joining with absolute prefix to produce AbsSnapshot."""
 
     def test_basic_join_absolute_prefix(self) -> None:
-        """Basic join with absolute prefix produces AbsSnapshotManifest."""
-        manifest = RelSnapshotManifest(
+        """Basic join with absolute prefix produces AbsSnapshot."""
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="old/sub")],
             files=[ManifestFilePath(path="old/wood.png", hash="h1", size=100, mtime=1000)],
@@ -280,11 +278,11 @@ class TestJoinManifestAbsSnapshot:
         dir_paths = {d.path for d in result.dirs}
         assert dir_paths == {"/projects/scene/old/sub"}
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
 
     def test_symlink_targets_prefixed_absolute(self) -> None:
         """Symlink targets are prefixed with absolute prefix."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -303,8 +301,8 @@ class TestJoinManifestAbsSnapshot:
         )
 
     def test_returns_abs_snapshot_manifest(self) -> None:
-        """Joining with absolute prefix returns AbsSnapshotManifest."""
-        manifest = RelSnapshotManifest(
+        """Joining with absolute prefix returns AbsSnapshot."""
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
@@ -313,7 +311,7 @@ class TestJoinManifestAbsSnapshot:
 
         result = join_manifest(manifest, "/prefix")
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
 
 
 class TestJoinManifestDiff:
@@ -321,7 +319,7 @@ class TestJoinManifestDiff:
 
     def test_preserves_deleted_markers(self) -> None:
         """Deleted markers are preserved and prefixed."""
-        manifest = RelDiffManifest(
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="old_dir", deleted=True)],
             files=[ManifestFilePath(path="old.txt", deleted=True)],
@@ -338,7 +336,7 @@ class TestJoinManifestDiff:
 
     def test_preserves_parent_manifest_hash(self) -> None:
         """Parent manifest hash is preserved."""
-        manifest = RelDiffManifest(
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
@@ -351,8 +349,8 @@ class TestJoinManifestDiff:
         assert result.parentManifestHash == "parent_hash_123"
 
     def test_returns_rel_diff_manifest_with_rel_prefix(self) -> None:
-        """Joining RelDiffManifest with relative prefix returns RelDiffManifest."""
-        manifest = RelDiffManifest(
+        """Joining SnapshotDiff with relative prefix returns SnapshotDiff."""
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
@@ -361,11 +359,11 @@ class TestJoinManifestDiff:
 
         result = join_manifest(manifest, "prefix")
 
-        assert isinstance(result, RelDiffManifest)
+        assert isinstance(result, SnapshotDiff)
 
     def test_returns_abs_diff_manifest_with_abs_prefix(self) -> None:
-        """Joining RelDiffManifest with absolute prefix returns AbsDiffManifest."""
-        manifest = RelDiffManifest(
+        """Joining SnapshotDiff with absolute prefix returns AbsSnapshotDiff."""
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="a.txt", hash="h1", size=10, mtime=1000)],
@@ -374,7 +372,7 @@ class TestJoinManifestDiff:
 
         result = join_manifest(manifest, "/prefix")
 
-        assert isinstance(result, AbsDiffManifest)
+        assert isinstance(result, AbsSnapshotDiff)
 
 
 class TestJoinManifestValidation:
@@ -382,7 +380,7 @@ class TestJoinManifestValidation:
 
     def test_empty_prefix_raises_error(self) -> None:
         """Empty prefix raises ValueError."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
@@ -398,7 +396,7 @@ class TestJoinManifestWindowsPaths:
 
     def test_windows_absolute_prefix(self) -> None:
         """Windows-style absolute prefix works."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],
@@ -411,7 +409,7 @@ class TestJoinManifestWindowsPaths:
 
     def test_windows_backslash_prefix_normalized(self) -> None:
         """Windows backslash prefix is normalized to forward slashes."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="wood.png", hash="h1", size=100, mtime=1000)],

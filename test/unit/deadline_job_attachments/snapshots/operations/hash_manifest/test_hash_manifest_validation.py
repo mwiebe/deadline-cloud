@@ -21,7 +21,7 @@ from deadline.job_attachments._snapshots import (
     collect_manifest,
     SymlinkPolicy,
     DEFAULT_FILE_CHUNK_SIZE,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
 )
@@ -33,7 +33,7 @@ class TestInputValidation:
 
     def test_rejects_relative_paths(self, tmp_path: Path) -> None:
         """Manifest with relative paths raises ValueError."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -73,7 +73,7 @@ class TestInputValidation:
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -99,7 +99,7 @@ class TestInputValidation:
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -130,7 +130,7 @@ class TestInputValidation:
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -199,7 +199,7 @@ class TestValidationErrorMessages:
         test_file.write_bytes(b"x" * 100)
         abs_path = str(test_file).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -225,7 +225,7 @@ class TestValidationErrorMessages:
         test_file.write_bytes(b"x" * 100)
         abs_path = str(test_file).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -252,7 +252,7 @@ class TestValidationErrorMessages:
         test_file.write_text("small")
         abs_path = str(test_file).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -278,7 +278,7 @@ class TestValidationErrorMessages:
         test_file.write_text("small")
         abs_path = str(test_file).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -301,7 +301,7 @@ class TestValidationErrorMessages:
 
     def test_error_when_file_path_is_relative(self) -> None:
         """Error raised when file path is relative (HASH requires absolute paths)."""
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -322,7 +322,7 @@ class TestValidationErrorMessages:
 
     def test_error_when_directory_path_is_relative(self) -> None:
         """Error raised when directory path is relative."""
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[

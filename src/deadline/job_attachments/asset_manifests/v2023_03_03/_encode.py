@@ -43,7 +43,7 @@ def encode_v2023(
     the provided parameters.
 
     Args:
-        manifest: RelManifest (either RelSnapshotManifest or RelDiffManifest)
+        manifest: RelManifest (either Snapshot or SnapshotDiff)
         strict: If True (default), raises an error if the manifest has features
             not supported by the format (directories, chunkhashes, runnable,
             deleted entries, or unhashed files). If False, these are silently

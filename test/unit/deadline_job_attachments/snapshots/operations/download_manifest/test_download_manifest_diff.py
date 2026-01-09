@@ -20,7 +20,7 @@ from deadline.job_attachments._snapshots import (
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
-    AbsDiffManifest,
+    AbsSnapshotDiff,
     ManifestFilePath,
     ManifestDirectoryPath,
 )
@@ -45,7 +45,7 @@ class TestDownloadManifestDiff:
         file_to_keep.write_text("Keep this")
 
         abs_path = str(file_to_delete).replace("\\", "/")
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[ManifestFilePath(path=abs_path, deleted=True)],
             dirs=[],
@@ -69,7 +69,7 @@ class TestDownloadManifestDiff:
         file_to_delete.write_text("Delete this")
 
         abs_path = str(file_to_delete).replace("\\", "/")
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[ManifestFilePath(path=abs_path, deleted=True)],
             dirs=[],
@@ -92,7 +92,7 @@ class TestDownloadManifestDiff:
         dir_to_delete.mkdir()
 
         abs_path = str(dir_to_delete).replace("\\", "/")
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[ManifestDirectoryPath(path=abs_path, deleted=True)],
@@ -116,7 +116,7 @@ class TestDownloadManifestDiff:
         (dir_to_delete / "file.txt").write_text("Content")
 
         abs_path = str(dir_to_delete).replace("\\", "/")
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[ManifestDirectoryPath(path=abs_path, deleted=True)],
@@ -143,7 +143,7 @@ class TestDownloadManifestDiff:
         file_in_child = child_dir / "file.txt"
         file_in_child.write_text("Content")
 
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[ManifestFilePath(path=str(file_in_child).replace("\\", "/"), deleted=True)],
             dirs=[
@@ -182,7 +182,7 @@ class TestDownloadManifestDiffSymlinks:
         symlink_to_delete.symlink_to(target_file)
 
         abs_path = str(symlink_to_delete).replace("\\", "/")
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[ManifestFilePath(path=abs_path, deleted=True)],
             dirs=[],

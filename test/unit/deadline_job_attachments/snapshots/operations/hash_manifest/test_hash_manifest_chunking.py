@@ -18,7 +18,7 @@ from deadline.job_attachments._snapshots import (
     collect_manifest,
     SymlinkPolicy,
     DEFAULT_FILE_CHUNK_SIZE,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments._snapshots._operations._hash_manifest import (
@@ -194,7 +194,7 @@ class TestLargeFileChunking:
         abs_path = str(test_file).replace("\\", "/")
         stat_info = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -250,7 +250,7 @@ class TestChunkedFileCacheMocked:
         mock_cache.get_entry.return_value = None
 
         chunk_size = 16  # 64 bytes / 16 = 4 chunks
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

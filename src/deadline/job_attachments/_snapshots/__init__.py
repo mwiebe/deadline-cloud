@@ -1,19 +1,24 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 from ._manifest import (
-    Manifest,
-    AbsManifest,
+    # Manifest classes
+    Snapshot,
+    SnapshotDiff,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    # Type aliases
     RelManifest,
-    SnapshotManifest,
-    DiffManifest,
+    AbsManifest,
+    AnySnapshot,
+    AnyDiff,
+    AnyManifest,
+    # Path classes
     ManifestDirectoryPath,
     ManifestFilePath,
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    RelDiffManifest,
-    RelSnapshotManifest,
+    # Constants
     DEFAULT_FILE_CHUNK_SIZE,
     WHOLE_FILE_CHUNK_SIZE,
+    # Enums
     SymlinkPolicy,
 )
 from ._content_addressed_data_cache import (
@@ -37,22 +42,28 @@ from ._operations import (
 )
 
 __all__ = [
-    "Manifest",
-    "AbsManifest",
+    # Manifest classes
+    "Snapshot",
+    "SnapshotDiff",
+    "AbsSnapshot",
+    "AbsSnapshotDiff",
+    # Type aliases
     "RelManifest",
-    "SnapshotManifest",
-    "DiffManifest",
+    "AbsManifest",
+    "AnySnapshot",
+    "AnyDiff",
+    "AnyManifest",
+    # Path classes
     "ManifestDirectoryPath",
     "ManifestFilePath",
-    "AbsDiffManifest",
-    "AbsSnapshotManifest",
-    "RelDiffManifest",
-    "RelSnapshotManifest",
+    # Constants
     "DEFAULT_FILE_CHUNK_SIZE",
     "WHOLE_FILE_CHUNK_SIZE",
+    # Data caches
     "ContentAddressedDataCache",
     "S3DataCache",
     "FileSystemDataCache",
+    # Operations
     "collect_manifest",
     "hash_manifest",
     "hash_upload_manifest",

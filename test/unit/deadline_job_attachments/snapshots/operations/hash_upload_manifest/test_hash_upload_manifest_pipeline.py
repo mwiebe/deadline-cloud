@@ -26,7 +26,7 @@ from deadline.job_attachments._snapshots import (
     hash_upload_manifest,
     FileSystemDataCache,
     S3DataCache,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
@@ -224,7 +224,7 @@ class TestChunkedFileProcessingFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -270,7 +270,7 @@ class TestChunkedFileProcessingFileSystem:
         file1_stat = file1.stat()
         file2_stat = file2.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -323,7 +323,7 @@ class TestChunkedFileProcessingFileSystem:
         small_stat = small_file.stat()
         large_stat = large_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -374,7 +374,7 @@ class TestChunkedFileProcessingFileSystem:
         test_file.write_bytes(b"x" * 16)
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -408,7 +408,7 @@ class TestChunkedFileProcessingFileSystem:
         test_file.write_bytes(b"x" * 17)
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -456,7 +456,7 @@ class TestStreamingFileProcessingFileSystem:
         test_file.write_bytes(bytes(range(100)))
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -502,7 +502,7 @@ class TestStreamingFileProcessingFileSystem:
         file1_stat = file1.stat()
         file2_stat = file2.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -553,7 +553,7 @@ class TestStreamingFileProcessingFileSystem:
         small_stat = small_file.stat()
         large_stat = large_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -620,7 +620,7 @@ class TestChunkedFileProcessingS3:
         test_file.write_bytes(bytes(range(64)))
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -657,7 +657,7 @@ class TestChunkedFileProcessingS3:
         test_file.write_bytes(b"x" * 64)  # 4 identical 16-byte chunks
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -724,7 +724,7 @@ class TestStreamingFileProcessingS3:
         test_file.write_bytes(bytes(range(100)))
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -771,7 +771,7 @@ class TestMemoryLimitValidation:
         test_file.write_bytes(b"x" * 100)
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -802,7 +802,7 @@ class TestMemoryLimitValidation:
         test_file.write_bytes(b"x" * 32)
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

@@ -25,7 +25,7 @@ from deadline.job_attachments._snapshots._content_addressed_data_cache import (
     S3DataCache,
 )
 from deadline.job_attachments._snapshots import (
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
     DEFAULT_FILE_CHUNK_SIZE,
     WHOLE_FILE_CHUNK_SIZE,
@@ -90,7 +90,7 @@ class TestHashManifestFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
 
         input_chunk_size = 512 * 1024  # 512KB
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -120,7 +120,7 @@ class TestHashManifestFileChunkSizeBytes:
         input_chunk_size = 512 * 1024  # 512KB
         output_chunk_size = 1024 * 1024  # 1MB
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -147,7 +147,7 @@ class TestHashManifestFileChunkSizeBytes:
         test_file.write_text("content")
         abs_path = str(test_file).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -179,7 +179,7 @@ class TestHashManifestFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
         file_stat = test_file.stat()
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -221,7 +221,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
 
         input_chunk_size = 512 * 1024  # 512KB
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -254,7 +254,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         input_chunk_size = 512 * 1024  # 512KB
         output_chunk_size = 1024 * 1024  # 1MB
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -285,7 +285,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
         file_stat = test_file.stat()
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -322,7 +322,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
         file_stat = test_file.stat()
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -442,7 +442,7 @@ class TestEndToEndFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
 
         # Input manifest has large chunk size (no chunking for 64-byte file)
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -489,7 +489,7 @@ class TestEndToEndFileChunkSizeBytes:
         abs_path = str(test_file).replace("\\", "/")
 
         # Input manifest has large chunk size (no chunking for 64-byte file)
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -544,7 +544,7 @@ class TestHashManifestSmallFiles:
 
         # With 16-byte chunk size, a 1024-byte file should have 64 chunks
         chunk_size = 16
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -585,7 +585,7 @@ class TestHashManifestSmallFiles:
 
         # With 256-byte chunk size, a 100-byte file should have a single hash
         chunk_size = 256
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -635,7 +635,7 @@ class TestHashManifestSmallFiles:
             )
 
         chunk_size = 16
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=file_entries,
             total_size=sum(size for _, size in files_data),
@@ -666,7 +666,7 @@ class TestHashManifestSmallFiles:
         abs_path1 = str(file1).replace("\\", "/")
         abs_path2 = str(file2).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -700,7 +700,7 @@ class TestHashManifestSmallFiles:
         abs_path1 = str(file1).replace("\\", "/")
         abs_path2 = str(file2).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -751,7 +751,7 @@ class TestHashUploadManifestFilesystem:
 
         # With 64-byte chunk size, a 1024-byte file should have 16 chunks
         chunk_size = 64
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -808,7 +808,7 @@ class TestHashUploadManifestFilesystem:
             )
 
         chunk_size = 32
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=file_entries,
             total_size=sum(size for _, size in files_data),
@@ -845,7 +845,7 @@ class TestHashUploadManifestFilesystem:
 
         # Use 64-byte chunks (4 chunks total)
         chunk_size = 64
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -904,7 +904,7 @@ class TestHashUploadManifestFilesystem:
 
         # Use 32-byte chunks (4 chunks per file)
         chunk_size = 32
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -1015,7 +1015,7 @@ class TestHashUploadManifestS3:
 
         # With 64-byte chunk size, a 1024-byte file should have 16 chunks
         chunk_size = 64
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -1075,7 +1075,7 @@ class TestHashUploadManifestS3:
             )
 
         chunk_size = 32
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=file_entries,
             total_size=sum(size for _, size in files_data),
@@ -1115,7 +1115,7 @@ class TestHashUploadManifestS3:
 
         # Use 64-byte chunks (4 chunks total)
         chunk_size = 64
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -1171,7 +1171,7 @@ class TestHashUploadManifestS3:
 
         # Use 32-byte chunks (4 chunks per file)
         chunk_size = 32
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

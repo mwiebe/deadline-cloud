@@ -18,7 +18,7 @@ from deadline.job_attachments._snapshots import (
     hash_manifest,
     collect_manifest,
     SymlinkPolicy,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
     WHOLE_FILE_CHUNK_SIZE,
 )
@@ -228,7 +228,7 @@ class TestHashManifestCacheMocked:
             range_end=-1,
         )
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -261,7 +261,7 @@ class TestHashManifestCacheMocked:
         mock_cache = MagicMock(spec=HashCache)
         mock_cache.get_entry.return_value = None
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -306,7 +306,7 @@ class TestHashManifestCacheMocked:
             range_end=-1,
         )
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -340,7 +340,7 @@ class TestHashManifestCacheMocked:
 
         mock_cache = MagicMock(spec=HashCache)
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

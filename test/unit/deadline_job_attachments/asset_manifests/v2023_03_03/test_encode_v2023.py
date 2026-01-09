@@ -11,8 +11,8 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 from deadline.job_attachments._snapshots import (
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    RelSnapshotManifest,
+    SnapshotDiff,
+    Snapshot,
     SymlinkPolicy,
     WHOLE_FILE_CHUNK_SIZE,
 )
@@ -24,8 +24,8 @@ class TestEncodeV2023Basic:
     """Basic tests for encode_v2023 function."""
 
     def test_encode_basic_manifest(self) -> None:
-        """Encodes a basic RelSnapshotManifest to v2023 format."""
-        manifest = RelSnapshotManifest(
+        """Encodes a basic Snapshot to v2023 format."""
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="abc123", size=100, mtime=1000),
@@ -48,7 +48,7 @@ class TestEncodeV2023Basic:
 
     def test_encode_multiple_files(self) -> None:
         """Encodes manifest with multiple files."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="a.txt", hash="h1", size=100, mtime=1000),
@@ -68,7 +68,7 @@ class TestEncodeV2023Basic:
 
     def test_encode_canonical_json(self) -> None:
         """Encodes to canonical JSON (sorted keys, no whitespace, ASCII)."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="abc", size=10, mtime=100),
@@ -88,7 +88,7 @@ class TestEncodeV2023Basic:
 
     def test_encode_utf16_be_sort_order(self) -> None:
         """Encodes paths sorted by UTF-16 BE encoding."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="€", hash="euro", size=1, mtime=100),  # U+20AC
@@ -107,8 +107,8 @@ class TestEncodeV2023Basic:
         assert paths == ["1", "a", "€"]
 
     def test_encode_rel_diff_manifest(self) -> None:
-        """Encodes RelDiffManifest (without deleted entries)."""
-        manifest = RelDiffManifest(
+        """Encodes SnapshotDiff (without deleted entries)."""
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="abc123", size=100, mtime=1000),
@@ -127,7 +127,7 @@ class TestEncodeV2023Basic:
 
     def test_encode_wrong_chunk_size_raises_assertion(self) -> None:
         """Manifest with non-WHOLE_FILE_CHUNK_SIZE raises AssertionError."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="abc123", size=100, mtime=1000),
@@ -145,7 +145,7 @@ class TestEncodeV2023SymlinkHandling:
 
     def test_encode_collapse_symlinks_default(self) -> None:
         """Default behavior collapses symlinks to target content."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="target.txt", hash="h1", size=100, mtime=1000),
@@ -168,7 +168,7 @@ class TestEncodeV2023SymlinkHandling:
 
     def test_encode_collapse_symlinks_explicit(self) -> None:
         """Explicit COLLAPSE_ALL policy collapses symlinks."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="target.txt", hash="h1", size=100, mtime=1000),
@@ -186,7 +186,7 @@ class TestEncodeV2023SymlinkHandling:
 
     def test_encode_exclude_symlinks(self) -> None:
         """EXCLUDE_ALL policy removes symlinks from output."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="target.txt", hash="h1", size=100, mtime=1000),
@@ -205,7 +205,7 @@ class TestEncodeV2023SymlinkHandling:
 
     def test_encode_collapse_directory_symlink(self) -> None:
         """Collapses directory symlinks to include all contents."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="actual_dir")],
             files=[
@@ -230,7 +230,7 @@ class TestEncodeV2023SymlinkHandling:
 
     def test_encode_invalid_symlink_policy_raises_error(self) -> None:
         """Invalid symlink_policy raises error."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000),
@@ -248,7 +248,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_directories_strict_raises_error(self) -> None:
         """Directories raise error in strict mode."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="mydir")],
             files=[
@@ -263,7 +263,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_directories_non_strict_ignores(self) -> None:
         """Directories are ignored in non-strict mode."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="mydir")],
             files=[
@@ -282,7 +282,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_deleted_strict_raises_error(self) -> None:
         """Deleted entries raise error in strict mode."""
-        manifest = RelDiffManifest(
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="deleted.txt", deleted=True),
@@ -296,7 +296,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_deleted_non_strict_skips(self) -> None:
         """Deleted entries are skipped in non-strict mode."""
-        manifest = RelDiffManifest(
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000),
@@ -315,7 +315,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_runnable_strict_raises_error(self) -> None:
         """Runnable flag raises error in strict mode."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="script.sh", hash="h1", size=100, mtime=1000, runnable=True),
@@ -329,7 +329,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_runnable_non_strict_ignores(self) -> None:
         """Runnable flag is ignored in non-strict mode."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="script.sh", hash="h1", size=100, mtime=1000, runnable=True),
@@ -348,7 +348,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_unhashed_strict_raises_error(self) -> None:
         """Unhashed files raise error in strict mode."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="unhashed.txt", size=100, mtime=1000),  # No hash
@@ -362,7 +362,7 @@ class TestEncodeV2023StrictMode:
 
     def test_encode_empty_after_filtering_raises_error(self) -> None:
         """Empty manifest after filtering raises error."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="link.txt", symlink_target="missing.txt"),

@@ -945,7 +945,7 @@ def hash_upload_manifest(
 
     Args:
         manifest: Manifest with absolute paths and hash=None for unhashed files
-            (from collect_manifest). Can be AbsSnapshotManifest or AbsDiffManifest.
+            (from collect_manifest). Can be AbsSnapshot or AbsSnapshotDiff.
         data_cache: Content-addressable data cache destination. Either S3DataCache
             for cloud storage or FileSystemDataCache for local/network storage.
         hash_cache: Optional hash cache for efficiency

@@ -25,12 +25,12 @@ from deadline.job_attachments._snapshots import (
     subtree_manifest,
     FileSystemDataCache,
 )
-from deadline.job_attachments._snapshots import AbsSnapshotManifest
+from deadline.job_attachments._snapshots import AbsSnapshot
 
 
-def _to_abs_snapshot(manifest: object) -> AbsSnapshotManifest:
-    """Cast a manifest to AbsSnapshotManifest for type checking."""
-    return cast(AbsSnapshotManifest, manifest)
+def _to_abs_snapshot(manifest: object) -> AbsSnapshot:
+    """Cast a manifest to AbsSnapshot for type checking."""
+    return cast(AbsSnapshot, manifest)
 
 
 class TestDownloadManifestAtomicWrites:

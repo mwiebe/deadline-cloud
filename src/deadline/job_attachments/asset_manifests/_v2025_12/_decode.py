@@ -4,7 +4,7 @@
 EXPERIMENTAL: Decode v2025-12 JSON format to unified manifest classes.
 
 This module provides the decode_v2025() function that deserializes JSON
-to unified manifest classes (AbsSnapshotManifest, RelSnapshotManifest, etc.).
+to unified manifest classes (AbsSnapshot, Snapshot, etc.).
 
 This format is under development and subject to change. Do not use in production.
 """
@@ -16,30 +16,30 @@ from typing import Any, Dict, List, Optional, Type
 
 from ..hash_algorithms import HashAlgorithm
 from ..._snapshots import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    Manifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
+    AnyManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    RelSnapshotManifest,
+    SnapshotDiff,
+    Snapshot,
 )
 from ...exceptions import ManifestDecodeValidationError
 from ._validate import validate_manifest_2025_12
 
 
 # Specification version to manifest class mapping
-SPEC_VERSION_MAP: Dict[str, Type[Manifest]] = {
-    "absolute-manifest-snapshot-beta-2025-12": AbsSnapshotManifest,
-    "absolute-manifest-diff-beta-2025-12": AbsDiffManifest,
-    "relative-manifest-snapshot-beta-2025-12": RelSnapshotManifest,
-    "relative-manifest-diff-beta-2025-12": RelDiffManifest,
+SPEC_VERSION_MAP: Dict[str, Type[AnyManifest]] = {
+    "absolute-manifest-snapshot-beta-2025-12": AbsSnapshot,
+    "absolute-manifest-diff-beta-2025-12": AbsSnapshotDiff,
+    "relative-manifest-snapshot-beta-2025-12": Snapshot,
+    "relative-manifest-diff-beta-2025-12": SnapshotDiff,
 }
 
 SUPPORTED_SPEC_VERSIONS = set(SPEC_VERSION_MAP.keys())
 
 
-def decode_v2025(manifest_str: str) -> Manifest:
+def decode_v2025(manifest_str: str) -> AnyManifest:
     """
     Decode a v2025-12 JSON string to a unified manifest.
 

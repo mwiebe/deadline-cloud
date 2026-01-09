@@ -9,12 +9,12 @@ import pytest
 
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    RelSnapshotManifest,
+    SnapshotDiff,
+    Snapshot,
 )
 from deadline.job_attachments.asset_manifests._v2025_12 import (
     decode_v2025,
@@ -27,8 +27,8 @@ class TestEncodeV2025:
     """Tests for encode_v2025 function."""
 
     def test_encode_abs_snapshot(self) -> None:
-        """Encodes AbsSnapshotManifest with correct specificationVersion."""
-        manifest = AbsSnapshotManifest(
+        """Encodes AbsSnapshot with correct specificationVersion."""
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="/project/file.txt", hash="abc123", size=100, mtime=1000),
@@ -48,8 +48,8 @@ class TestEncodeV2025:
         assert data["dirs"][0]["name"] == "/project"
 
     def test_encode_rel_snapshot(self) -> None:
-        """Encodes RelSnapshotManifest with correct specificationVersion."""
-        manifest = RelSnapshotManifest(
+        """Encodes Snapshot with correct specificationVersion."""
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="project/file.txt", hash="abc123", size=100, mtime=1000),
@@ -63,8 +63,8 @@ class TestEncodeV2025:
         assert data["specificationVersion"] == "relative-manifest-snapshot-beta-2025-12"
 
     def test_encode_abs_diff(self) -> None:
-        """Encodes AbsDiffManifest with correct specificationVersion."""
-        manifest = AbsDiffManifest(
+        """Encodes AbsSnapshotDiff with correct specificationVersion."""
+        manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="/project/file.txt", hash="abc123", size=100, mtime=1000),
@@ -80,8 +80,8 @@ class TestEncodeV2025:
         assert data["parentManifestHash"] == "parent123"
 
     def test_encode_rel_diff(self) -> None:
-        """Encodes RelDiffManifest with correct specificationVersion."""
-        manifest = RelDiffManifest(
+        """Encodes SnapshotDiff with correct specificationVersion."""
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="project/file.txt", hash="abc123", size=100, mtime=1000),
@@ -97,7 +97,7 @@ class TestEncodeV2025:
 
     def test_encode_directory_index_compression(self) -> None:
         """Encodes paths with $N/ directory index compression."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="project"),
@@ -124,7 +124,7 @@ class TestEncodeV2025:
 
     def test_encode_symlink(self) -> None:
         """Encodes symlinks correctly."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="project")],
             files=[
@@ -142,7 +142,7 @@ class TestEncodeV2025:
 
     def test_encode_deleted_entry(self) -> None:
         """Encodes deleted entries in diff manifests."""
-        manifest = RelDiffManifest(
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="project/deleted.txt", deleted=True),
@@ -159,7 +159,7 @@ class TestEncodeV2025:
 
     def test_encode_canonical_json(self) -> None:
         """Encodes to canonical JSON (sorted keys, no whitespace)."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(path="file.txt", hash="abc", size=10, mtime=100),
@@ -179,7 +179,7 @@ class TestEncodeV2025:
     def test_encode_auto_collects_parent_directories(self) -> None:
         """Encodes auto-collects all parent directories from file paths."""
         # Create manifest with deep file paths but no explicit directories
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],  # No explicit directories
             files=[
@@ -216,7 +216,7 @@ class TestEncodeV2025:
 
     def test_encode_preserves_explicit_dir_deleted_flag(self) -> None:
         """Encodes preserves deleted flag from explicit directories."""
-        manifest = RelDiffManifest(
+        manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="a/b", deleted=True),  # Explicit with deleted=True
@@ -253,7 +253,7 @@ class TestDecodeV2025:
     """Tests for decode_v2025 function."""
 
     def test_decode_abs_snapshot(self) -> None:
-        """Decodes to AbsSnapshotManifest based on specificationVersion."""
+        """Decodes to AbsSnapshot based on specificationVersion."""
         json_str = json.dumps(
             {
                 "specificationVersion": "absolute-manifest-snapshot-beta-2025-12",
@@ -268,14 +268,14 @@ class TestDecodeV2025:
 
         result = decode_v2025(json_str)
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         assert result.hashAlg == HashAlgorithm.XXH128
         assert result.totalSize == 100
         assert len(result.files) == 1
         assert result.files[0].path == "/project/file.txt"
 
     def test_decode_rel_snapshot(self) -> None:
-        """Decodes to RelSnapshotManifest based on specificationVersion."""
+        """Decodes to Snapshot based on specificationVersion."""
         json_str = json.dumps(
             {
                 "specificationVersion": "relative-manifest-snapshot-beta-2025-12",
@@ -290,10 +290,10 @@ class TestDecodeV2025:
 
         result = decode_v2025(json_str)
 
-        assert isinstance(result, RelSnapshotManifest)
+        assert isinstance(result, Snapshot)
 
     def test_decode_abs_diff(self) -> None:
-        """Decodes to AbsDiffManifest based on specificationVersion."""
+        """Decodes to AbsSnapshotDiff based on specificationVersion."""
         json_str = json.dumps(
             {
                 "specificationVersion": "absolute-manifest-diff-beta-2025-12",
@@ -309,11 +309,11 @@ class TestDecodeV2025:
 
         result = decode_v2025(json_str)
 
-        assert isinstance(result, AbsDiffManifest)
+        assert isinstance(result, AbsSnapshotDiff)
         assert result.parentManifestHash == "parent123"
 
     def test_decode_rel_diff(self) -> None:
-        """Decodes to RelDiffManifest based on specificationVersion."""
+        """Decodes to SnapshotDiff based on specificationVersion."""
         json_str = json.dumps(
             {
                 "specificationVersion": "relative-manifest-diff-beta-2025-12",
@@ -329,7 +329,7 @@ class TestDecodeV2025:
 
         result = decode_v2025(json_str)
 
-        assert isinstance(result, RelDiffManifest)
+        assert isinstance(result, SnapshotDiff)
 
     def test_decode_directory_index_expansion(self) -> None:
         """Decodes $N/ directory references to full paths."""
@@ -429,8 +429,8 @@ class TestRoundTrip:
     """Tests for encode/decode round-trip."""
 
     def test_roundtrip_abs_snapshot(self) -> None:
-        """Round-trip preserves AbsSnapshotManifest data."""
-        original = AbsSnapshotManifest(
+        """Round-trip preserves AbsSnapshot data."""
+        original = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="/project"),
@@ -448,7 +448,7 @@ class TestRoundTrip:
         encoded = encode_v2025(original)
         decoded = decode_v2025(encoded)
 
-        assert isinstance(decoded, AbsSnapshotManifest)
+        assert isinstance(decoded, AbsSnapshot)
         assert decoded.hashAlg == original.hashAlg
         assert decoded.totalSize == original.totalSize
         assert len(decoded.dirs) == len(original.dirs)
@@ -460,8 +460,8 @@ class TestRoundTrip:
         assert original_paths == decoded_paths
 
     def test_roundtrip_rel_diff_with_deletions(self) -> None:
-        """Round-trip preserves RelDiffManifest with deletions."""
-        original = RelDiffManifest(
+        """Round-trip preserves SnapshotDiff with deletions."""
+        original = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="project", deleted=True),
@@ -477,7 +477,7 @@ class TestRoundTrip:
         encoded = encode_v2025(original)
         decoded = decode_v2025(encoded)
 
-        assert isinstance(decoded, RelDiffManifest)
+        assert isinstance(decoded, SnapshotDiff)
         assert decoded.parentManifestHash == "parent123"
 
         # Check deleted entries

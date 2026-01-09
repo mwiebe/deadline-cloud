@@ -4,7 +4,7 @@
 Module for computing diff manifests between two snapshot manifests.
 
 This module implements the DIFF operation from the composable manifest operations design:
-    DIFF: (Parent Snapshot, Current Snapshot) → Diff Manifest
+    DIFF: (Parent AnySnapshot, Current AnySnapshot) → AnyDiff
 
 The diff manifest contains:
 - New entries (in current but not parent)
@@ -30,13 +30,13 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from .._manifest import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    DiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    AnyDiff,
+    AnySnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    SnapshotManifest,
+    SnapshotDiff,
 )
 
 
@@ -106,14 +106,14 @@ def _entries_differ(
 
 
 def compute_diff_manifest(
-    parent: SnapshotManifest,
-    current: SnapshotManifest,
+    parent: AnySnapshot,
+    current: AnySnapshot,
     parent_manifest_hash: Optional[str] = None,
     ignore_hashes: bool = False,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     *,
     preserve_runnable: bool = False,
-) -> DiffManifest:
+) -> AnyDiff:
     """
     Compute the difference between two snapshot manifests.
 
@@ -143,7 +143,7 @@ def compute_diff_manifest(
                           Default is False.
 
     Returns:
-        A diff manifest (AbsDiffManifest or RelDiffManifest) with:
+        A diff manifest (AbsSnapshotDiff or SnapshotDiff) with:
         - parentManifestHash if provided
         - New/modified entries with full content
         - Deleted entries with deleted=True markers
@@ -152,8 +152,8 @@ def compute_diff_manifest(
         ValueError: If path types don't match (both absolute or both relative)
     """
     # Validate path types match
-    parent_is_abs = isinstance(parent, AbsSnapshotManifest)
-    current_is_abs = isinstance(current, AbsSnapshotManifest)
+    parent_is_abs = isinstance(parent, AbsSnapshot)
+    current_is_abs = isinstance(current, AbsSnapshot)
     if parent_is_abs != current_is_abs:
         raise ValueError(
             "Parent and current manifests must have the same path type "
@@ -172,19 +172,19 @@ def compute_diff_manifest(
 
 
 def _compute_diff_manifest(
-    parent: SnapshotManifest,
-    current: SnapshotManifest,
+    parent: AnySnapshot,
+    current: AnySnapshot,
     parent_manifest_hash: Optional[str],
     ignore_hashes: bool,
     print_function_callback: Callable[[Any], None],
     *,
     preserve_runnable: bool = False,
     is_absolute: bool = True,
-) -> DiffManifest:
+) -> AnyDiff:
     """
     Compute diff between two snapshot manifests.
 
-    Creates a diff manifest (AbsDiffManifest or RelDiffManifest) with:
+    Creates a diff manifest (AbsSnapshotDiff or SnapshotDiff) with:
     - parentManifestHash (if provided)
     - New/modified entries with full content
     - Deleted entries with deleted=True markers
@@ -319,7 +319,7 @@ def _compute_diff_manifest(
         print_function_callback(f"Deleted dir: {path}")
 
     # Return the appropriate diff manifest type
-    output_type = AbsDiffManifest if is_absolute else RelDiffManifest
+    output_type = AbsSnapshotDiff if is_absolute else SnapshotDiff
     return output_type(
         hash_alg=parent.hashAlg,
         dirs=dir_entries,

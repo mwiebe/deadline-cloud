@@ -12,7 +12,7 @@ These tests verify that:
 import pytest
 
 from deadline.job_attachments._snapshots._manifest import (
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments._snapshots._content_addressed_data_cache import (
@@ -390,7 +390,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
         current_mtime_ns = dest_file.stat().st_mtime_ns
 
         # Create manifest with chunked file
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -457,7 +457,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
         current_mtime_ns = dest_file.stat().st_mtime_ns
 
         # Create manifest with chunked file
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -515,7 +515,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
         dest_file = dest_dir / "chunked_file.bin"
 
         # Create manifest with chunked file
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -580,7 +580,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
         dest_file = dest_dir / "chunked_file.bin"
 
         # Create manifest with chunked file
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

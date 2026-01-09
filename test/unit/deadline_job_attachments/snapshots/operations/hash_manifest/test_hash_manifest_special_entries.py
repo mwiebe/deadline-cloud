@@ -17,8 +17,8 @@ from deadline.job_attachments._snapshots import (
     hash_manifest,
     collect_manifest,
     SymlinkPolicy,
-    AbsDiffManifest,
-    AbsSnapshotManifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
 )
@@ -61,7 +61,7 @@ class TestSymlinkPassthrough:
         symlink_path = str(tmp_path / "link.txt").replace("\\", "/")
         target_path = str(target_file).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -85,7 +85,7 @@ class TestSymlinkPassthrough:
         symlink_path = str(tmp_path / "link.txt").replace("\\", "/")
         target_path = str(tmp_path / "target.txt").replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -108,7 +108,7 @@ class TestSymlinkPassthrough:
 
     def test_diff_manifest_with_symlinks(self, tmp_path: Path) -> None:
         """Diff manifest with symlink entries passes them through unchanged."""
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -125,7 +125,7 @@ class TestSymlinkPassthrough:
         assert len(hashed.files) == 1
         assert hashed.files[0].symlink_target == "/some/absolute/target.txt"
         assert hashed.files[0].hash is None
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
 
 
 class TestDeletedEntryPassthrough:
@@ -135,7 +135,7 @@ class TestDeletedEntryPassthrough:
         """Deleted entries are passed through without hashing."""
         deleted_path = str(tmp_path / "deleted.txt").replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -156,7 +156,7 @@ class TestDeletedEntryPassthrough:
 
     def test_diff_manifest_preserves_deleted_entries(self, tmp_path: Path) -> None:
         """Diff manifest deleted entries are passed through unchanged."""
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -174,11 +174,11 @@ class TestDeletedEntryPassthrough:
         assert len(hashed.files) == 1
         assert hashed.files[0].deleted is True
         assert hashed.files[0].path == "/some/deleted/file.txt"
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
 
     def test_diff_manifest_preserves_deleted_directories(self, tmp_path: Path) -> None:
         """Diff manifest deleted directory entries are passed through unchanged."""
-        diff_manifest = AbsDiffManifest(
+        diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(
@@ -195,7 +195,7 @@ class TestDeletedEntryPassthrough:
         assert len(hashed.dirs) == 1
         assert hashed.dirs[0].deleted is True
         assert hashed.dirs[0].path == "/some/deleted/dir"
-        assert isinstance(hashed, AbsDiffManifest)
+        assert isinstance(hashed, AbsSnapshotDiff)
 
 
 class TestDirectoryEntryHandling:
@@ -227,7 +227,7 @@ class TestDirectoryEntryHandling:
         abs_path = str(test_file).replace("\\", "/")
         dir_path = str(tmp_path).replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -253,7 +253,7 @@ class TestDirectoryEntryHandling:
         """Deleted directory entries are preserved in output."""
         dir_path = str(tmp_path / "deleted_dir").replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[
@@ -281,7 +281,7 @@ class TestMixedEntryTypes:
         symlink_path = str(tmp_path / "link.txt").replace("\\", "/")
         deleted_path = str(tmp_path / "deleted.txt").replace("\\", "/")
 
-        input_manifest = AbsSnapshotManifest(
+        input_manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

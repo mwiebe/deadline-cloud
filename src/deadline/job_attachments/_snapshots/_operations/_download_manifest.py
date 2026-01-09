@@ -39,9 +39,9 @@ from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
 from botocore.exceptions import BotoCoreError, ClientError
 
 from .._manifest import (
-    AbsDiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
     AbsManifest,
-    AbsSnapshotManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
     _is_absolute_path,
@@ -1136,8 +1136,8 @@ def _build_updated_manifest(
             updated_files.append(entry)
 
     # Create the appropriate manifest type
-    if isinstance(manifest, AbsSnapshotManifest):
-        return AbsSnapshotManifest(
+    if isinstance(manifest, AbsSnapshot):
+        return AbsSnapshot(
             hash_alg=manifest.hashAlg,
             files=updated_files,
             total_size=manifest.totalSize,
@@ -1146,8 +1146,8 @@ def _build_updated_manifest(
             file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
     else:
-        # AbsDiffManifest
-        return AbsDiffManifest(
+        # AbsSnapshotDiff
+        return AbsSnapshotDiff(
             hash_alg=manifest.hashAlg,
             files=updated_files,
             total_size=manifest.totalSize,
@@ -1178,7 +1178,7 @@ def download_manifest(
 
     Args:
         manifest: Manifest with absolute paths and hashes. Can be
-            AbsSnapshotManifest or AbsDiffManifest.
+            AbsSnapshot or AbsSnapshotDiff.
         data_cache: Data cache to download from (S3DataCache or FileSystemDataCache)
         hash_cache: Optional hash cache to check for files that already have the
             correct content. If a file exists locally and its cached hash matches
@@ -1288,7 +1288,7 @@ def download_manifest(
 
     try:
         # 1. Process deletions first (for diff manifests only), if enabled
-        if apply_deletes and isinstance(manifest, AbsDiffManifest):
+        if apply_deletes and isinstance(manifest, AbsSnapshotDiff):
             # Sort by path length descending so children are deleted before parents
             sorted_deleted_files = sorted(deleted_files, key=lambda e: len(e.path), reverse=True)
             sorted_deleted_dirs = sorted(

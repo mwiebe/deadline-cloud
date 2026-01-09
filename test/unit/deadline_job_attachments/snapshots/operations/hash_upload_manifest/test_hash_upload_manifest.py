@@ -25,8 +25,8 @@ from deadline.job_attachments._snapshots import (
     FileSystemDataCache,
     S3DataCache,
     SymlinkPolicy,
-    AbsDiffManifest,
-    AbsSnapshotManifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm, hash_file
@@ -57,7 +57,7 @@ class TestHashUploadManifestBasicFileSystem:
         """Test hashing and uploading an empty manifest."""
         cache_root = tmp_path / "cache"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             total_size=0,
@@ -69,7 +69,7 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         assert len(result.files) == 0
         assert result.totalSize == 0
         assert len(self._get_cache_files(cache_root)) == 0
@@ -84,7 +84,7 @@ class TestHashUploadManifestBasicFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -103,7 +103,7 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         assert len(result.files) == 1
         assert result.files[0].hash is not None
         assert result.files[0].hash != ""
@@ -139,7 +139,7 @@ class TestHashUploadManifestBasicFileSystem:
         collected_files = [
             f for f in collected.files if "cache" not in f.path and f.symlink_target is None
         ]
-        filtered_manifest = AbsSnapshotManifest(
+        filtered_manifest = AbsSnapshot(
             hash_alg=collected.hashAlg,
             files=collected_files,
             dirs=collected.dirs,
@@ -152,7 +152,7 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         file_entries = [p for p in result.files if p.symlink_target is None and not p.deleted]
         assert len(file_entries) == 3
 
@@ -174,7 +174,7 @@ class TestHashUploadManifestBasicFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -208,7 +208,7 @@ class TestHashUploadManifestBasicFileSystem:
         original_size = int(file_stat.st_size)
         original_mtime = int(file_stat.st_mtime_ns // 1000)
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -242,7 +242,7 @@ class TestHashUploadManifestBasicFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -299,7 +299,7 @@ class TestHashUploadManifestBasicS3:
 
     def test_hash_upload_empty_manifest(self) -> None:
         """Test hashing and uploading an empty manifest."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             total_size=0,
@@ -311,7 +311,7 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         assert len(result.files) == 0
         assert result.totalSize == 0
         assert len(self._get_s3_objects()) == 0
@@ -324,7 +324,7 @@ class TestHashUploadManifestBasicS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -343,7 +343,7 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         assert len(result.files) == 1
         assert result.files[0].hash is not None
         assert result.files[0].hash != ""
@@ -380,7 +380,7 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
         file_entries = [p for p in result.files if p.symlink_target is None and not p.deleted]
         assert len(file_entries) == 3
 
@@ -400,7 +400,7 @@ class TestHashUploadManifestBasicS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -432,7 +432,7 @@ class TestHashUploadManifestBasicS3:
         original_size = int(file_stat.st_size)
         original_mtime = int(file_stat.st_mtime_ns // 1000)
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -488,7 +488,7 @@ class TestHashUploadManifestBasicS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -537,7 +537,7 @@ class TestManifestTypePreservation:
         return FileSystemDataCache(root_path=cache_root)
 
     def test_returns_abs_snapshot_manifest_s3(self, tmp_path: Path) -> None:
-        """Test that AbsSnapshotManifest input returns AbsSnapshotManifest (S3)."""
+        """Test that AbsSnapshot input returns AbsSnapshot (S3)."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
@@ -553,17 +553,17 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
 
     def test_returns_abs_diff_manifest_s3(self, tmp_path: Path) -> None:
-        """Test that AbsDiffManifest input returns AbsDiffManifest (S3)."""
+        """Test that AbsSnapshotDiff input returns AbsSnapshotDiff (S3)."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
         file_stat = test_file.stat()
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsDiffManifest(
+        manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -584,18 +584,18 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsDiffManifest)
+        assert isinstance(result, AbsSnapshotDiff)
         assert result.parentManifestHash == "abc123"
 
     def test_returns_abs_snapshot_manifest_filesystem(self, tmp_path: Path) -> None:
-        """Test that AbsSnapshotManifest input returns AbsSnapshotManifest (filesystem)."""
+        """Test that AbsSnapshot input returns AbsSnapshot (filesystem)."""
         cache_root = tmp_path / "cache"
 
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
         file_stat = test_file.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -614,10 +614,10 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
 
     def test_returns_abs_diff_manifest_filesystem(self, tmp_path: Path) -> None:
-        """Test that AbsDiffManifest input returns AbsDiffManifest (filesystem)."""
+        """Test that AbsSnapshotDiff input returns AbsSnapshotDiff (filesystem)."""
         cache_root = tmp_path / "cache"
 
         test_file = tmp_path / "test.txt"
@@ -626,7 +626,7 @@ class TestManifestTypePreservation:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsDiffManifest(
+        manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -647,5 +647,5 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsDiffManifest)
+        assert isinstance(result, AbsSnapshotDiff)
         assert result.parentManifestHash == "abc123"

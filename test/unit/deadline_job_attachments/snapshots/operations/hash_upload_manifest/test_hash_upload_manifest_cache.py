@@ -24,7 +24,7 @@ from deadline.job_attachments._snapshots import (
     FileSystemDataCache,
     S3DataCache,
     SymlinkPolicy,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -57,7 +57,7 @@ class TestHashUploadWithHashCacheFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -114,7 +114,7 @@ class TestHashUploadWithHashCacheS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -151,7 +151,7 @@ class TestHashUploadWithHashCacheS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -207,7 +207,7 @@ class TestContentAddressableStorageFileSystem:
         file1_stat = file1.stat()
         file2_stat = file2.stat()
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -250,7 +250,7 @@ class TestContentAddressableStorageFileSystem:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -360,7 +360,7 @@ class TestHashCacheWithChunkedFiles:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -411,7 +411,7 @@ class TestHashCacheWithChunkedFiles:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -476,7 +476,7 @@ class TestS3CheckCacheUpdates:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -516,7 +516,7 @@ class TestS3CheckCacheUpdates:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -588,7 +588,7 @@ class TestPartialCacheHits:
         file2_stat = file2.stat()
 
         # First manifest with only file1
-        manifest1 = AbsSnapshotManifest(
+        manifest1 = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -613,7 +613,7 @@ class TestPartialCacheHits:
             file1_hash = result1.files[0].hash
 
             # Second manifest with both files
-            manifest2 = AbsSnapshotManifest(
+            manifest2 = AbsSnapshot(
                 hash_alg=HashAlgorithm.XXH128,
                 files=[
                     ManifestFilePath(
@@ -658,7 +658,7 @@ class TestPartialCacheHits:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -709,7 +709,7 @@ class TestPartialCacheHits:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest1 = AbsSnapshotManifest(
+        manifest1 = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -746,7 +746,7 @@ class TestPartialCacheHits:
                 file_stat = test_file.stat()
                 new_mtime = int(file_stat.st_mtime_ns // 1000)
 
-            manifest2 = AbsSnapshotManifest(
+            manifest2 = AbsSnapshot(
                 hash_alg=HashAlgorithm.XXH128,
                 files=[
                     ManifestFilePath(
@@ -792,7 +792,7 @@ class TestStreamingFilesCacheIntegration:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -841,7 +841,7 @@ class TestStreamingFilesCacheIntegration:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

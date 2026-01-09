@@ -28,7 +28,7 @@ from deadline.job_attachments._snapshots import (
     hash_upload_manifest,
     FileSystemDataCache,
     S3DataCache,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -55,7 +55,7 @@ class TestRelativePathValidation:
         """Test that relative file paths are rejected."""
         cache_root = tmp_path / "cache"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -82,7 +82,7 @@ class TestRelativePathValidation:
 
         from deadline.job_attachments._snapshots import ManifestDirectoryPath
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[
@@ -112,7 +112,7 @@ class TestRelativePathValidation:
         # Use forward slashes for cross-platform absolute path
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -151,7 +151,7 @@ class TestFileReadErrors:
         nonexistent = tmp_path / "nonexistent.txt"
         abs_path = str(nonexistent).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -187,7 +187,7 @@ class TestFileReadErrors:
         try:
             abs_path = str(test_file).replace("\\", "/")
 
-            manifest = AbsSnapshotManifest(
+            manifest = AbsSnapshot(
                 hash_alg=HashAlgorithm.XXH128,
                 files=[
                     ManifestFilePath(
@@ -232,7 +232,7 @@ class TestForceRehash:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -282,7 +282,7 @@ class TestForceRehash:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -337,7 +337,7 @@ class TestS3ClientErrors:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -377,7 +377,7 @@ class TestS3ClientErrors:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -416,7 +416,7 @@ class TestS3ClientErrors:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -454,7 +454,7 @@ class TestS3ClientErrors:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -505,7 +505,7 @@ class TestStreamingUploadErrors:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -567,7 +567,7 @@ class TestStreamingUploadErrorsS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -613,7 +613,7 @@ class TestStreamingUploadErrorsS3:
         abs_path = str(test_file).replace("\\", "/")
 
         # Pretend the file is large enough for multipart
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -668,7 +668,7 @@ class TestStreamingUploadErrorsS3:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -730,7 +730,7 @@ class TestPrintFunctionCallback:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -771,7 +771,7 @@ class TestPrintFunctionCallback:
 
         abs_path = str(test_file).replace("\\", "/")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -831,7 +831,7 @@ class TestUnsupportedHashAlgorithm:
 
         # Use a non-XXH128 algorithm (if one exists in the enum)
         # For now, we'll mock the hash algorithm check
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

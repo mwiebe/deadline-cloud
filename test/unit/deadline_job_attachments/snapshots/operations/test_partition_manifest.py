@@ -31,10 +31,10 @@ from deadline.job_attachments._snapshots._operations._partition_manifest import 
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelSnapshotManifest,
+    Snapshot,
 )
 
 
@@ -134,7 +134,7 @@ class TestCollectAllDirs:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
+    ) -> Snapshot:
         """Helper to create a relative manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -143,7 +143,7 @@ class TestCollectAllDirs:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -154,7 +154,7 @@ class TestCollectAllDirs:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
+    ) -> AbsSnapshot:
         """Helper to create an absolute manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -163,7 +163,7 @@ class TestCollectAllDirs:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -220,11 +220,11 @@ class TestCollectAllDirs:
 class TestPartitionManifestRelative:
     """Tests for partitioning with relative paths."""
 
-    def _create_rel_manifest(self, paths: List[tuple[str, str, int, int]]) -> RelSnapshotManifest:
+    def _create_rel_manifest(self, paths: List[tuple[str, str, int, int]]) -> Snapshot:
         """Helper to create a relative manifest."""
         entries = [ManifestFilePath(path=p, hash=h, size=s, mtime=m) for p, h, s, m in paths]
         total_size = sum(s for _, _, s, _ in paths)
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=entries,
             total_size=total_size,
@@ -298,7 +298,7 @@ class TestPartitionManifestV2025:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
+    ) -> Snapshot:
         """Helper to create a relative manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -307,7 +307,7 @@ class TestPartitionManifestV2025:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -383,7 +383,7 @@ class TestPartitionManifestAutoRoots:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
+    ) -> AbsSnapshot:
         """Helper to create a v2025 manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -392,7 +392,7 @@ class TestPartitionManifestAutoRoots:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -478,7 +478,7 @@ class TestPartitionManifestReferencedPaths:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
+    ) -> Snapshot:
         """Helper to create a relative manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -487,7 +487,7 @@ class TestPartitionManifestReferencedPaths:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -540,11 +540,11 @@ class TestPartitionManifestValidation:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
+    ) -> AbsSnapshot:
         """Helper to create a v2025 manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -630,7 +630,7 @@ class TestPartitionManifestSymlinks:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
+    ) -> Snapshot:
         """Helper to create a relative manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -639,7 +639,7 @@ class TestPartitionManifestSymlinks:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -797,7 +797,7 @@ class TestPartitionManifestOrdering:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
+    ) -> Snapshot:
         """Helper to create a relative manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -806,7 +806,7 @@ class TestPartitionManifestOrdering:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -861,7 +861,7 @@ class TestPartitionManifestAdditionalRoots:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
+    ) -> AbsSnapshot:
         """Helper to create an absolute manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -870,7 +870,7 @@ class TestPartitionManifestAdditionalRoots:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -881,7 +881,7 @@ class TestPartitionManifestAdditionalRoots:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
+    ) -> Snapshot:
         """Helper to create a relative manifest."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
@@ -890,7 +890,7 @@ class TestPartitionManifestAdditionalRoots:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,

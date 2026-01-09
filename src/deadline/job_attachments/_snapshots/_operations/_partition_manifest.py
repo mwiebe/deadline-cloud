@@ -1,13 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Module for partitioning a manifest into multiple (root, RelSnapshot) pairs.
+Module for partitioning a manifest into multiple (root, Snapshot) pairs.
 
 This module implements the PARTITION operation from the composable manifest operations design:
-    PARTITION: (Snapshot, roots?) → List[(root, RelSnapshot)]
+    PARTITION: (AnyManifest, roots?) → List[(root, RelManifest)]
 
 The PARTITION operation divides a manifest into multiple subtrees, each with paths
-relative to its root. Each RelSnapshot is an extracted subtree per the SUBTREE operation.
+relative to its root. Each output is an extracted subtree per the SUBTREE operation.
 
 Key behaviors:
 - Partitions entries by root paths
@@ -36,12 +36,12 @@ import posixpath
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .._manifest import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    Manifest,
-    RelDiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    AnyManifest,
+    Snapshot,
+    SnapshotDiff,
     RelManifest,
-    RelSnapshotManifest,
     SymlinkPolicy,
     _is_absolute_path,
 )
@@ -49,7 +49,7 @@ from ._subtree_manifest import subtree_manifest
 
 
 def partition_manifest(
-    manifest: Manifest,
+    manifest: AnyManifest,
     roots: Optional[List[str]] = None,
     *,
     referenced_paths: Optional[List[str]] = None,
@@ -57,7 +57,7 @@ def partition_manifest(
     print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> List[Tuple[str, RelManifest]]:
     """
-    Partition a manifest into multiple (root, RelSnapshot) pairs.
+    Partition a manifest into multiple (root, RelManifest) pairs.
 
     Args:
         manifest: The source manifest to partition (absolute or relative paths)
@@ -103,7 +103,7 @@ def partition_manifest(
     _validate_roots_no_overlap(roots)
 
     # Determine manifest path style from manifest type
-    manifest_is_absolute = isinstance(manifest, (AbsSnapshotManifest, AbsDiffManifest))
+    manifest_is_absolute = isinstance(manifest, (AbsSnapshot, AbsSnapshotDiff))
 
     # Validate root path styles match manifest
     for root in roots:
@@ -144,16 +144,16 @@ def partition_manifest(
         if root == "." or root == "":
             # Special case: root-level relative paths - convert to RelManifest
             # (subtree_manifest doesn't accept "." as a subtree path)
-            is_snapshot = isinstance(manifest, (AbsSnapshotManifest, RelSnapshotManifest))
+            is_snapshot = isinstance(manifest, (AbsSnapshot, Snapshot))
             if is_snapshot:
-                rel_manifest: RelManifest = RelSnapshotManifest(
+                rel_manifest: RelManifest = Snapshot(
                     hash_alg=manifest.hashAlg,
                     files=list(manifest.files),
                     total_size=manifest.totalSize,
                     dirs=list(manifest.dirs),
                 )
             else:
-                rel_manifest = RelDiffManifest(
+                rel_manifest = SnapshotDiff(
                     hash_alg=manifest.hashAlg,
                     files=list(manifest.files),
                     total_size=manifest.totalSize,
@@ -225,7 +225,7 @@ def _is_path_under_root(path: str, root: str) -> bool:
     return path.startswith(root + "/")
 
 
-def _collect_all_dirs(manifest: Manifest) -> Set[str]:
+def _collect_all_dirs(manifest: AnyManifest) -> Set[str]:
     """
     Collect all directory paths from a manifest.
 

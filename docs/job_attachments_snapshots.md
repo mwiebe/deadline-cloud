@@ -13,33 +13,43 @@ downloads, and content-addressable storage workflows.
 
 ## Overview
 
-Here are the manifest types used by these operations.
+The library provides four concrete manifest classes organized by two dimensions:
+
+**Path Style:**
+- **Relative paths** (`Snapshot`, `SnapshotDiff`) - Paths relative to an unspecified root, portable across systems
+- **Absolute paths** (`AbsSnapshot`, `AbsSnapshotDiff`) - Full filesystem paths, required for file system operations
+
+**Manifest Type:**
+- **Snapshot** - Complete point-in-time capture of a directory tree
+- **Diff** - Changes between two snapshots (additions, modifications, deletions)
+
+### Manifest Classes
 
 ```
-Manifest
-├── AbsSnapshot    (absolute paths)
-├── RelSnapshot    (relative paths)
-├── AbsDiff        (absolute paths)
-└── RelDiff        (relative paths)
-
-DiffManifest
-├── AbsDiff        (absolute paths)
-└── RelDiff        (relative paths)
-
-SnapshotManifest
-├── AbsSnapshot    (absolute paths)
-└── RelSnapshot    (relative paths)
-
-AbsManifest
-├── AbsSnapshot    (absolute paths)
-└── AbsDiff        (absolute paths)
-
-RelManifest
-├── RelSnapshot    (relative paths)
-└── RelDiff        (relative paths)
+Snapshot        - Relative-path snapshot (the primary portable format)
+SnapshotDiff    - Relative-path diff between snapshots
+AbsSnapshot     - Absolute-path snapshot (for filesystem operations)
+AbsSnapshotDiff - Absolute-path diff (for applying changes to filesystem)
 ```
 
-Here are the data cache types used by these operations:
+### Type Aliases
+
+Type aliases group manifest classes for use in function signatures:
+
+```python
+# By path style
+RelManifest = Union[Snapshot, SnapshotDiff]      # Any relative-path manifest
+AbsManifest = Union[AbsSnapshot, AbsSnapshotDiff] # Any absolute-path manifest
+
+# By manifest type
+AnySnapshot = Union[AbsSnapshot, Snapshot]        # Any snapshot (full capture)
+AnyDiff = Union[AbsSnapshotDiff, SnapshotDiff]    # Any diff (changes only)
+
+# All manifest types
+AnyManifest = Union[AbsSnapshot, AbsSnapshotDiff, Snapshot, SnapshotDiff]
+```
+
+### Data Cache Classes
 
 ```
 ContentAddressedDataCache
@@ -47,7 +57,7 @@ ContentAddressedDataCache
 └── FileSystemDataCache (data on a file system)
 ```
 
-Here are the operations for working with data snapshots:
+### Operations
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -55,26 +65,16 @@ Here are the operations for working with data snapshots:
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  1. COLLECT: Paths → AbsSnapshot                                        │
-│         Collects from lists of directories and filenames into a         │
-│         snapshot with absolute paths. No hashing.                       │
+│         Scans directories and files into a snapshot (no hashing).       │
 │                                                                         │
 │  2. HASH: AbsManifest → AbsManifest                                     │
 │         Computes hashes for all files in the manifest.                  │
-│         Works with both snapshots and diffs.                            │
-│         Requires absolute paths; raises error for relative paths.       │
 │                                                                         │
 │  3. HASH_UPLOAD: (AbsManifest, DataCache) → AbsManifest                 │
-│         Pipelines read+hash/upload for all files, returning a           │
-│         manifest with hashes populated. Read and hash are combined      │
-│         so hashing occurs while bytes are hot in CPU cache.             │
+│         Hashes files and uploads them to a data cache.                  │
 │                                                                         │
 │  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadResult                 │
-│         Downloads files from a data cache to local filesystem,          │
-│         recreating the directory structure from the manifest.           │
-│         Requires absolute paths. Supports parallel downloads,           │
-│         progress tracking, and file conflict resolution.                │
-│         Returns statistics and an updated manifest with mtime           │
-│         values matching the local filesystem for reliable diffs.        │
+│         Downloads files from a data cache to local filesystem.          │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -84,26 +84,24 @@ Here are the operations for working with data snapshots:
 │                       MANIFEST TRANSFORMATIONS                          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  4. FILTER: Manifest → Manifest                                         │
-│         Applies a filter to entries, returning only accepted ones.      │
+│  5. FILTER: AnyManifest → AnyManifest                                   │
+│         Filters entries, returning only those that match.               │
 │                                                                         │
-│  5. DIFF: (Snapshot, Snapshot) → Diff                                   │
-│         Compares two snapshots, returning a diff of the changes.        │
+│  6. DIFF: (AnySnapshot, AnySnapshot) → AnyDiff                          │
+│         Computes the difference between two snapshots.                  │
 │                                                                         │
-│  6. COMPOSE: (Snapshot, Diff, ...) → Snapshot                           │
-│     COMPOSE: (Diff, Diff, ...) → Diff                                   │
-│         Layers diffs together, optionally onto a snapshot base,         │
-│         as if applied sequentially to a filesystem.                     │
+│  7. COMPOSE: (Snapshot, SnapshotDiff, ...) → Snapshot                   │
+│     COMPOSE: (SnapshotDiff, ...) → SnapshotDiff                         │
+│         Combines manifests sequentially (diffs onto snapshot or diffs). │
 │                                                                         │
-│  7. SUBTREE: (Snapshot, subtree_path) → RelSnapshot                     │
-│         Extracts a subtree, returning a snapshot with relative paths.   │
+│  8. SUBTREE: (AnyManifest, path) → RelManifest                          │
+│         Extracts a subtree as a relative-path manifest.                 │
 │                                                                         │
-│  8. PARTITION: (Snapshot, roots?) → List[(root, RelSnapshot)]           │
-│         Partitions a manifest into multiple (root, RelSnapshot) pairs.  │
+│  9. PARTITION: (AnySnapshot, roots?) → List[(root, Snapshot)]           │
+│         Splits a manifest into multiple (root, manifest) pairs.         │
 │                                                                         │
-│  9. JOIN: (RelSnapshot, abs_prefix) → AbsSnapshot                       │
-│     JOIN: (RelSnapshot, rel_prefix) → RelSnapshot                       │
-│         Prepends a prefix to all paths.                                 │
+│ 10. JOIN: (RelManifest, prefix) → AnyManifest                           │
+│         Prepends a prefix to all paths (abs prefix → abs result).       │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -315,7 +313,7 @@ def collect_manifest(
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> AbsSnapshotManifest:
+) -> AbsSnapshot:
 ```
 
 **Parameters:**
@@ -431,7 +429,7 @@ def hash_manifest(
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `print_function_callback` | Progress callback for status messages |
 
-**Returns:** A NEW `AbsManifest` (either `AbsSnapshotManifest` or `AbsDiffManifest`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
+**Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -475,7 +473,7 @@ When chunking is enabled and a file is larger than the chunk size:
 | Snapshot | All file entries are hashed |
 | Diff | Only new/modified file entries are hashed; deleted entries pass through unchanged |
 
-The `parentManifestHash` field is preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsDiffManifest`, `RelSnapshotManifest`).
+The `parentManifestHash` field is preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsSnapshotDiff`, `Snapshot`).
 
 **Helper functions:**
 
@@ -580,7 +578,7 @@ def hash_upload_manifest(
 | `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
-**Returns:** A NEW `AbsManifest` (either `AbsSnapshotManifest` or `AbsDiffManifest`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
+**Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -701,7 +699,7 @@ For `FileSystemDataCache`, the `object_exists()` method checks the local filesys
 | Snapshot | All file entries are hashed and uploaded |
 | Diff | Only new/modified file entries are hashed and uploaded; deleted entries pass through unchanged |
 
-The `parentManifestHash` and `fileChunkSizeBytes` fields are preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsDiffManifest`, `RelSnapshotManifest`).
+The `parentManifestHash` and `fileChunkSizeBytes` fields are preserved from the input manifest. The manifest type is determined by the class (e.g., `AbsSnapshotDiff`, `Snapshot`).
 
 **Error Handling:**
 
@@ -818,7 +816,7 @@ For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
 
 **Location:** `_download_manifest.py`
 
-Downloads files from a data cache (S3 or filesystem) to the local filesystem. For snapshot manifests (`AbsSnapshotManifest`), recreates the directory structure specified in the manifest. For diff manifests (`AbsDiffManifest`), applies changes by downloading new/modified files and deleting removed files. The manifest must have absolute paths.
+Downloads files from a data cache (S3 or filesystem) to the local filesystem. For snapshot manifests (`AbsSnapshot`), recreates the directory structure specified in the manifest. For diff manifests (`AbsSnapshotDiff`), applies changes by downloading new/modified files and deleting removed files. The manifest must have absolute paths.
 
 ```python
 def download_manifest(
@@ -839,7 +837,7 @@ def download_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and hashes. Can be `AbsSnapshotManifest` or `AbsDiffManifest`. |
+| `manifest` | Manifest with absolute paths and hashes. Can be `AbsSnapshot` or `AbsSnapshotDiff`. |
 | `data_cache` | Data cache to download from (`S3DataCache` or `FileSystemDataCache`) |
 | `hash_cache` | Optional hash cache to skip downloads for files that already have the correct content (see below). |
 | `file_conflict_resolution` | How to handle existing files (see below). Default `OVERWRITE`. Note: When `hash_cache` is provided, files with matching hashes are skipped regardless of this setting. |
@@ -968,7 +966,7 @@ This ensures that when symlink A is created, its target B already exists (if B i
 
 **Diff Manifest Behavior:**
 
-When downloading a diff manifest (`AbsDiffManifest`):
+When downloading a diff manifest (`AbsSnapshotDiff`):
 - Entries with `deleted=True` cause the target file/directory to be removed
 - Non-deleted entries are downloaded normally
 - This allows applying incremental updates to a local directory
@@ -1163,7 +1161,7 @@ from deadline.job_attachments.models import FileConflictResolution
 with open("scene.manifest") as f:
     rel_manifest = decode_manifest(f.read())
 
-# Join with absolute path to create AbsSnapshotManifest
+# Join with absolute path to create AbsSnapshot
 abs_manifest = join_manifest(rel_manifest, "/home/user/projects/scene")
 
 # Create S3 data cache
@@ -1263,7 +1261,7 @@ print(f"Applied diff: {stats.processed_files} files updated")
 | Worker input sync | DOWNLOAD with S3DataCache |
 | Job output download | DOWNLOAD with S3DataCache |
 | Restore from debug snapshot | DOWNLOAD with FileSystemDataCache |
-| Apply incremental update | DOWNLOAD with AbsDiffManifest |
+| Apply incremental update | DOWNLOAD with AbsSnapshotDiff |
 | Step-step dependency sync | DOWNLOAD with composed output manifests |
 
 **Relationship to HASH_UPLOAD:**
@@ -1416,10 +1414,10 @@ def compute_diff_manifest(
 | New entries | ✓ | ✓ |
 | Modified entries | ✓ | ✓ |
 | Deleted entries | Not tracked | ✓ (deleted=True markers) |
-| Manifest class | AbsSnapshotManifest/RelSnapshotManifest | AbsDiffManifest/RelDiffManifest |
+| Manifest class | AbsSnapshot/Snapshot | AbsSnapshotDiff/SnapshotDiff |
 | parentManifestHash | N/A | ✓ (if provided) |
 
-**Returns:** A `DiffManifest` (either `AbsDiffManifest` or `RelDiffManifest` depending on input path style) with:
+**Returns:** A `DiffManifest` (either `AbsSnapshotDiff` or `SnapshotDiff` depending on input path style) with:
 - `parentManifestHash` if provided
 - New/modified entries with full content
 - Deleted entries with `deleted=True` markers
@@ -1477,14 +1475,14 @@ diff = compute_diff_manifest(
 new_files = [p for p in diff.files if p.path not in {e.path for e in parent.files}]
 deleted = [p for p in diff.files if p.deleted]
 print(f"New: {len(new_files)}, Deleted: {len(deleted)}")
-print(f"Diff manifest type: {type(diff).__name__}")  # AbsDiffManifest or RelDiffManifest
+print(f"Diff manifest type: {type(diff).__name__}")  # AbsSnapshotDiff or SnapshotDiff
 print(f"Parent hash: {diff.parentManifestHash[:16]}...")
 ```
 
 Output:
 ```
 New: 3, Deleted: 1
-Diff manifest type: RelDiffManifest
+Diff manifest type: SnapshotDiff
 Parent hash: f8e9d0c1b2a34567...
 ```
 
@@ -1554,7 +1552,7 @@ with open("day2.manifest") as f:
 final = compose_manifests([base, diff1, diff2])
 
 print(f"Final manifest has {len(final.files)} entries")
-print(f"Manifest type: {type(final).__name__}")  # AbsSnapshotManifest or RelSnapshotManifest
+print(f"Manifest type: {type(final).__name__}")  # AbsSnapshot or Snapshot
 ```
 
 For v2023 format (layering snapshots):

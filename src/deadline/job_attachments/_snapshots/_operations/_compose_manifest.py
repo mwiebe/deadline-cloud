@@ -4,14 +4,14 @@
 Module for composing multiple manifests into a single manifest.
 
 This module implements the COMPOSE operation from the composable manifest operations design:
-    COMPOSE: (Manifest, Manifest, ...) → Manifest
+    COMPOSE: (AnyManifest, AnyManifest, ...) → AnyManifest
 
 The compose operation layers manifests together, as if applying each manifest as a set of
 changes in order. Later entries override earlier ones for the same path.
 
 Supported compositions:
-- (Snapshot, Diff, Diff, ...) → Snapshot
-- (Diff, Diff, ...) → Diff
+- (AnySnapshot, AnyDiff, AnyDiff, ...) → AnySnapshot
+- (AnyDiff, AnyDiff, ...) → AnyDiff
 
 All composable operations use v2025 structure and semantics internally. Support for
 v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
@@ -24,13 +24,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from .._manifest import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    Manifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    AnyManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    RelSnapshotManifest,
+    Snapshot,
+    SnapshotDiff,
 )
 
 
@@ -298,9 +298,9 @@ def _split_path(path: str) -> List[str]:
 
 
 def compose_manifests(
-    manifests: List[Manifest],
+    manifests: List[AnyManifest],
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> Manifest:
+) -> AnyManifest:
     """
     Compose multiple manifests into a single manifest by layering them together.
 
@@ -318,8 +318,8 @@ def compose_manifests(
 
     Returns:
         A single composed manifest representing the final state.
-        - (Snapshot, Diff, ...) → Snapshot (same path type as input)
-        - (Diff, Diff, ...) → Diff (same path type as input)
+        - (AnySnapshot, AnyDiff, ...) → AnySnapshot (same path type as input)
+        - (AnyDiff, AnyDiff, ...) → AnyDiff (same path type as input)
 
     Raises:
         ValueError: If manifests list is empty or invalid manifest type sequence.
@@ -333,16 +333,16 @@ def compose_manifests(
 
     # Determine composition type based on first manifest
     first = manifests[0]
-    if isinstance(first, (AbsSnapshotManifest, RelSnapshotManifest)):
+    if isinstance(first, (AbsSnapshot, Snapshot)):
         return _compose_snapshot_diffs(manifests, print_function_callback)
     else:
         return _compose_diffs(manifests, print_function_callback)
 
 
 def _compose_snapshot_diffs(
-    manifests: List[Manifest],
+    manifests: List[AnyManifest],
     print_function_callback: Callable[[Any], None],
-) -> Manifest:
+) -> AnyManifest:
     """
     Compose manifests: (snapshot, diff, diff, ...) → snapshot.
 
@@ -356,7 +356,7 @@ def _compose_snapshot_diffs(
     first = manifests[0]
 
     # Validate first manifest is a snapshot
-    if not isinstance(first, (AbsSnapshotManifest, RelSnapshotManifest)):
+    if not isinstance(first, (AbsSnapshot, Snapshot)):
         raise ValueError(
             f"First manifest must be a SNAPSHOT for snapshot+diffs composition, "
             f"got {type(first).__name__}."
@@ -364,7 +364,7 @@ def _compose_snapshot_diffs(
 
     # Validate remaining manifests are diffs
     for i, manifest in enumerate(manifests[1:], start=1):
-        if not isinstance(manifest, (AbsDiffManifest, RelDiffManifest)):
+        if not isinstance(manifest, (AbsSnapshotDiff, SnapshotDiff)):
             raise ValueError(
                 f"Manifest {i} must be a DIFF for snapshot+diffs composition, "
                 f"got {type(manifest).__name__}"
@@ -453,9 +453,9 @@ def _compose_snapshot_diffs(
 
 
 def _compose_diffs(
-    manifests: List[Manifest],
+    manifests: List[AnyManifest],
     print_function_callback: Callable[[Any], None],
-) -> Manifest:
+) -> AnyManifest:
     """
     Compose diff manifests: (diff, diff, ...) → diff.
 
@@ -477,7 +477,7 @@ def _compose_diffs(
     """
     # Validate all manifests are diffs
     for i, manifest in enumerate(manifests):
-        if not isinstance(manifest, (AbsDiffManifest, RelDiffManifest)):
+        if not isinstance(manifest, (AbsSnapshotDiff, SnapshotDiff)):
             raise ValueError(
                 f"Manifest {i} must be a DIFF for diff composition, got {type(manifest).__name__}"
             )

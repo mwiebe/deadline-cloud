@@ -29,10 +29,10 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 from deadline.job_attachments._snapshots import (
     ManifestFilePath,
     ManifestDirectoryPath,
-    AbsSnapshotManifest,
-    AbsDiffManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    Snapshot,
+    SnapshotDiff,
 )
 
 
@@ -271,7 +271,7 @@ class TestComposeManifestsValidation:
 
     def test_single_manifest_returns_as_is(self) -> None:
         """Single manifest is returned unchanged."""
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
@@ -283,13 +283,13 @@ class TestComposeManifestsValidation:
 
     def test_snapshot_followed_by_snapshot_raises_error(self) -> None:
         """Snapshot followed by snapshot raises ValueError."""
-        snapshot1 = RelSnapshotManifest(
+        snapshot1 = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
             total_size=0,
         )
-        snapshot2 = RelSnapshotManifest(
+        snapshot2 = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
@@ -301,13 +301,13 @@ class TestComposeManifestsValidation:
 
     def test_diff_composition_with_snapshot_raises_error(self) -> None:
         """Diff composition with snapshot in the middle raises ValueError."""
-        diff1 = RelDiffManifest(
+        diff1 = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
             total_size=0,
         )
-        snapshot = RelSnapshotManifest(
+        snapshot = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
@@ -325,8 +325,8 @@ class TestComposeManifestsSnapshotDiffs:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    ) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -334,7 +334,7 @@ class TestComposeManifestsSnapshotDiffs:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -346,8 +346,8 @@ class TestComposeManifestsSnapshotDiffs:
         files: List[dict],
         dirs: List[dict] | None = None,
         parent_hash: str | None = None,
-    ) -> RelDiffManifest:
-        """Helper to create a RelDiffManifest."""
+    ) -> SnapshotDiff:
+        """Helper to create a SnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -355,7 +355,7 @@ class TestComposeManifestsSnapshotDiffs:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelDiffManifest(
+        return SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -384,7 +384,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         paths = {p.path for p in result.files}
         assert paths == {"existing.txt", "new.txt"}
-        assert isinstance(result, RelSnapshotManifest)
+        assert isinstance(result, Snapshot)
 
     def test_diff_modifies_existing_file(self) -> None:
         """Diff modifies an existing file."""
@@ -521,7 +521,7 @@ class TestComposeManifestsSnapshotDiffs:
         assert result.totalSize == 100
 
     def test_returns_rel_snapshot_manifest(self) -> None:
-        """Composing RelSnapshotManifest with diffs returns RelSnapshotManifest."""
+        """Composing Snapshot with diffs returns Snapshot."""
         snapshot = self._create_snapshot(
             [{"path": "file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
@@ -529,7 +529,7 @@ class TestComposeManifestsSnapshotDiffs:
 
         result = compose_manifests([snapshot, diff])
 
-        assert isinstance(result, RelSnapshotManifest)
+        assert isinstance(result, Snapshot)
 
 
 class TestComposeManifestsSnapshotDiffsAbsolute:
@@ -539,8 +539,8 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    ) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -548,7 +548,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -560,8 +560,8 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
         files: List[dict],
         dirs: List[dict] | None = None,
         parent_hash: str | None = None,
-    ) -> AbsDiffManifest:
-        """Helper to create an AbsDiffManifest."""
+    ) -> AbsSnapshotDiff:
+        """Helper to create an AbsSnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -569,7 +569,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsDiffManifest(
+        return AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -592,7 +592,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
         assert paths == {"/project/existing.txt", "/project/new.txt"}
 
     def test_returns_abs_snapshot_manifest(self) -> None:
-        """Composing AbsSnapshotManifest with diffs returns AbsSnapshotManifest."""
+        """Composing AbsSnapshot with diffs returns AbsSnapshot."""
         snapshot = self._create_snapshot(
             [{"path": "/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
@@ -600,7 +600,7 @@ class TestComposeManifestsSnapshotDiffsAbsolute:
 
         result = compose_manifests([snapshot, diff])
 
-        assert isinstance(result, AbsSnapshotManifest)
+        assert isinstance(result, AbsSnapshot)
 
 
 class TestComposeManifestsDiffs:
@@ -611,8 +611,8 @@ class TestComposeManifestsDiffs:
         files: List[dict],
         dirs: List[dict] | None = None,
         parent_hash: str | None = None,
-    ) -> RelDiffManifest:
-        """Helper to create a RelDiffManifest."""
+    ) -> SnapshotDiff:
+        """Helper to create a SnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -620,7 +620,7 @@ class TestComposeManifestsDiffs:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelDiffManifest(
+        return SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -646,7 +646,7 @@ class TestComposeManifestsDiffs:
 
         result = compose_manifests([diff1, diff2])
 
-        assert isinstance(result, RelDiffManifest)
+        assert isinstance(result, SnapshotDiff)
 
     def test_parent_hash_from_first_diff(self) -> None:
         """parentManifestHash comes from the first diff."""
@@ -779,13 +779,13 @@ class TestComposeManifestsDiffs:
         assert result.totalSize == 100
 
     def test_returns_rel_diff_manifest(self) -> None:
-        """Composing RelDiffManifests returns RelDiffManifest."""
+        """Composing SnapshotDiffs returns SnapshotDiff."""
         diff1 = self._create_diff([{"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000}])
         diff2 = self._create_diff([{"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000}])
 
         result = compose_manifests([diff1, diff2])
 
-        assert isinstance(result, RelDiffManifest)
+        assert isinstance(result, SnapshotDiff)
 
 
 class TestComposeManifestsDiffsAbsolute:
@@ -796,8 +796,8 @@ class TestComposeManifestsDiffsAbsolute:
         files: List[dict],
         dirs: List[dict] | None = None,
         parent_hash: str | None = None,
-    ) -> AbsDiffManifest:
-        """Helper to create an AbsDiffManifest."""
+    ) -> AbsSnapshotDiff:
+        """Helper to create an AbsSnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -805,7 +805,7 @@ class TestComposeManifestsDiffsAbsolute:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsDiffManifest(
+        return AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -828,7 +828,7 @@ class TestComposeManifestsDiffsAbsolute:
         assert paths == {"/project/file1.txt", "/project/file2.txt"}
 
     def test_returns_abs_diff_manifest(self) -> None:
-        """Composing AbsDiffManifests returns AbsDiffManifest."""
+        """Composing AbsSnapshotDiffs returns AbsSnapshotDiff."""
         diff1 = self._create_diff(
             [{"path": "/file1.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
@@ -838,7 +838,7 @@ class TestComposeManifestsDiffsAbsolute:
 
         result = compose_manifests([diff1, diff2])
 
-        assert isinstance(result, AbsDiffManifest)
+        assert isinstance(result, AbsSnapshotDiff)
 
 
 class TestComposeManifestsProgressCallback:
@@ -846,13 +846,13 @@ class TestComposeManifestsProgressCallback:
 
     def test_callback_for_additions(self) -> None:
         """Progress callback is called for additions."""
-        snapshot = RelSnapshotManifest(
+        snapshot = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[],
             total_size=0,
         )
-        diff = RelDiffManifest(
+        diff = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="new.txt", hash="h1", size=100, mtime=1000)],
@@ -866,13 +866,13 @@ class TestComposeManifestsProgressCallback:
 
     def test_callback_for_deletions(self) -> None:
         """Progress callback is called for deletions."""
-        snapshot = RelSnapshotManifest(
+        snapshot = Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
             total_size=100,
         )
-        diff = RelDiffManifest(
+        diff = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[ManifestFilePath(path="file.txt", deleted=True)],

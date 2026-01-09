@@ -4,7 +4,7 @@
 Module for collecting directory structure into manifest objects WITHOUT computing hashes.
 
 This module implements the COLLECT operation from the composable manifest operations design:
-    COLLECT: Paths → AbsSnapshotManifest (with hash=None for files, absolute paths)
+    COLLECT: Paths → AbsSnapshot (with hash=None for files, absolute paths)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
@@ -27,7 +27,7 @@ from typing import Any, Callable, List, Optional, Set
 
 from ...asset_manifests.hash_algorithms import HashAlgorithm
 from .._manifest import (
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestDirectoryPath,
     ManifestFilePath,
     SymlinkPolicy,
@@ -43,7 +43,7 @@ def collect_manifest(
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> AbsSnapshotManifest:
+) -> AbsSnapshot:
     """
     Collect provided lists of paths into a manifest with absolute paths.
 
@@ -51,7 +51,7 @@ def collect_manifest(
     1. Collects the specified directories and filenames
     2. Captures metadata (mtime, size, permissions)
     3. Sets hash=None for all file entries (hashes not yet computed)
-    4. Returns an AbsSnapshotManifest with absolute paths
+    4. Returns an AbsSnapshot with absolute paths
 
     Args:
         directories: List of directory paths whose full contents are collected.
@@ -78,7 +78,7 @@ def collect_manifest(
         print_function_callback: Progress callback
 
     Returns:
-        An AbsSnapshotManifest with absolute paths and hash=None for files
+        An AbsSnapshot with absolute paths and hash=None for files
 
     Raises:
         FileNotFoundError: If any directory does not exist.
@@ -142,7 +142,7 @@ def _collect_manifest_impl(
     optional_filenames: List[Path],
     directories: List[Path],
     file_chunk_size_bytes: Optional[int] = None,
-) -> AbsSnapshotManifest:
+) -> AbsSnapshot:
     """Collect files and directories into a manifest WITHOUT hashes.
 
     For COLLAPSE_ESCAPING policy, this uses a two-pass approach:
@@ -430,7 +430,7 @@ def _collect_manifest_impl(
         file_chunk_size_bytes if file_chunk_size_bytes is not None else DEFAULT_FILE_CHUNK_SIZE
     )
 
-    return AbsSnapshotManifest(
+    return AbsSnapshot(
         hash_alg=HashAlgorithm.XXH128,
         dirs=dir_entries,
         files=file_entries,

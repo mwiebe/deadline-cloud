@@ -21,10 +21,10 @@ from deadline.job_attachments._snapshots import (
     filter_manifest,
     ManifestFilePath,
     ManifestDirectoryPath,
-    AbsSnapshotManifest,
-    AbsDiffManifest,
-    RelSnapshotManifest,
-    RelDiffManifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    Snapshot,
+    SnapshotDiff,
     IncludeExcludePathsFilter,
 )
 from deadline.job_attachments._snapshots._operations._filter_manifest import (
@@ -146,12 +146,10 @@ class TestIncludeExcludePathsFilter:
 
 
 class TestFilterManifestAbsSnapshot:
-    """Tests for filtering AbsSnapshotManifest."""
+    """Tests for filtering AbsSnapshot."""
 
-    def _create_manifest(
-        self, files: List[dict], dirs: List[dict] | None = None
-    ) -> AbsSnapshotManifest:
-        """Helper to create an AbsSnapshotManifest."""
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -159,7 +157,7 @@ class TestFilterManifestAbsSnapshot:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsSnapshotManifest(
+        return AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -288,7 +286,7 @@ class TestFilterManifestAbsSnapshot:
         assert len(manifest.files) == original_count
 
     def test_returns_abs_snapshot_manifest(self) -> None:
-        """Filtering AbsSnapshotManifest returns AbsSnapshotManifest."""
+        """Filtering AbsSnapshot returns AbsSnapshot."""
         manifest = self._create_manifest(
             [{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
@@ -296,16 +294,14 @@ class TestFilterManifestAbsSnapshot:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert isinstance(filtered, AbsSnapshotManifest)
+        assert isinstance(filtered, AbsSnapshot)
 
 
 class TestFilterManifestRelSnapshot:
-    """Tests for filtering RelSnapshotManifest."""
+    """Tests for filtering Snapshot."""
 
-    def _create_manifest(
-        self, files: List[dict], dirs: List[dict] | None = None
-    ) -> RelSnapshotManifest:
-        """Helper to create a RelSnapshotManifest."""
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> Snapshot:
+        """Helper to create a Snapshot."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -313,7 +309,7 @@ class TestFilterManifestRelSnapshot:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelSnapshotManifest(
+        return Snapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -426,7 +422,7 @@ class TestFilterManifestRelSnapshot:
         assert filtered.totalSize == 100
 
     def test_returns_rel_snapshot_manifest(self) -> None:
-        """Filtering RelSnapshotManifest returns RelSnapshotManifest."""
+        """Filtering Snapshot returns Snapshot."""
         manifest = self._create_manifest(
             [{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
@@ -434,19 +430,19 @@ class TestFilterManifestRelSnapshot:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert isinstance(filtered, RelSnapshotManifest)
+        assert isinstance(filtered, Snapshot)
 
 
 class TestFilterManifestAbsDiff:
-    """Tests for filtering AbsDiffManifest."""
+    """Tests for filtering AbsSnapshotDiff."""
 
     def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
         parent_hash: str | None = None,
-    ) -> AbsDiffManifest:
-        """Helper to create an AbsDiffManifest."""
+    ) -> AbsSnapshotDiff:
+        """Helper to create an AbsSnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -454,7 +450,7 @@ class TestFilterManifestAbsDiff:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return AbsDiffManifest(
+        return AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -505,7 +501,7 @@ class TestFilterManifestAbsDiff:
         assert filtered.totalSize == 100
 
     def test_returns_abs_diff_manifest(self) -> None:
-        """Filtering AbsDiffManifest returns AbsDiffManifest."""
+        """Filtering AbsSnapshotDiff returns AbsSnapshotDiff."""
         manifest = self._create_manifest(
             files=[{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
@@ -513,19 +509,19 @@ class TestFilterManifestAbsDiff:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert isinstance(filtered, AbsDiffManifest)
+        assert isinstance(filtered, AbsSnapshotDiff)
 
 
 class TestFilterManifestRelDiff:
-    """Tests for filtering RelDiffManifest."""
+    """Tests for filtering SnapshotDiff."""
 
     def _create_manifest(
         self,
         files: List[dict],
         dirs: List[dict] | None = None,
         parent_hash: str | None = None,
-    ) -> RelDiffManifest:
-        """Helper to create a RelDiffManifest."""
+    ) -> SnapshotDiff:
+        """Helper to create a SnapshotDiff."""
         file_entries = [ManifestFilePath(**f) for f in files]
         dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
         total_size = sum(
@@ -533,7 +529,7 @@ class TestFilterManifestRelDiff:
             for f in files
             if not f.get("deleted") and not f.get("symlink_target")
         )
-        return RelDiffManifest(
+        return SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=dir_entries,
             files=file_entries,
@@ -558,7 +554,7 @@ class TestFilterManifestRelDiff:
         assert filtered.files[0].deleted is True
 
     def test_returns_rel_diff_manifest(self) -> None:
-        """Filtering RelDiffManifest returns RelDiffManifest."""
+        """Filtering SnapshotDiff returns SnapshotDiff."""
         manifest = self._create_manifest(
             files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
@@ -566,7 +562,7 @@ class TestFilterManifestRelDiff:
         filter_obj = IncludeExcludePathsFilter()
         filtered = filter_manifest(manifest, filter_obj)
 
-        assert isinstance(filtered, RelDiffManifest)
+        assert isinstance(filtered, SnapshotDiff)
 
 
 class TestFilterManifestDiffScenarios:
@@ -590,7 +586,7 @@ class TestFilterManifestDiffScenarios:
 
         Diff should show: new.blend added (not texture.png/notes.txt deleted)
         """
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -601,7 +597,7 @@ class TestFilterManifestDiffScenarios:
             total_size=350,
         )
 
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -627,7 +623,7 @@ class TestFilterManifestDiffScenarios:
 
     def test_filter_directories_for_diff(self) -> None:
         """Directory filtering works correctly for diff scenarios."""
-        parent = AbsSnapshotManifest(
+        parent = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="/src"),
@@ -637,7 +633,7 @@ class TestFilterManifestDiffScenarios:
             total_size=0,
         )
 
-        current = AbsSnapshotManifest(
+        current = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[
                 ManifestDirectoryPath(path="/src"),
@@ -663,7 +659,7 @@ class TestCustomFilterCallables:
 
     def test_filter_by_size(self) -> None:
         """Filter files by size threshold."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -686,7 +682,7 @@ class TestCustomFilterCallables:
 
     def test_filter_by_extension_case_insensitive(self) -> None:
         """Custom filter for case-insensitive extension matching."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -707,7 +703,7 @@ class TestCustomFilterCallables:
 
     def test_filter_exclude_runnable(self) -> None:
         """Filter to exclude executable files."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
             files=[
@@ -729,7 +725,7 @@ class TestCustomFilterCallables:
 
     def test_always_true_filter(self) -> None:
         """Filter that accepts everything."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="/dir1")],
             files=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],
@@ -746,7 +742,7 @@ class TestCustomFilterCallables:
 
     def test_always_false_filter(self) -> None:
         """Filter that rejects everything."""
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[ManifestDirectoryPath(path="/dir1")],
             files=[ManifestFilePath(path="/file.txt", hash="h1", size=100, mtime=1000)],

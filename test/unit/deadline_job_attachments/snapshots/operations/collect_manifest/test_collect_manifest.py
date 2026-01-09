@@ -34,7 +34,7 @@ from deadline.job_attachments._snapshots import (
     SymlinkPolicy,
 )
 from deadline.job_attachments._snapshots import (
-    AbsSnapshotManifest,
+    AbsSnapshot,
     DEFAULT_FILE_CHUNK_SIZE,
     WHOLE_FILE_CHUNK_SIZE,
 )
@@ -106,7 +106,7 @@ class TestCollectManifestAbsolutePaths:
         assert file_entries[0].path == (tmp_path / "file.txt").as_posix()
 
     def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
-        """collect_manifest returns AbsSnapshotManifest type."""
+        """collect_manifest returns AbsSnapshot type."""
         (tmp_path / "file.txt").write_text("content")
 
         manifest = collect_manifest(
@@ -114,7 +114,7 @@ class TestCollectManifestAbsolutePaths:
             [],
         )
 
-        assert isinstance(manifest, AbsSnapshotManifest)
+        assert isinstance(manifest, AbsSnapshot)
 
 
 class TestCollectManifestMetadata:
@@ -235,7 +235,7 @@ class TestCollectManifestDirectoryHandling:
             [],
         )
 
-        assert isinstance(manifest, AbsSnapshotManifest)
+        assert isinstance(manifest, AbsSnapshot)
         dir_paths = {d.path for d in manifest.dirs}
         assert empty_dir.as_posix() in dir_paths
 
@@ -252,7 +252,7 @@ class TestCollectManifestDirectoryHandling:
             [],
         )
 
-        assert isinstance(manifest, AbsSnapshotManifest)
+        assert isinstance(manifest, AbsSnapshot)
         dir_paths = {d.path for d in manifest.dirs}
         assert level1.as_posix() in dir_paths
         assert level2.as_posix() in dir_paths

@@ -8,8 +8,8 @@ This module implements the HASH operation from the composable manifest operation
     HASH: AbsManifest (with hash=None) → AbsManifest (with hashes filled in)
 
 Where AbsManifest can be either:
-    - AbsSnapshotManifest: A full directory tree snapshot with absolute paths
-    - AbsDiffManifest: A diff manifest with absolute paths (contains new/modified/deleted entries)
+    - AbsSnapshot: A full directory tree snapshot with absolute paths
+    - AbsSnapshotDiff: A diff manifest with absolute paths (contains new/modified/deleted entries)
 
 The separation of collection from hashing enables:
 - Fast diff comparison by mtime/size without hashing unchanged files
@@ -53,8 +53,8 @@ def hash_manifest(
     Args:
         manifest: Manifest with absolute paths and hash=None for unhashed files.
             Can be either:
-            - AbsSnapshotManifest (from collect_manifest)
-            - AbsDiffManifest (from compute_diff_manifest with ignore_hashes=True)
+            - AbsSnapshot (from collect_manifest)
+            - AbsSnapshotDiff (from compute_diff_manifest with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
         file_chunk_size_bytes: Chunk size for output manifest.

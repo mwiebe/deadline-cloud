@@ -26,12 +26,12 @@ from deadline.job_attachments._snapshots import (
     SymlinkPolicy,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-from deadline.job_attachments._snapshots import AbsSnapshotManifest
+from deadline.job_attachments._snapshots import AbsSnapshot
 
 
-def _to_abs_snapshot(manifest: object) -> AbsSnapshotManifest:
-    """Cast a manifest to AbsSnapshotManifest for type checking."""
-    return cast(AbsSnapshotManifest, manifest)
+def _to_abs_snapshot(manifest: object) -> AbsSnapshot:
+    """Cast a manifest to AbsSnapshot for type checking."""
+    return cast(AbsSnapshot, manifest)
 
 
 class TestDownloadManifestSymlinks:
@@ -104,7 +104,7 @@ class TestDownloadManifestSymlinks:
         """Test that unsupported symlink policies raise ValueError."""
         cache_root = tmp_path / "cache"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[],

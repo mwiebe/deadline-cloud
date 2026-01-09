@@ -17,7 +17,7 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 from deadline.job_attachments.asset_manifests.base_manifest import BaseManifestPath
 from deadline.job_attachments._snapshots import (
     ManifestFilePath,
-    RelSnapshotManifest,
+    Snapshot,
     WHOLE_FILE_CHUNK_SIZE,
 )
 from deadline.job_attachments.asset_manifests.v2023_03_03._encode import encode_v2023
@@ -76,7 +76,7 @@ SAMPLE_MANIFESTS: List[Dict[str, Any]] = [
 
 
 class TestRoundtripNewFormat:
-    """Tests for encode/decode roundtrip using new memory format (RelSnapshotManifest)."""
+    """Tests for encode/decode roundtrip using new memory format (Snapshot)."""
 
     @pytest.mark.parametrize("manifest_data", SAMPLE_MANIFESTS)
     def test_decode_encode_roundtrip(self, manifest_data: Dict[str, Any]) -> None:
@@ -86,7 +86,7 @@ class TestRoundtripNewFormat:
 
         # Decode to new format
         decoded = decode_v2023(json_str)
-        assert isinstance(decoded, RelSnapshotManifest)
+        assert isinstance(decoded, Snapshot)
 
         # Encode back to JSON
         encoded = encode_v2023(decoded)
@@ -97,7 +97,7 @@ class TestRoundtripNewFormat:
     @pytest.mark.parametrize("manifest_data", SAMPLE_MANIFESTS)
     def test_encode_decode_roundtrip(self, manifest_data: Dict[str, Any]) -> None:
         """Create manifest, encode, decode, encode again - verify identical bytes."""
-        # Create RelSnapshotManifest from test data
+        # Create Snapshot from test data
         files = [
             ManifestFilePath(
                 path=p["path"],
@@ -107,7 +107,7 @@ class TestRoundtripNewFormat:
             )
             for p in manifest_data["paths"]
         ]
-        manifest = RelSnapshotManifest(
+        manifest = Snapshot(
             hash_alg=HashAlgorithm(manifest_data["hashAlg"]),
             files=files,
             total_size=manifest_data["totalSize"],
@@ -209,7 +209,7 @@ class TestCrossFormatEquivalence:
             )
             for p in manifest_data["paths"]
         ]
-        new_manifest = RelSnapshotManifest(
+        new_manifest = Snapshot(
             hash_alg=HashAlgorithm(manifest_data["hashAlg"]),
             files=new_files,
             total_size=manifest_data["totalSize"],
@@ -255,7 +255,7 @@ class TestSampleManifestFile:
         """Roundtrip sample manifest through new format produces identical bytes."""
         # Decode
         decoded = decode_v2023(default_manifest_str_v2023_03_03)
-        assert isinstance(decoded, RelSnapshotManifest)
+        assert isinstance(decoded, Snapshot)
 
         # Encode
         encoded1 = encode_v2023(decoded)
@@ -330,7 +330,7 @@ class TestConfTestFixtures:
             ManifestFilePath(path=p["path"], hash=p["hash"], size=p["size"], mtime=p["mtime"])
             for p in test_manifest_one["paths"]
         ]
-        new_manifest = RelSnapshotManifest(
+        new_manifest = Snapshot(
             hash_alg=HashAlgorithm(test_manifest_one["hashAlg"]),
             files=new_files,
             total_size=test_manifest_one["totalSize"],
@@ -359,7 +359,7 @@ class TestConfTestFixtures:
             ManifestFilePath(path=p["path"], hash=p["hash"], size=p["size"], mtime=p["mtime"])
             for p in test_manifest_two["paths"]
         ]
-        new_manifest = RelSnapshotManifest(
+        new_manifest = Snapshot(
             hash_alg=HashAlgorithm(test_manifest_two["hashAlg"]),
             files=new_files,
             total_size=test_manifest_two["totalSize"],
@@ -388,7 +388,7 @@ class TestConfTestFixtures:
             ManifestFilePath(path=p["path"], hash=p["hash"], size=p["size"], mtime=p["mtime"])
             for p in merged_manifest["paths"]
         ]
-        new_manifest = RelSnapshotManifest(
+        new_manifest = Snapshot(
             hash_alg=HashAlgorithm(merged_manifest["hashAlg"]),
             files=new_files,
             total_size=merged_manifest["totalSize"],
@@ -417,7 +417,7 @@ class TestConfTestFixtures:
             ManifestFilePath(path=p["path"], hash=p["hash"], size=p["size"], mtime=p["mtime"])
             for p in really_big_manifest["paths"]
         ]
-        new_manifest = RelSnapshotManifest(
+        new_manifest = Snapshot(
             hash_alg=HashAlgorithm(really_big_manifest["hashAlg"]),
             files=new_files,
             total_size=really_big_manifest["totalSize"],

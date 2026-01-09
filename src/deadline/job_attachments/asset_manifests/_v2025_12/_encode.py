@@ -4,7 +4,7 @@
 EXPERIMENTAL: Encode unified manifest classes to v2025-12 JSON format.
 
 This module provides the encode_v2025() function that serializes unified manifest
-classes (AbsSnapshotManifest, RelSnapshotManifest, etc.) to canonical JSON.
+classes (AbsSnapshot, Snapshot, etc.) to canonical JSON.
 
 This format is under development and subject to change. Do not use in production.
 """
@@ -15,13 +15,13 @@ import json
 from typing import Any, Dict, List
 
 from ..._snapshots import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    Manifest,
+    AbsSnapshotDiff,
+    AbsSnapshot,
+    AnyManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
-    RelSnapshotManifest,
+    SnapshotDiff,
+    Snapshot,
 )
 from ...exceptions import ManifestDecodeValidationError
 
@@ -33,12 +33,12 @@ SPEC_REL_SNAPSHOT = "relative-manifest-snapshot-beta-2025-12"
 SPEC_REL_DIFF = "relative-manifest-diff-beta-2025-12"
 
 
-def encode_v2025(manifest: Manifest) -> str:
+def encode_v2025(manifest: AnyManifest) -> str:
     """
     Encode a unified manifest to v2025-12 JSON format.
 
     Args:
-        manifest: Any unified manifest (AbsSnapshotManifest, RelSnapshotManifest, etc.)
+        manifest: Any unified manifest (AbsSnapshot, Snapshot, etc.)
 
     Returns:
         Canonical JSON string with specificationVersion field
@@ -54,7 +54,7 @@ def encode_v2025(manifest: Manifest) -> str:
     spec_version = _get_specification_version(manifest)
 
     # Validate symlink targets for relative manifests
-    if isinstance(manifest, (RelSnapshotManifest, RelDiffManifest)):
+    if isinstance(manifest, (Snapshot, SnapshotDiff)):
         for f in manifest.files:
             if f.symlink_target is not None:
                 f._validate_symlink_target_relative()
@@ -93,15 +93,15 @@ def encode_v2025(manifest: Manifest) -> str:
     return json.dumps(manifest_dict, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _get_specification_version(manifest: Manifest) -> str:
+def _get_specification_version(manifest: AnyManifest) -> str:
     """Get the specificationVersion string for a manifest type."""
-    if isinstance(manifest, AbsSnapshotManifest):
+    if isinstance(manifest, AbsSnapshot):
         return SPEC_ABS_SNAPSHOT
-    elif isinstance(manifest, AbsDiffManifest):
+    elif isinstance(manifest, AbsSnapshotDiff):
         return SPEC_ABS_DIFF
-    elif isinstance(manifest, RelSnapshotManifest):
+    elif isinstance(manifest, Snapshot):
         return SPEC_REL_SNAPSHOT
-    elif isinstance(manifest, RelDiffManifest):
+    elif isinstance(manifest, SnapshotDiff):
         return SPEC_REL_DIFF
     else:
         raise ManifestDecodeValidationError(f"Unknown manifest type: {type(manifest).__name__}")

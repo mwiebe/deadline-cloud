@@ -23,7 +23,7 @@ from deadline.job_attachments._snapshots import (
     collect_manifest,
     SymlinkPolicy,
 )
-from deadline.job_attachments._snapshots import AbsSnapshotManifest
+from deadline.job_attachments._snapshots import AbsSnapshot
 
 
 class TestPreservePolicy:
@@ -196,7 +196,7 @@ class TestCollapsePolicy:
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
-        assert isinstance(manifest, AbsSnapshotManifest)
+        assert isinstance(manifest, AbsSnapshot)
         paths = {p.path for p in manifest.files}
         assert target.as_posix() in paths
         assert link.as_posix() in paths
@@ -297,7 +297,7 @@ class TestExcludePolicy:
             symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
 
-        assert isinstance(manifest, AbsSnapshotManifest)
+        assert isinstance(manifest, AbsSnapshot)
         paths = {p.path for p in manifest.files}
         assert target.as_posix() in paths
         assert link.as_posix() not in paths
@@ -365,7 +365,7 @@ class TestTransitiveIncludeTargets:
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
         )
 
-        assert isinstance(manifest, AbsSnapshotManifest)
+        assert isinstance(manifest, AbsSnapshot)
         paths = {p.path for p in manifest.files}
 
         # Symlink should be preserved

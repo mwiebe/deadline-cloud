@@ -4,8 +4,8 @@
 Decode v2023-03-03 JSON format to unified manifest classes.
 
 This module provides the decode_v2023() function that deserializes JSON
-to RelSnapshotManifest. The v2023 format only supports relative paths
-and snapshot manifests, so this always returns RelSnapshotManifest.
+to Snapshot. The v2023 format only supports relative paths
+and snapshot manifests, so this always returns Snapshot.
 """
 
 from __future__ import annotations
@@ -16,25 +16,25 @@ from typing import Any, Dict, List
 from ..hash_algorithms import HashAlgorithm
 from ..._snapshots import (
     ManifestFilePath,
-    RelSnapshotManifest,
+    Snapshot,
     WHOLE_FILE_CHUNK_SIZE,
 )
 from ...exceptions import ManifestDecodeValidationError
 from .validate import validate_manifest_2023_03_03
 
 
-def decode_v2023(manifest_str: str) -> RelSnapshotManifest:
+def decode_v2023(manifest_str: str) -> Snapshot:
     """
-    Decode a v2023-03-03 JSON string to a unified RelSnapshotManifest.
+    Decode a v2023-03-03 JSON string to a unified Snapshot.
 
     The v2023 format only supports relative paths and snapshot manifests,
-    so this always returns RelSnapshotManifest.
+    so this always returns Snapshot.
 
     Args:
         manifest_str: JSON string with manifestVersion "2023-03-03"
 
     Returns:
-        RelSnapshotManifest with the decoded manifest data
+        Snapshot with the decoded manifest data
 
     Raises:
         ManifestDecodeValidationError: If JSON is invalid or manifestVersion is wrong
@@ -63,7 +63,7 @@ def decode_v2023(manifest_str: str) -> RelSnapshotManifest:
 
     # Create manifest instance
     # v2023 doesn't support chunking, so use WHOLE_FILE_CHUNK_SIZE
-    return RelSnapshotManifest(
+    return Snapshot(
         hash_alg=hash_alg,
         files=files,
         total_size=total_size,

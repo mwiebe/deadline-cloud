@@ -17,7 +17,7 @@ import pytest
 
 from deadline.job_attachments._snapshots import (
     download_manifest,
-    AbsSnapshotManifest,
+    AbsSnapshot,
     FileSystemDataCache,
 )
 from deadline.job_attachments._snapshots._manifest import ManifestFilePath
@@ -54,7 +54,7 @@ class TestDownloadChunkedFileFileSystem:
 
         target_path = download_dir / "single_chunk.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -102,7 +102,7 @@ class TestDownloadChunkedFileFileSystem:
         regular_path = download_dir / "regular.txt"
         chunked_path = download_dir / "chunked.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -147,7 +147,7 @@ class TestDownloadChunkedFileFileSystem:
         existing_content = b"existing content"
         target_path.write_bytes(existing_content)
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -187,7 +187,7 @@ class TestDownloadChunkedFileFileSystem:
         target_path = download_dir / "existing.bin"
         target_path.write_bytes(b"existing content")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -227,7 +227,7 @@ class TestDownloadChunkedFileFileSystem:
         target_path = download_dir / "file.bin"
         expected_mtime_us = 1609459200000000  # 2021-01-01 00:00:00 UTC in microseconds
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -280,7 +280,7 @@ class TestDownloadChunkedFileAtomicity:
 
         target_path = download_dir / "file.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -320,7 +320,7 @@ class TestDownloadChunkedFileAtomicity:
 
         target_path = download_dir / "file.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

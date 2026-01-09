@@ -20,7 +20,7 @@ from deadline.job_attachments._snapshots import (
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
-    AbsSnapshotManifest,
+    AbsSnapshot,
     ManifestFilePath,
 )
 
@@ -36,7 +36,7 @@ class TestDownloadManifestValidation:
         """Test that relative paths in manifest raise ValueError."""
         cache_root = tmp_path / "cache"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -61,7 +61,7 @@ class TestDownloadManifestValidation:
         existing_file = target_dir / "existing.txt"
         existing_file.write_text("Existing content")
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[],
             dirs=[],

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 from deadline.job_attachments._snapshots import (
     download_manifest,
-    AbsSnapshotManifest,
+    AbsSnapshot,
 )
 from deadline.job_attachments._snapshots._manifest import ManifestFilePath
 from deadline.job_attachments._snapshots._content_addressed_data_cache import S3DataCache
@@ -66,7 +66,7 @@ class TestMultipartDownloadRegularFiles:
 
         target_path = download_dir / "large_file.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -132,7 +132,7 @@ class TestMultipartDownloadRegularFiles:
 
         target_path = download_dir / "small_file.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -203,7 +203,7 @@ class TestMultipartDownloadChunkedFiles:
 
         target_path = download_dir / "chunked_file.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -252,7 +252,7 @@ class TestMultipartDownloadChunkedFiles:
 
         target_path = download_dir / "chunked_file.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -310,7 +310,7 @@ class TestMultipartDownloadChunkedFiles:
         target_path = download_dir / "multi_chunk_file.bin"
         chunk_size = 100
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
@@ -398,7 +398,7 @@ class TestMultipartDownloadMixedFiles:
         small_path = download_dir / "small.bin"
         large_path = download_dir / "large.bin"
 
-        manifest = AbsSnapshotManifest(
+        manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(

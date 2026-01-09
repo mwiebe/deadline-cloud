@@ -4,16 +4,16 @@
 Module for joining a prefix to all paths in a manifest.
 
 This module implements the JOIN operation from the composable manifest operations design:
-    JOIN: (RelManifest, prefix) → Manifest
+    JOIN: (RelManifest, prefix) → AnyManifest
 
 The JOIN operation adds a prefix to all paths in a manifest, producing a new manifest
 with prefixed paths. This is the inverse of the SUBTREE operation.
 
 Key behaviors:
-- Input must be a relative-path manifest (RelSnapshotManifest or RelDiffManifest)
+- Input must be a relative-path manifest (Snapshot or SnapshotDiff)
 - Joins prefix to all file paths, directory paths, and symlink targets
-- If prefix is absolute, output is an absolute-path manifest (AbsSnapshotManifest or AbsDiffManifest)
-- If prefix is relative, output is a relative-path manifest (RelSnapshotManifest or RelDiffManifest)
+- If prefix is absolute, output is an absolute-path manifest (AbsSnapshot or AbsSnapshotDiff)
+- If prefix is relative, output is a relative-path manifest (Snapshot or SnapshotDiff)
 
 All composable operations use v2025 structure and semantics internally. Support for
 v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
@@ -27,14 +27,14 @@ import posixpath
 from typing import Any, Callable, List
 
 from .._manifest import (
-    AbsDiffManifest,
-    AbsSnapshotManifest,
-    Manifest,
+    AbsSnapshot,
+    AbsSnapshotDiff,
+    AnyManifest,
     ManifestDirectoryPath,
     ManifestFilePath,
-    RelDiffManifest,
+    Snapshot,
+    SnapshotDiff,
     RelManifest,
-    RelSnapshotManifest,
     _is_absolute_path,
 )
 
@@ -44,19 +44,19 @@ def join_manifest(
     prefix: str,
     *,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
-) -> Manifest:
+) -> AnyManifest:
     """
     Join a prefix to all paths in a manifest.
 
     Args:
-        manifest: The source manifest to transform (must be RelSnapshotManifest or RelDiffManifest)
+        manifest: The source manifest to transform (must be Snapshot or SnapshotDiff)
         prefix: Path prefix to join to all paths (relative or absolute)
         print_function_callback: Progress callback for status messages
 
     Returns:
         A new manifest with all paths prefixed:
-        - If prefix is absolute: AbsSnapshotManifest or AbsDiffManifest
-        - If prefix is relative: RelSnapshotManifest or RelDiffManifest
+        - If prefix is absolute: AbsSnapshot or AbsSnapshotDiff
+        - If prefix is relative: Snapshot or SnapshotDiff
         The snapshot/diff type is preserved from the input.
 
     Raises:
@@ -135,25 +135,20 @@ def _normalize_prefix(prefix: str) -> str:
 
 def _get_output_manifest_type(
     manifest: RelManifest, prefix: str
-) -> (
-    type[AbsSnapshotManifest]
-    | type[AbsDiffManifest]
-    | type[RelSnapshotManifest]
-    | type[RelDiffManifest]
-):
+) -> type[AbsSnapshot] | type[AbsSnapshotDiff] | type[Snapshot] | type[SnapshotDiff]:
     """Determine the output manifest type based on input type and prefix.
 
-    - If prefix is absolute: output is Abs*Manifest
-    - If prefix is relative: output is Rel*Manifest
+    - If prefix is absolute: output is AbsSnapshot or AbsSnapshotDiff
+    - If prefix is relative: output is Snapshot or SnapshotDiff
     - Snapshot/Diff type is preserved from input
     """
     prefix_is_absolute = _is_absolute_path(prefix)
-    is_snapshot = isinstance(manifest, RelSnapshotManifest)
+    is_snapshot = isinstance(manifest, Snapshot)
 
     if prefix_is_absolute:
-        return AbsSnapshotManifest if is_snapshot else AbsDiffManifest
+        return AbsSnapshot if is_snapshot else AbsSnapshotDiff
     else:
-        return RelSnapshotManifest if is_snapshot else RelDiffManifest
+        return Snapshot if is_snapshot else SnapshotDiff
 
 
 def _join_path(prefix: str, path: str) -> str:

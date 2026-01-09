@@ -7,7 +7,20 @@ independent of on-disk format versions. The classes here support all features
 (directories, symlinks, chunked files, diff manifests) and use mixins for
 validation of path style (absolute/relative) and manifest type (snapshot/diff).
 
-On-disk serialization is handled by version-specific modules (v2023_03_03, v2025_12_04).
+Class Naming:
+- Snapshot: A directory tree snapshot with relative paths (like a zip TOC)
+- SnapshotDiff: Changes between two snapshots, with relative paths
+- AbsSnapshot: A snapshot anchored to absolute filesystem paths
+- AbsSnapshotDiff: A diff anchored to absolute filesystem paths
+
+Type Aliases:
+- RelManifest: Union[Snapshot, SnapshotDiff] - any relative-path manifest
+- AbsManifest: Union[AbsSnapshot, AbsSnapshotDiff] - any absolute-path manifest
+- AnySnapshot: Union[AbsSnapshot, Snapshot] - snapshot with any path style
+- AnyDiff: Union[AbsSnapshotDiff, SnapshotDiff] - diff with any path style
+- AnyManifest: Union of all four concrete types
+
+On-disk serialization is handled by version-specific modules (v2023_03_03, v2025_12).
 """
 
 from __future__ import annotations
@@ -283,12 +296,12 @@ class ManifestFilePath:
 # =============================================================================
 
 
-class AbsManifestMixin:
+class _AbsManifestMixin:
     """Mixin that validates all paths in the manifest are absolute."""
 
     def _validate_absolute_paths(self) -> None:
         """Validate that all paths in the manifest are absolute."""
-        manifest: Manifest = self  # type: ignore[assignment]
+        manifest: _BaseManifest = self  # type: ignore[assignment]
 
         for entry in manifest.files:
             if not _is_absolute_path(entry.path):
@@ -308,12 +321,12 @@ class AbsManifestMixin:
                 )
 
 
-class RelManifestMixin:
+class _RelManifestMixin:
     """Mixin that validates all paths in the manifest are relative."""
 
     def _validate_relative_paths(self) -> None:
         """Validate that all paths in the manifest are relative."""
-        manifest: Manifest = self  # type: ignore[assignment]
+        manifest: _BaseManifest = self  # type: ignore[assignment]
 
         for entry in manifest.files:
             if _is_absolute_path(entry.path):
@@ -333,12 +346,12 @@ class RelManifestMixin:
                 )
 
 
-class SnapshotManifestMixin:
+class _SnapshotManifestMixin:
     """Mixin that validates the manifest is a valid snapshot."""
 
     def _validate_snapshot(self) -> None:
         """Validate snapshot-specific constraints."""
-        manifest: Manifest = self  # type: ignore[assignment]
+        manifest: _BaseManifest = self  # type: ignore[assignment]
 
         # Snapshots should not have deleted entries
         for entry in manifest.files:
@@ -354,7 +367,7 @@ class SnapshotManifestMixin:
                 )
 
 
-class DiffManifestMixin:
+class _DiffManifestMixin:
     """Mixin that validates the manifest is a valid diff."""
 
     def _validate_diff(self) -> None:
@@ -368,12 +381,13 @@ class DiffManifestMixin:
 
 
 @dataclass
-class Manifest:
+class _BaseManifest:
     """
     Base class for the unified in-memory manifest representation.
 
     This class holds all manifest data and delegates validation to mixins
-    in concrete subclasses.
+    in concrete subclasses. Use the type alias AnyManifest to refer to
+    any manifest type in function signatures.
 
     Fields:
         hashAlg: Hashing algorithm used for file content hashes.
@@ -438,7 +452,7 @@ class Manifest:
 # =============================================================================
 
 
-class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
+class AbsSnapshot(_BaseManifest, _AbsManifestMixin, _SnapshotManifestMixin):
     """Manifest with absolute paths representing a full directory snapshot."""
 
     def __init__(
@@ -467,7 +481,7 @@ class AbsSnapshotManifest(Manifest, AbsManifestMixin, SnapshotManifestMixin):
         self._validate_snapshot()
 
 
-class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
+class AbsSnapshotDiff(_BaseManifest, _AbsManifestMixin, _DiffManifestMixin):
     """Manifest with absolute paths representing changes relative to a parent."""
 
     def __init__(
@@ -496,7 +510,7 @@ class AbsDiffManifest(Manifest, AbsManifestMixin, DiffManifestMixin):
         self._validate_diff()
 
 
-class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
+class Snapshot(_BaseManifest, _RelManifestMixin, _SnapshotManifestMixin):
     """Manifest with relative paths representing a full directory snapshot."""
 
     def __init__(
@@ -525,7 +539,7 @@ class RelSnapshotManifest(Manifest, RelManifestMixin, SnapshotManifestMixin):
         self._validate_snapshot()
 
 
-class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
+class SnapshotDiff(_BaseManifest, _RelManifestMixin, _DiffManifestMixin):
     """Manifest with relative paths representing changes relative to a parent."""
 
     def __init__(
@@ -559,10 +573,18 @@ class RelDiffManifest(Manifest, RelManifestMixin, DiffManifestMixin):
 # =============================================================================
 
 # Type aliases for clearer function signatures
-SnapshotManifest = Union[AbsSnapshotManifest, RelSnapshotManifest]
-DiffManifest = Union[AbsDiffManifest, RelDiffManifest]
-AbsManifest = Union[AbsSnapshotManifest, AbsDiffManifest]
-RelManifest = Union[RelSnapshotManifest, RelDiffManifest]
+#
+# RelManifest: Any manifest with relative paths (Snapshot or SnapshotDiff)
+# AbsManifest: Any manifest with absolute paths (AbsSnapshot or AbsSnapshotDiff)
+# AnySnapshot: A snapshot with any path style (AbsSnapshot or Snapshot)
+# AnyDiff: A diff with any path style (AbsSnapshotDiff or SnapshotDiff)
+# AnyManifest: Any of the four concrete manifest types
+
+RelManifest = Union[Snapshot, SnapshotDiff]
+AbsManifest = Union[AbsSnapshot, AbsSnapshotDiff]
+AnySnapshot = Union[AbsSnapshot, Snapshot]
+AnyDiff = Union[AbsSnapshotDiff, SnapshotDiff]
+AnyManifest = Union[AbsSnapshot, AbsSnapshotDiff, Snapshot, SnapshotDiff]
 
 
 class SymlinkPolicy(str, Enum):
@@ -575,6 +597,11 @@ class SymlinkPolicy(str, Enum):
           Symlinks pointing within root are preserved as symlink entries.
       COLLAPSE_ALL - Collapse all symlinks into files/directories by following them.
           The directory tree walk follows symlinks, treating them as their targets.
+      EXCLUDE_ALL - Exclude all symlinks from the manifest entirely. Unlike COLLAPSE_ALL
+          which turns symlinks into files/directories, this leaves them out.
+      EXCLUDE_ESCAPING - Exclude only symlinks that escape the root path.
+          Symlinks pointing outside root are excluded from the manifest.
+          Symlinks pointing within root are preserved as symlink entries.
       PRESERVE - Keep all symlinks as symlink entries. Only allowed when
           absolute_paths=True, because escaping symlinks cannot be represented
           with conforming relative paths.
@@ -582,16 +609,11 @@ class SymlinkPolicy(str, Enum):
           manifest. Only allowed when absolute_paths=True, because targets outside
           root can only be stored as absolute paths. Targets within root are already
           captured by normal collection, so this is meaningful for escaping symlinks.
-      EXCLUDE_ALL - Exclude all symlinks from the manifest entirely. Unlike COLLAPSE_ALL
-          which turns symlinks into files/directories, this leaves them out.
-      EXCLUDE_ESCAPING - Exclude only symlinks that escape the root path.
-          Symlinks pointing outside root are excluded from the manifest.
-          Symlinks pointing within root are preserved as symlink entries.
     """
 
     COLLAPSE_ESCAPING = "collapse_escaping"
+    EXCLUDE_ESCAPING = "exclude_escaping"
     COLLAPSE_ALL = "collapse_all"
     EXCLUDE_ALL = "exclude_all"
-    EXCLUDE_ESCAPING = "exclude_escaping"
     PRESERVE = "preserve"
     TRANSITIVE_INCLUDE_TARGETS = "transitive_include_targets"
