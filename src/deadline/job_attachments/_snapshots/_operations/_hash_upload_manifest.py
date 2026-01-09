@@ -13,16 +13,15 @@ The operation combines hashing and uploading into a single pass over the data:
 This avoids reading files twice (once for hashing, once for uploading) and provides
 significant performance improvements for large datasets.
 
-The pipeline uses bounded memory to prevent OOM conditions and a shared thread pool
-for both stages (READ+HASH, UPLOAD). Work items flow through stages as tasks submitted
-to the executor, with memory allocation providing natural backpressure.
+The pipeline uses separate thread pools for READ+HASH and UPLOAD stages to prevent
+deadlock. READ+HASH tasks block on memory allocation, while UPLOAD tasks run
+independently to release memory.
 
 Architecture:
-- Both stages run in a shared ThreadPoolExecutor with configurable max_workers
-- Each work item progresses: READ+HASH task → UPLOAD task
+- READ+HASH pool: reads files and computes hashes, blocks waiting for memory
+- UPLOAD pool: writes to data cache and releases memory
 - Memory pool bounds total in-flight data; READ+HASH blocks when memory is exhausted
-- No stage starvation: both stages compete fairly for executor threads
-- READ and HASH are combined so hashing occurs while bytes stream into the buffer
+- Separate pools ensure UPLOAD can always run to release memory
 
 All composable operations use v2025 structure and semantics internally. Support for
 v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
@@ -243,29 +242,26 @@ class _MemoryPool:
 
 class _TaskBasedPipeline:
     """
-    Task-based pipeline using a shared thread pool for both stages.
+    Task-based pipeline using separate thread pools for READ+HASH and UPLOAD stages.
 
-    Instead of dedicated threads per stage, work items flow through stages
-    as tasks submitted to a shared ThreadPoolExecutor. This provides:
-    - Fair scheduling: both stages compete equally for executor threads
-    - No starvation: no stage has a dedicated thread that could starve
-    - Memory bounding: READ+HASH blocks on memory allocation (intentional backpressure)
-    - Better thread utilization: threads aren't idle waiting on queues
-    - Streaming efficiency: hashing occurs while bytes stream into the buffer
+    Using separate pools prevents deadlock: READ+HASH tasks can block waiting for
+    memory while UPLOAD tasks run independently to release that memory.
 
-    Flow: READ+HASH task → UPLOAD task → completion
+    Flow: READ+HASH task (pool 1) → UPLOAD task (pool 2) → completion
     """
 
     def __init__(
         self,
-        executor: concurrent.futures.ThreadPoolExecutor,
+        read_hash_executor: concurrent.futures.ThreadPoolExecutor,
+        upload_executor: concurrent.futures.ThreadPoolExecutor,
         memory_pool: _MemoryPool,
         hash_alg: HashAlgorithm,
         data_cache: ContentAddressedDataCache,
         account_id: Optional[str],
         progress_tracker: Optional[ProgressTracker],
     ) -> None:
-        self._executor = executor
+        self._read_hash_executor = read_hash_executor
+        self._upload_executor = upload_executor
         self._memory_pool = memory_pool
         self._hash_alg = hash_alg
         self._data_cache = data_cache
@@ -294,8 +290,8 @@ class _TaskBasedPipeline:
         """Submit a work item to start processing through the pipeline."""
         with self._lock:
             self._pending_count += 1
-        # Start with combined READ+HASH stage
-        self._executor.submit(self._do_read_and_hash, item)
+        # Start with combined READ+HASH stage in the read_hash pool
+        self._read_hash_executor.submit(self._do_read_and_hash, item)
 
     def wait_for_completion(self) -> List[WorkItem]:
         """Wait for all submitted items to complete and return results."""
@@ -362,8 +358,8 @@ class _TaskBasedPipeline:
             if isinstance(item, _StreamingWorkItem):
                 # Streaming items compute hash while reading (already combined)
                 item.file_hash = self._stream_hash_file(item.file_path)
-                # Submit directly to UPLOAD stage
-                self._executor.submit(self._do_upload, item)
+                # Submit to UPLOAD stage in the upload pool
+                self._upload_executor.submit(self._do_upload, item)
                 return
 
             # _ChunkWorkItem: read chunk data and hash immediately
@@ -385,8 +381,8 @@ class _TaskBasedPipeline:
                 self._memory_pool.release(chunk_size)
                 raise
 
-            # Submit to UPLOAD stage
-            self._executor.submit(self._do_upload, item)
+            # Submit to UPLOAD stage in the upload pool
+            self._upload_executor.submit(self._do_upload, item)
 
         except Exception as e:
             self._record_error(e)
@@ -879,15 +875,14 @@ def _run_pipeline(
     progress_tracker: Optional[ProgressTracker],
 ) -> List[WorkItem]:
     """
-    Run the task-based pipeline on work items using a shared thread pool.
+    Run the pipeline on work items using separate thread pools for each stage.
 
-    Both stages (READ+HASH, UPLOAD) run as tasks in the same ThreadPoolExecutor.
-    Work items flow through stages as tasks, with memory allocation providing
-    natural backpressure when the pool is exhausted.
+    Uses two thread pools to prevent deadlock:
+    - READ+HASH pool: reads files and computes hashes, blocks on memory allocation
+    - UPLOAD pool: writes to data cache and releases memory
 
-    The READ and HASH operations are combined into a single stage so that hashing
-    occurs while bytes are streaming into the memory buffer, rather than
-    re-processing the buffer in a separate stage.
+    This separation ensures UPLOAD tasks can always run to release memory,
+    even when READ+HASH tasks are blocked waiting for memory.
 
     Args:
         work_items: List of work items to process (chunks and/or streaming items)
@@ -895,7 +890,7 @@ def _run_pipeline(
         data_cache: Content-addressable data cache for writes
         account_id: AWS account ID (for S3DataCache ExpectedBucketOwner)
         max_memory_bytes: Maximum memory for buffering
-        max_workers: Maximum number of parallel workers
+        max_workers: Maximum number of parallel workers per pool
         progress_tracker: Optional progress tracker
 
     Returns:
@@ -907,23 +902,26 @@ def _run_pipeline(
     # Create memory pool
     memory_pool = _MemoryPool(max_memory_bytes)
 
-    # Create shared thread pool and pipeline
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        pipeline = _TaskBasedPipeline(
-            executor=executor,
-            memory_pool=memory_pool,
-            hash_alg=hash_alg,
-            data_cache=data_cache,
-            account_id=account_id,
-            progress_tracker=progress_tracker,
-        )
+    # Create separate thread pools for READ+HASH and UPLOAD stages
+    # This prevents deadlock: READ+HASH can block on memory while UPLOAD runs to release it
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as read_hash_executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as upload_executor:
+            pipeline = _TaskBasedPipeline(
+                read_hash_executor=read_hash_executor,
+                upload_executor=upload_executor,
+                memory_pool=memory_pool,
+                hash_alg=hash_alg,
+                data_cache=data_cache,
+                account_id=account_id,
+                progress_tracker=progress_tracker,
+            )
 
-        # Submit all work items
-        for item in work_items:
-            pipeline.submit(item)
+            # Submit all work items
+            for item in work_items:
+                pipeline.submit(item)
 
-        # Wait for completion and return results
-        return pipeline.wait_for_completion()
+            # Wait for completion and return results
+            return pipeline.wait_for_completion()
 
 
 def hash_upload_manifest(
@@ -967,12 +965,11 @@ def hash_upload_manifest(
         ValueError: If effective chunk size is positive and max_memory_bytes is less than chunk size
 
     Pipeline Architecture:
-        The operation uses a task-based pipeline with a shared ThreadPoolExecutor:
-        - Both stages (READ+HASH, UPLOAD) run as tasks in the same thread pool
-        - Work items flow: READ+HASH task → UPLOAD task → completion
-        - Memory pool bounds total in-flight data; READ+HASH blocks when exhausted
-        - No stage starvation: both stages compete fairly for executor threads
-        - READ and HASH are combined so hashing occurs while data is hot in CPU cache
+        The operation uses separate thread pools for each stage to prevent deadlock:
+        - READ+HASH pool: reads files and computes hashes, blocks on memory allocation
+        - UPLOAD pool: writes to data cache and releases memory
+        This separation ensures UPLOAD tasks can always run to release memory,
+        even when READ+HASH tasks are blocked waiting for memory.
 
     Chunking Behavior:
         - If effective chunk size is WHOLE_FILE_CHUNK_SIZE (-1): all files are hashed
