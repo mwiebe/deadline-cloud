@@ -190,6 +190,137 @@ def _check_hash_cache_for_skip(
     return (True, actual_mtime_us)
 
 
+def _check_hash_cache_for_chunked_skip(
+    entry: ManifestFilePath,
+    hash_alg: HashAlgorithm,
+    hash_cache: Optional[HashCache],
+    chunk_size_bytes: int,
+) -> Tuple[bool, Optional[int]]:
+    """
+    Check if a chunked file can be skipped because it already exists with correct chunk hashes.
+
+    For chunked files, we check each chunk's hash in the hash cache. If all chunks
+    have matching hashes with the same mtime, the file can be skipped.
+
+    Args:
+        entry: The manifest file entry with chunkhashes to check
+        hash_alg: The hash algorithm used in the manifest
+        hash_cache: Optional hash cache to check against
+        chunk_size_bytes: The chunk size in bytes from the manifest
+
+    Returns:
+        Tuple of (can_skip, actual_mtime_us):
+        - can_skip: True if the file exists and all chunk hashes match
+        - actual_mtime_us: The file's mtime in microseconds if can_skip is True, else None
+    """
+    if hash_cache is None or entry.chunkhashes is None:
+        return (False, None)
+
+    local_path = _get_long_path_compatible_path(Path(entry.path))
+
+    # File must exist to skip
+    if not local_path.exists() or not local_path.is_file():
+        return (False, None)
+
+    # Get the file's current mtime
+    try:
+        stat_result = local_path.stat()
+        current_mtime_ns = stat_result.st_mtime_ns
+        current_mtime_str = str(current_mtime_ns)
+    except OSError:
+        return (False, None)
+
+    # Use resolved path because hash cache always uses resolved paths
+    resolved_path = str(Path(entry.path).resolve())
+    file_size = entry.size or 0
+    num_chunks = len(entry.chunkhashes)
+
+    # Check each chunk's hash in the cache
+    for chunk_idx, expected_hash in enumerate(entry.chunkhashes):
+        range_start = chunk_idx * chunk_size_bytes
+        # Last chunk may be smaller
+        if chunk_idx == num_chunks - 1:
+            range_end = file_size
+        else:
+            range_end = range_start + chunk_size_bytes
+
+        cache_entry = hash_cache.get_entry(
+            file_path_key=resolved_path,
+            hash_algorithm=hash_alg,
+            range_start=range_start,
+            range_end=range_end,
+        )
+
+        if cache_entry is None:
+            return (False, None)
+
+        # Check if the cached mtime matches the current file mtime
+        if cache_entry.last_modified_time != current_mtime_str:
+            return (False, None)
+
+        # Check if the cached hash matches the expected hash
+        if cache_entry.file_hash != expected_hash:
+            return (False, None)
+
+    # All chunks match - can skip download
+    actual_mtime_us = current_mtime_ns // 1_000
+    logger.debug(
+        f"Skipping download of chunked file {entry.path} - "
+        f"hash cache indicates all {num_chunks} chunks are up to date"
+    )
+    return (True, actual_mtime_us)
+
+
+def _update_hash_cache_for_chunked_file(
+    entry: ManifestFilePath,
+    local_path: Path,
+    hash_alg: HashAlgorithm,
+    hash_cache: HashCache,
+    chunk_size_bytes: int,
+    mtime_ns: int,
+) -> None:
+    """
+    Update the hash cache with all chunk hashes for a downloaded chunked file.
+
+    After a chunked file is downloaded and finalized (os.replace'd), this function
+    stores each chunk's hash in the hash cache with the appropriate byte range.
+
+    Args:
+        entry: The manifest file entry with chunkhashes
+        local_path: The final local path of the downloaded file
+        hash_alg: The hash algorithm used in the manifest
+        hash_cache: The hash cache to update
+        chunk_size_bytes: The chunk size in bytes from the manifest
+        mtime_ns: The file's mtime in nanoseconds after finalization
+    """
+    if entry.chunkhashes is None:
+        return
+
+    resolved_path = str(local_path.resolve())
+    mtime_str = str(mtime_ns)
+    file_size = entry.size or 0
+    num_chunks = len(entry.chunkhashes)
+
+    for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
+        range_start = chunk_idx * chunk_size_bytes
+        # Last chunk may be smaller
+        if chunk_idx == num_chunks - 1:
+            range_end = file_size
+        else:
+            range_end = range_start + chunk_size_bytes
+
+        hash_cache.put_entry(
+            HashCacheEntry(
+                file_path=resolved_path,
+                hash_algorithm=hash_alg,
+                file_hash=chunk_hash,
+                last_modified_time=mtime_str,
+                range_start=range_start,
+                range_end=range_end,
+            )
+        )
+
+
 def _get_new_copy_file_path(
     local_file_path: Path,
     collision_lock: Lock,
@@ -557,8 +688,10 @@ async def _download_chunk_to_offset_async(
 async def _download_chunked_file_async(
     entry: ManifestFilePath,
     hash_alg: str,
+    hash_alg_enum: HashAlgorithm,
     data_cache: ContentAddressedDataCache,
     chunk_size_bytes: int,
+    hash_cache: Optional[HashCache],
     executor: concurrent.futures.ThreadPoolExecutor,
     collision_lock: Lock,
     collision_file_dict: DefaultDict[str, int],
@@ -575,19 +708,21 @@ async def _download_chunked_file_async(
     rather than waiting for one chunked file to complete before starting the next.
 
     The async flow uses continuations to chain phases together:
-    1. [preallocate] - run_in_executor: create temp file, handle conflicts, mkdir
+    1. [preallocate] - run_in_executor: check hash cache, create temp file, handle conflicts, mkdir
        └─► continuation: schedule all chunk downloads
     2. [chunk downloads] - asyncio.gather over multiple run_in_executor calls
        └─► continuation: finalization
-    3. [finalization] - run_in_executor: atomic os.replace + mtime update
+    3. [finalization] - run_in_executor: atomic os.replace + mtime update + hash cache update
 
     If pre-allocation fails, the continuation is never scheduled and the error propagates.
 
     Args:
         entry: The manifest file entry with chunkhashes.
         hash_alg: The hash algorithm string (e.g., "xxh128").
+        hash_alg_enum: The hash algorithm enum.
         data_cache: The data cache to download from.
         chunk_size_bytes: The chunk size in bytes from the manifest.
+        hash_cache: Optional hash cache for skip detection and update.
         executor: The shared ThreadPoolExecutor for parallel downloads.
         collision_lock: Lock for thread-safe collision tracking.
         collision_file_dict: Dict for tracking file name collisions.
@@ -609,19 +744,26 @@ async def _download_chunked_file_async(
     loop = asyncio.get_running_loop()
 
     # Pre-allocation function (runs in executor)
-    def preallocate_temp_file() -> Tuple[Path, Path, bool]:
+    def preallocate_temp_file() -> Tuple[Path, Path, bool, Optional[int]]:
         """
-        Handle file conflicts, create directories, and pre-allocate temp file.
+        Check hash cache, handle file conflicts, create directories, and pre-allocate temp file.
 
         Returns:
-            Tuple of (local_path, temp_path, should_skip)
+            Tuple of (local_path, temp_path, should_skip, cached_mtime_us)
         """
         nonlocal local_path
+
+        # Check hash cache first for chunked files
+        can_skip, cached_mtime_us = _check_hash_cache_for_chunked_skip(
+            entry, hash_alg_enum, hash_cache, chunk_size_bytes
+        )
+        if can_skip:
+            return (local_path, Path(), True, cached_mtime_us)
 
         # Handle file conflicts
         if local_path.exists():
             if file_conflict_resolution == FileConflictResolution.SKIP:
-                return (local_path, Path(), True)
+                return (local_path, Path(), True, None)
             elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
                 pass  # Continue to download
             elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
@@ -644,7 +786,7 @@ async def _download_chunked_file_async(
         with open(temp_path, "wb") as f:
             f.truncate(file_size)
 
-        return (local_path, temp_path, False)
+        return (local_path, temp_path, False, None)
 
     # Continuation: download chunks and finalize (scheduled after pre-allocation)
     async def download_chunks_and_finalize(
@@ -702,9 +844,9 @@ async def _download_chunked_file_async(
             if errors:
                 raise errors[0]
 
-            # Finalization - atomic move and mtime update (run in executor)
+            # Finalization - atomic move, mtime update, and hash cache update (run in executor)
             def finalize_chunked_file() -> int:
-                """Finalize the chunked file download (atomic move + mtime)."""
+                """Finalize the chunked file download (atomic move + mtime + hash cache)."""
                 os.replace(temp_path, final_local_path)
 
                 # Restore modification time if available
@@ -713,7 +855,20 @@ async def _download_chunked_file_async(
                     os.utime(final_local_path, (mtime_seconds, mtime_seconds))
 
                 # Get the actual filesystem mtime (may differ from requested due to OS precision)
-                return final_local_path.stat().st_mtime_ns // 1_000
+                actual_mtime_ns = final_local_path.stat().st_mtime_ns
+
+                # Update hash cache with all chunk hashes
+                if hash_cache is not None:
+                    _update_hash_cache_for_chunked_file(
+                        entry,
+                        final_local_path,
+                        hash_alg_enum,
+                        hash_cache,
+                        chunk_size_bytes,
+                        actual_mtime_ns,
+                    )
+
+                return actual_mtime_ns // 1_000
 
             actual_mtime_us = await loop.run_in_executor(executor, finalize_chunked_file)
 
@@ -733,13 +888,15 @@ async def _download_chunked_file_async(
         loop.create_future()
     )
 
-    def on_prealloc_done(prealloc_future: asyncio.Future[Tuple[Path, Path, bool]]) -> None:
+    def on_prealloc_done(
+        prealloc_future: asyncio.Future[Tuple[Path, Path, bool, Optional[int]]],
+    ) -> None:
         """Callback that schedules chunk downloads after pre-allocation completes."""
         try:
-            final_local_path, temp_path, should_skip = prealloc_future.result()
+            final_local_path, temp_path, should_skip, cached_mtime_us = prealloc_future.result()
 
             if should_skip:
-                result_future.set_result((file_size, None, True, None))
+                result_future.set_result((file_size, None, True, cached_mtime_us))
                 return
 
             # Schedule the continuation (chunk downloads + finalization)
@@ -1196,8 +1353,10 @@ def download_manifest(
                 coro = _download_chunked_file_async(
                     entry,
                     hash_alg,
+                    hash_alg_enum,
                     data_cache,
                     chunk_size_bytes,
+                    hash_cache,
                     executor,
                     collision_lock,
                     collision_file_dict,
