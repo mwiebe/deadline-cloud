@@ -14,11 +14,15 @@ The operation combines hashing and uploading into a single pass over the data:
 This avoids reading files twice (once for hashing, once for uploading) and provides
 significant performance improvements for large datasets.
 
-The pipeline uses bounded memory to prevent OOM conditions:
-- READ stage reads chunks into a memory pool
-- HASH stage computes hashes in-place
-- UPLOAD stage uploads/writes and releases memory
-- When memory limit is reached, READ blocks until UPLOAD frees space
+The pipeline uses bounded memory to prevent OOM conditions and a shared thread pool
+for all stages (READ, HASH, UPLOAD). Work items flow through stages as tasks submitted
+to the executor, with memory allocation providing natural backpressure.
+
+Architecture:
+- All stages run in a shared ThreadPoolExecutor with configurable max_workers
+- Each work item progresses: READ task → HASH task → UPLOAD task
+- Memory pool bounds total in-flight data; READ blocks when memory is exhausted
+- No stage starvation: all stages compete fairly for executor threads
 
 All composable operations use v2025 structure and semantics internally. Support for
 v2023 on-disk format is provided via lossy conversion functions that drop symlinks,
@@ -27,9 +31,9 @@ deletions, and other v2025-only features.
 
 from __future__ import annotations
 
+import concurrent.futures
 import time
 import threading
-import queue
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -66,8 +70,8 @@ MIN_MEMORY_BYTES = 256 * 1024 * 1024
 # Default read buffer size for streaming hash (when fileChunkSizeBytes is WHOLE_FILE_CHUNK_SIZE)
 DEFAULT_STREAM_BUFFER_SIZE = 64 * 1024 * 1024  # 64MB
 
-# Sentinel value to signal pipeline shutdown
-_SHUTDOWN_SENTINEL = object()
+# Default number of parallel workers
+DEFAULT_MAX_WORKERS = 10
 
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
@@ -237,143 +241,184 @@ class _MemoryPool:
             return self._allocated_bytes
 
 
-class _PipelineStage:
-    """Base class for pipeline stages."""
+class _TaskBasedPipeline:
+    """
+    Task-based pipeline using a shared thread pool for all stages.
+
+    Instead of dedicated threads per stage, work items flow through stages
+    as tasks submitted to a shared ThreadPoolExecutor. This provides:
+    - Fair scheduling: all stages compete equally for executor threads
+    - No starvation: no stage has a dedicated thread that could starve
+    - Memory bounding: READ blocks on memory allocation (intentional backpressure)
+    - Better thread utilization: threads aren't idle waiting on queues
+
+    Flow: READ task → HASH task → UPLOAD task → completion
+    """
 
     def __init__(
         self,
-        name: str,
-        input_queue: "queue.Queue[Any]",
-        output_queue: Optional["queue.Queue[Any]"],
+        executor: concurrent.futures.ThreadPoolExecutor,
+        memory_pool: _MemoryPool,
+        hash_alg: HashAlgorithm,
+        data_cache: ContentAddressedDataCache,
+        account_id: Optional[str],
+        progress_tracker: Optional[ProgressTracker],
     ) -> None:
-        self.name = name
-        self._input_queue = input_queue
-        self._output_queue = output_queue
-        self._thread: Optional[threading.Thread] = None
+        self._executor = executor
+        self._memory_pool = memory_pool
+        self._hash_alg = hash_alg
+        self._data_cache = data_cache
+        self._account_id = account_id
+        self._progress_tracker = progress_tracker
+
+        # Track completion
+        self._pending_count = 0
+        self._lock = threading.Lock()
+        self._done_event = threading.Event()
+
+        # Collect results
+        self._results: List[WorkItem] = []
+        self._results_lock = threading.Lock()
+
+        # Track errors
         self._error: Optional[Exception] = None
-        self._shutdown = False
+        self._error_lock = threading.Lock()
 
-    def start(self) -> None:
-        """Start the stage thread."""
-        self._thread = threading.Thread(target=self._run, name=f"Pipeline-{self.name}")
-        self._thread.daemon = True
-        self._thread.start()
+        # Per-hash locks for filesystem writes to prevent race conditions
+        # when multiple chunks with the same hash are uploaded concurrently
+        self._fs_write_locks: Dict[str, threading.Lock] = {}
+        self._fs_write_locks_lock = threading.Lock()
 
-    def join(self) -> None:
-        """Wait for the stage thread to complete."""
-        if self._thread is not None:
-            self._thread.join()
+    def submit(self, item: WorkItem) -> None:
+        """Submit a work item to start processing through the pipeline."""
+        with self._lock:
+            self._pending_count += 1
+        # Start with READ stage
+        self._executor.submit(self._do_read, item)
 
-    def signal_shutdown(self) -> None:
-        """Signal the stage to shut down."""
-        self._shutdown = True
+    def wait_for_completion(self) -> List[WorkItem]:
+        """Wait for all submitted items to complete and return results."""
+        self._done_event.wait()
 
-    def get_error(self) -> Optional[Exception]:
-        """Get any error that occurred in this stage."""
-        return self._error
+        # Check for errors
+        with self._error_lock:
+            if self._error is not None:
+                raise self._error
 
-    def _run(self) -> None:
-        """Main loop for the stage."""
+        with self._results_lock:
+            return list(self._results)
+
+    def _decrement_pending(self) -> None:
+        """Decrement pending count and signal completion if done."""
+        with self._lock:
+            self._pending_count -= 1
+            if self._pending_count == 0:
+                self._done_event.set()
+
+    def _record_error(self, error: Exception) -> None:
+        """Record an error (first error wins)."""
+        with self._error_lock:
+            if self._error is None:
+                self._error = error
+                logger.exception(f"Pipeline error: {error}")
+        # Signal completion so wait doesn't hang
+        self._done_event.set()
+
+    def _record_result(self, item: WorkItem) -> None:
+        """Record a completed work item."""
+        with self._results_lock:
+            self._results.append(item)
+
+    def _get_fs_write_lock(self, hash_key: str) -> threading.Lock:
+        """Get or create a lock for a specific hash to prevent concurrent writes."""
+        with self._fs_write_locks_lock:
+            if hash_key not in self._fs_write_locks:
+                self._fs_write_locks[hash_key] = threading.Lock()
+            return self._fs_write_locks[hash_key]
+
+    # =========================================================================
+    # READ Stage
+    # =========================================================================
+
+    def _do_read(self, item: WorkItem) -> None:
+        """
+        READ stage: Read file data from disk.
+
+        For _ChunkWorkItem: allocate memory, read chunk data, submit HASH task.
+        For _StreamingWorkItem: pass through to HASH (streaming happens there).
+        """
         try:
-            while True:
-                try:
-                    item = self._input_queue.get(timeout=0.1)
-                except queue.Empty:
-                    if self._shutdown:
-                        break
-                    continue
+            # Check for prior error - don't start new work
+            with self._error_lock:
+                if self._error is not None:
+                    self._decrement_pending()
+                    return
 
-                if item is _SHUTDOWN_SENTINEL:
-                    # Pass sentinel to next stage
-                    if self._output_queue is not None:
-                        self._output_queue.put(_SHUTDOWN_SENTINEL)
-                    break
+            if isinstance(item, _StreamingWorkItem):
+                # Streaming items don't load data into memory here
+                # Submit directly to HASH stage
+                self._executor.submit(self._do_hash, item)
+                return
 
-                result = self._process(item)
-                if self._output_queue is not None and result is not None:
-                    self._output_queue.put(result)
+            # _ChunkWorkItem: read chunk data
+            chunk_size = item.chunk_end - item.chunk_start
+
+            # Block until we have memory available (backpressure)
+            self._memory_pool.allocate(chunk_size)
+
+            try:
+                with open(item.file_path, "rb") as f:
+                    f.seek(item.chunk_start)
+                    item.data = f.read(chunk_size)
+            except Exception:
+                # Release memory on error
+                self._memory_pool.release(chunk_size)
+                raise
+
+            # Submit to HASH stage
+            self._executor.submit(self._do_hash, item)
 
         except Exception as e:
-            self._error = e
-            logger.exception(f"Error in pipeline stage {self.name}: {e}")
-            # Signal shutdown to prevent deadlock
-            if self._output_queue is not None:
-                self._output_queue.put(_SHUTDOWN_SENTINEL)
+            self._record_error(e)
+            self._decrement_pending()
 
-    def _process(self, item: Any) -> Any:
-        """Process a single item. Override in subclasses."""
-        raise NotImplementedError
+    # =========================================================================
+    # HASH Stage
+    # =========================================================================
 
+    def _do_hash(self, item: WorkItem) -> None:
+        """
+        HASH stage: Compute hash of data.
 
-class _ReadStage(_PipelineStage):
-    """
-    Pipeline stage that reads file data from disk.
-
-    For _ChunkWorkItem: reads chunk data into memory (blocking on memory pool).
-    For _StreamingWorkItem: passes through unchanged (streaming happens in HASH stage).
-    """
-
-    def __init__(
-        self,
-        input_queue: "queue.Queue[WorkItem]",
-        output_queue: "queue.Queue[WorkItem]",
-        memory_pool: _MemoryPool,
-    ) -> None:
-        super().__init__("READ", input_queue, output_queue)
-        self._memory_pool = memory_pool
-
-    def _process(self, item: WorkItem) -> WorkItem:
-        """Read chunk data from disk or pass through streaming items."""
-        if isinstance(item, _StreamingWorkItem):
-            # Streaming items don't load data into memory here
-            return item
-
-        # _ChunkWorkItem: read chunk data
-        chunk_size = item.chunk_end - item.chunk_start
-
-        # Block until we have memory available
-        self._memory_pool.allocate(chunk_size)
-
+        For _ChunkWorkItem: hash in-memory data, submit UPLOAD task.
+        For _StreamingWorkItem: stream through file to compute hash, submit UPLOAD task.
+        """
         try:
-            with open(item.file_path, "rb") as f:
-                f.seek(item.chunk_start)
-                item.data = f.read(chunk_size)
-        except Exception:
+            # Check for prior error
+            with self._error_lock:
+                if self._error is not None:
+                    # Release memory if we have data
+                    if isinstance(item, _ChunkWorkItem) and item.data is not None:
+                        self._memory_pool.release(len(item.data))
+                    self._decrement_pending()
+                    return
+
+            if isinstance(item, _StreamingWorkItem):
+                # Stream through file to compute hash
+                item.file_hash = self._stream_hash_file(item.file_path)
+            elif item.data is not None:
+                # Hash in-memory data
+                item.chunk_hash = hash_data(item.data, self._hash_alg)
+
+            # Submit to UPLOAD stage
+            self._executor.submit(self._do_upload, item)
+
+        except Exception as e:
             # Release memory on error
-            self._memory_pool.release(chunk_size)
-            raise
-
-        return item
-
-
-class _HashStage(_PipelineStage):
-    """
-    Pipeline stage that computes hashes.
-
-    For _ChunkWorkItem: computes hash of chunk data in memory.
-    For _StreamingWorkItem: streams through file to compute hash (discards data).
-    """
-
-    def __init__(
-        self,
-        input_queue: "queue.Queue[WorkItem]",
-        output_queue: "queue.Queue[WorkItem]",
-        hash_alg: HashAlgorithm,
-    ) -> None:
-        super().__init__("HASH", input_queue, output_queue)
-        self._hash_alg = hash_alg
-
-    def _process(self, item: WorkItem) -> WorkItem:
-        """Compute hash of chunk data or stream hash for large files."""
-        if isinstance(item, _StreamingWorkItem):
-            # Stream through file to compute hash
-            item.file_hash = self._stream_hash_file(item.file_path)
-            return item
-
-        # _ChunkWorkItem: hash in-memory data
-        if item.data is not None:
-            item.chunk_hash = hash_data(item.data, self._hash_alg)
-        return item
+            if isinstance(item, _ChunkWorkItem) and item.data is not None:
+                self._memory_pool.release(len(item.data))
+            self._record_error(e)
+            self._decrement_pending()
 
     def _stream_hash_file(self, file_path: Path) -> str:
         """
@@ -397,42 +442,48 @@ class _HashStage(_PipelineStage):
 
         return hasher.hexdigest()
 
+    # =========================================================================
+    # UPLOAD Stage
+    # =========================================================================
 
-class _UploadStage(_PipelineStage):
-    """
-    Pipeline stage that writes data to a data cache (S3 or filesystem).
+    def _do_upload(self, item: WorkItem) -> None:
+        """
+        UPLOAD stage: Write data to data cache.
 
-    For _ChunkWorkItem: uploads chunk data from memory, then releases memory.
-    For _StreamingWorkItem: streams file to data cache (reads file again).
-    """
+        For _ChunkWorkItem: upload from memory, release memory, record result.
+        For _StreamingWorkItem: stream file to data cache, record result.
+        """
+        try:
+            # Check for prior error
+            with self._error_lock:
+                if self._error is not None:
+                    if isinstance(item, _ChunkWorkItem) and item.data is not None:
+                        self._memory_pool.release(len(item.data))
+                    self._decrement_pending()
+                    return
 
-    def __init__(
-        self,
-        input_queue: "queue.Queue[WorkItem]",
-        output_queue: "queue.Queue[WorkItem]",
-        memory_pool: _MemoryPool,
-        data_cache: ContentAddressedDataCache,
-        hash_alg: HashAlgorithm,
-        account_id: Optional[str],
-        progress_tracker: Optional[ProgressTracker],
-    ) -> None:
-        super().__init__("UPLOAD", input_queue, output_queue)
-        self._memory_pool = memory_pool
-        self._data_cache = data_cache
-        self._hash_alg = hash_alg
-        self._account_id = account_id
-        self._progress_tracker = progress_tracker
+            if isinstance(item, _StreamingWorkItem):
+                self._upload_streaming(item)
+            else:
+                self._upload_chunk(item)
 
-    def _process(self, item: WorkItem) -> WorkItem:
-        """Write data to data cache."""
-        if isinstance(item, _StreamingWorkItem):
-            return self._process_streaming(item)
-        return self._process_chunk(item)
+            # Record successful result
+            self._record_result(item)
 
-    def _process_chunk(self, item: _ChunkWorkItem) -> _ChunkWorkItem:
+        except Exception as e:
+            # Release memory on error
+            if isinstance(item, _ChunkWorkItem) and item.data is not None:
+                self._memory_pool.release(len(item.data))
+                item.data = None
+            self._record_error(e)
+
+        finally:
+            self._decrement_pending()
+
+    def _upload_chunk(self, item: _ChunkWorkItem) -> None:
         """Upload chunk data from memory."""
         if item.data is None or item.chunk_hash is None:
-            return item
+            return
 
         chunk_size = len(item.data)
 
@@ -453,12 +504,10 @@ class _UploadStage(_PipelineStage):
             self._memory_pool.release(chunk_size)
             item.data = None  # Free the data
 
-        return item
-
-    def _process_streaming(self, item: _StreamingWorkItem) -> _StreamingWorkItem:
+    def _upload_streaming(self, item: _StreamingWorkItem) -> None:
         """Stream file to data cache."""
         if item.file_hash is None:
-            return item
+            return
 
         # Check if already in data cache
         if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
@@ -468,7 +517,7 @@ class _UploadStage(_PipelineStage):
             # Still report progress for skipped files
             if self._progress_tracker is not None:
                 self._progress_tracker.track_progress_callback(item.file_size)
-            return item
+            return
 
         # Stream upload
         if isinstance(self._data_cache, S3DataCache):
@@ -480,7 +529,10 @@ class _UploadStage(_PipelineStage):
 
         item.uploaded = True
         item.skipped = False
-        return item
+
+    # =========================================================================
+    # S3 Upload Methods
+    # =========================================================================
 
     def _upload_chunk_to_s3(self, item: _ChunkWorkItem) -> None:
         """Upload chunk to S3."""
@@ -517,42 +569,6 @@ class _UploadStage(_PipelineStage):
             self._data_cache.s3_check_cache.put_entry(
                 S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
             )
-
-    def _upload_chunk_to_filesystem(self, item: _ChunkWorkItem) -> None:
-        """Write chunk to filesystem."""
-        if not isinstance(self._data_cache, FileSystemDataCache):
-            raise TypeError(f"Expected FileSystemDataCache, got {type(self._data_cache).__name__}")
-        if item.data is None:
-            raise ValueError("Chunk data is None, cannot write to filesystem")
-        if item.chunk_hash is None:
-            raise ValueError("Chunk hash is None, cannot determine file path")
-
-        file_path = Path(self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value))
-
-        # Check if file already exists
-        if file_path.exists():
-            item.skipped = True
-            item.uploaded = False
-            logger.debug(f"Skipping write (exists): {file_path}")
-            return
-
-        # Ensure parent directory exists
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write to a temp file first, then rename for atomicity
-        temp_path = file_path.with_suffix(f".{file_path.suffix}.tmp")
-        try:
-            with open(temp_path, "wb") as f:
-                f.write(item.data)
-            temp_path.rename(file_path)
-            item.uploaded = True
-            item.skipped = False
-            logger.debug(f"Wrote: {file_path}")
-        except Exception:
-            # Clean up temp file on error
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
 
     def _upload_to_s3_if_not_exists(self, data: bytes, s3_key: str) -> bool:
         """
@@ -623,8 +639,6 @@ class _UploadStage(_PipelineStage):
 
         s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
 
-        # We need to stream the file ourselves to compute hash while uploading
-        # Use multipart upload for large files
         hasher = xxhash.xxh128()
         multipart_threshold = 8 * 1024 * 1024  # 8MB threshold for multipart
 
@@ -660,73 +674,7 @@ class _UploadStage(_PipelineStage):
                     self._progress_tracker.track_progress_callback(len(data))
             else:
                 # Use multipart upload for large files
-                multipart = self._data_cache.s3_client.create_multipart_upload(
-                    Bucket=self._data_cache.s3_bucket,
-                    Key=s3_key,
-                    **extra_args,
-                )
-                upload_id = multipart["UploadId"]
-
-                try:
-                    parts: List[Dict[str, Any]] = []
-                    part_number = 1
-                    part_size = 64 * 1024 * 1024  # 64MB parts
-
-                    with open(item.file_path, "rb") as f:
-                        while True:
-                            chunk = f.read(part_size)
-                            if not chunk:
-                                break
-
-                            hasher.update(chunk)
-
-                            response = self._data_cache.s3_client.upload_part(
-                                Bucket=self._data_cache.s3_bucket,
-                                Key=s3_key,
-                                UploadId=upload_id,
-                                PartNumber=part_number,
-                                Body=chunk,
-                            )
-                            parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
-                            part_number += 1
-
-                            if self._progress_tracker is not None:
-                                self._progress_tracker.track_progress_callback(len(chunk))
-
-                    upload_hash = hasher.hexdigest()
-
-                    # Verify hash before completing upload
-                    if upload_hash != item.file_hash:
-                        # Abort the multipart upload
-                        self._data_cache.s3_client.abort_multipart_upload(
-                            Bucket=self._data_cache.s3_bucket,
-                            Key=s3_key,
-                            UploadId=upload_id,
-                        )
-                        raise ValueError(
-                            f"Hash mismatch during streaming upload of '{item.file_path}': "
-                            f"expected {item.file_hash}, got {upload_hash}. "
-                            f"File may have been modified during processing."
-                        )
-
-                    # Complete the multipart upload
-                    self._data_cache.s3_client.complete_multipart_upload(
-                        Bucket=self._data_cache.s3_bucket,
-                        Key=s3_key,
-                        UploadId=upload_id,
-                        MultipartUpload={"Parts": parts},
-                    )
-                except Exception:
-                    # Abort multipart upload on any error
-                    try:
-                        self._data_cache.s3_client.abort_multipart_upload(
-                            Bucket=self._data_cache.s3_bucket,
-                            Key=s3_key,
-                            UploadId=upload_id,
-                        )
-                    except Exception:
-                        pass  # Best effort cleanup
-                    raise
+                self._stream_multipart_upload_to_s3(item, s3_key, hasher, extra_args)
 
             logger.debug(f"Streamed upload (verified): {s3_key}")
         except ClientError as exc:
@@ -744,12 +692,146 @@ class _UploadStage(_PipelineStage):
                 error_details=str(bce),
             ) from bce
 
+    def _stream_multipart_upload_to_s3(
+        self,
+        item: _StreamingWorkItem,
+        s3_key: str,
+        hasher: Any,
+        extra_args: Dict[str, Any],
+    ) -> None:
+        """Handle multipart upload for large streaming files."""
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+
+        multipart = self._data_cache.s3_client.create_multipart_upload(
+            Bucket=self._data_cache.s3_bucket,
+            Key=s3_key,
+            **extra_args,
+        )
+        upload_id = multipart["UploadId"]
+
+        try:
+            parts: List[Dict[str, Any]] = []
+            part_number = 1
+            part_size = 64 * 1024 * 1024  # 64MB parts
+
+            with open(item.file_path, "rb") as f:
+                while True:
+                    chunk = f.read(part_size)
+                    if not chunk:
+                        break
+
+                    hasher.update(chunk)
+
+                    response = self._data_cache.s3_client.upload_part(
+                        Bucket=self._data_cache.s3_bucket,
+                        Key=s3_key,
+                        UploadId=upload_id,
+                        PartNumber=part_number,
+                        Body=chunk,
+                    )
+                    parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
+                    part_number += 1
+
+                    if self._progress_tracker is not None:
+                        self._progress_tracker.track_progress_callback(len(chunk))
+
+            upload_hash = hasher.hexdigest()
+
+            # Verify hash before completing upload
+            if upload_hash != item.file_hash:
+                # Abort the multipart upload
+                self._data_cache.s3_client.abort_multipart_upload(
+                    Bucket=self._data_cache.s3_bucket,
+                    Key=s3_key,
+                    UploadId=upload_id,
+                )
+                raise ValueError(
+                    f"Hash mismatch during streaming upload of '{item.file_path}': "
+                    f"expected {item.file_hash}, got {upload_hash}. "
+                    f"File may have been modified during processing."
+                )
+
+            # Complete the multipart upload
+            self._data_cache.s3_client.complete_multipart_upload(
+                Bucket=self._data_cache.s3_bucket,
+                Key=s3_key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except Exception:
+            # Abort multipart upload on any error
+            try:
+                self._data_cache.s3_client.abort_multipart_upload(
+                    Bucket=self._data_cache.s3_bucket,
+                    Key=s3_key,
+                    UploadId=upload_id,
+                )
+            except Exception:
+                pass  # Best effort cleanup
+            raise
+
+    # =========================================================================
+    # Filesystem Upload Methods
+    # =========================================================================
+
+    def _upload_chunk_to_filesystem(self, item: _ChunkWorkItem) -> None:
+        """Write chunk to filesystem."""
+        import os
+        import secrets
+
+        if not isinstance(self._data_cache, FileSystemDataCache):
+            raise TypeError(f"Expected FileSystemDataCache, got {type(self._data_cache).__name__}")
+        if item.data is None:
+            raise ValueError("Chunk data is None, cannot write to filesystem")
+        if item.chunk_hash is None:
+            raise ValueError("Chunk hash is None, cannot determine file path")
+
+        file_path = Path(self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value))
+
+        # Use per-hash lock to prevent race conditions when multiple threads
+        # try to write the same content (same hash) concurrently
+        hash_lock = self._get_fs_write_lock(item.chunk_hash)
+
+        with hash_lock:
+            # Check if file already exists (inside lock to prevent TOCTOU race)
+            if file_path.exists():
+                item.skipped = True
+                item.uploaded = False
+                logger.debug(f"Skipping write (exists): {file_path}")
+                return
+
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write to a temp file with unique suffix, then use os.replace for atomicity
+            # os.replace is atomic on both POSIX and Windows
+            temp_suffix = secrets.token_hex(8)
+            temp_path = file_path.parent / f"{file_path.name}.tmp.{temp_suffix}"
+            try:
+                with open(temp_path, "wb") as f:
+                    f.write(item.data)
+                os.replace(temp_path, file_path)
+                item.uploaded = True
+                item.skipped = False
+                logger.debug(f"Wrote: {file_path}")
+            except Exception:
+                # Clean up temp file on error
+                try:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                except Exception:
+                    pass  # Best effort cleanup
+                raise
+
     def _stream_upload_to_filesystem(self, item: _StreamingWorkItem) -> None:
         """
         Upload a large file to filesystem by streaming copy.
 
         Computes the hash while streaming and verifies it matches the pre-computed hash.
         """
+        import os
+        import secrets
         import xxhash
 
         if not isinstance(self._data_cache, FileSystemDataCache):
@@ -761,40 +843,111 @@ class _UploadStage(_PipelineStage):
 
         dest_path = Path(self._data_cache.get_object_key(item.file_hash, self._hash_alg.value))
 
-        # Ensure parent directory exists
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        # Use per-hash lock to prevent race conditions
+        hash_lock = self._get_fs_write_lock(item.file_hash)
 
-        # Copy file in chunks while computing hash
-        temp_path = dest_path.with_suffix(f"{dest_path.suffix}.tmp")
-        hasher = xxhash.xxh128()
+        with hash_lock:
+            # Check if file already exists (inside lock)
+            if dest_path.exists():
+                item.skipped = True
+                item.uploaded = False
+                logger.debug(f"Skipping streaming write (exists): {dest_path}")
+                # Still report progress for skipped files
+                if self._progress_tracker is not None:
+                    self._progress_tracker.track_progress_callback(item.file_size)
+                return
 
-        try:
-            with open(item.file_path, "rb") as src, open(temp_path, "wb") as dst:
-                while True:
-                    chunk = src.read(DEFAULT_STREAM_BUFFER_SIZE)
-                    if not chunk:
-                        break
-                    hasher.update(chunk)
-                    dst.write(chunk)
-                    if self._progress_tracker is not None:
-                        self._progress_tracker.track_progress_callback(len(chunk))
+            # Ensure parent directory exists
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-            upload_hash = hasher.hexdigest()
+            # Copy file in chunks while computing hash
+            temp_suffix = secrets.token_hex(8)
+            temp_path = dest_path.parent / f"{dest_path.name}.tmp.{temp_suffix}"
+            hasher = xxhash.xxh128()
 
-            # Verify hash before finalizing
-            if upload_hash != item.file_hash:
-                raise ValueError(
-                    f"Hash mismatch during streaming upload of '{item.file_path}': "
-                    f"expected {item.file_hash}, got {upload_hash}. "
-                    f"File may have been modified during processing."
-                )
+            try:
+                with open(item.file_path, "rb") as src, open(temp_path, "wb") as dst:
+                    while True:
+                        chunk = src.read(DEFAULT_STREAM_BUFFER_SIZE)
+                        if not chunk:
+                            break
+                        hasher.update(chunk)
+                        dst.write(chunk)
+                        if self._progress_tracker is not None:
+                            self._progress_tracker.track_progress_callback(len(chunk))
 
-            temp_path.rename(dest_path)
-            logger.debug(f"Streamed write (verified): {dest_path}")
-        except Exception:
-            if temp_path.exists():
-                temp_path.unlink()
-            raise
+                upload_hash = hasher.hexdigest()
+
+                # Verify hash before finalizing
+                if upload_hash != item.file_hash:
+                    raise ValueError(
+                        f"Hash mismatch during streaming upload of '{item.file_path}': "
+                        f"expected {item.file_hash}, got {upload_hash}. "
+                        f"File may have been modified during processing."
+                    )
+
+                os.replace(temp_path, dest_path)
+                logger.debug(f"Streamed write (verified): {dest_path}")
+            except Exception:
+                try:
+                    if temp_path.exists():
+                        temp_path.unlink()
+                except Exception:
+                    pass  # Best effort cleanup
+                raise
+
+
+def _run_pipeline(
+    work_items: List[WorkItem],
+    hash_alg: HashAlgorithm,
+    data_cache: ContentAddressedDataCache,
+    account_id: Optional[str],
+    max_memory_bytes: int,
+    max_workers: int,
+    progress_tracker: Optional[ProgressTracker],
+) -> List[WorkItem]:
+    """
+    Run the task-based pipeline on work items using a shared thread pool.
+
+    All stages (READ, HASH, UPLOAD) run as tasks in the same ThreadPoolExecutor.
+    Work items flow through stages as tasks, with memory allocation providing
+    natural backpressure when the pool is exhausted.
+
+    Args:
+        work_items: List of work items to process (chunks and/or streaming items)
+        hash_alg: Hash algorithm to use
+        data_cache: Content-addressable data cache for writes
+        account_id: AWS account ID (for S3DataCache ExpectedBucketOwner)
+        max_memory_bytes: Maximum memory for buffering
+        max_workers: Maximum number of parallel workers
+        progress_tracker: Optional progress tracker
+
+    Returns:
+        List of processed work items with hashes filled in
+    """
+    if not work_items:
+        return []
+
+    # Create memory pool
+    memory_pool = _MemoryPool(max_memory_bytes)
+
+    # Create shared thread pool and pipeline
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        pipeline = _TaskBasedPipeline(
+            executor=executor,
+            memory_pool=memory_pool,
+            hash_alg=hash_alg,
+            data_cache=data_cache,
+            account_id=account_id,
+            progress_tracker=progress_tracker,
+        )
+
+        # Submit all work items
+        for item in work_items:
+            pipeline.submit(item)
+
+        # Wait for completion and return results
+        return pipeline.wait_for_completion()
 
 
 def hash_upload_manifest(
@@ -803,6 +956,7 @@ def hash_upload_manifest(
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     max_memory_bytes: Optional[int] = None,
+    max_workers: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
     print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
@@ -821,6 +975,7 @@ def hash_upload_manifest(
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
         max_memory_bytes: Maximum memory to use for buffering (default: auto-detect)
+        max_workers: Maximum number of parallel workers (default: 10)
         file_chunk_size_bytes: Chunk size for large file hashing.
             - None: Preserve the chunk size from the input manifest
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
@@ -836,16 +991,11 @@ def hash_upload_manifest(
         ValueError: If effective chunk size is positive and max_memory_bytes is less than chunk size
 
     Pipeline Architecture:
-        The operation uses a multi-threaded pipeline with three stages:
-        1. READ: Reads file chunks from disk into memory buffers
-        2. HASH: Computes XXH128 hash of each chunk in memory
-        3. UPLOAD: Writes the chunk to the data cache using the hash as the key
-
-        Memory is bounded by max_memory_bytes. When the limit is reached,
-        READ blocks until UPLOAD completes and frees memory.
-
-        All work items (small files, large streaming files, and chunks) are
-        processed through a SINGLE unified pipeline for maximum throughput.
+        The operation uses a task-based pipeline with a shared ThreadPoolExecutor:
+        - All stages (READ, HASH, UPLOAD) run as tasks in the same thread pool
+        - Work items flow: READ task → HASH task → UPLOAD task → completion
+        - Memory pool bounds total in-flight data; READ blocks when exhausted
+        - No stage starvation: all stages compete fairly for executor threads
 
     Chunking Behavior:
         - If effective chunk size is WHOLE_FILE_CHUNK_SIZE (-1): all files are hashed
@@ -875,6 +1025,10 @@ def hash_upload_manifest(
     # Set up memory limit
     if max_memory_bytes is None:
         max_memory_bytes = _get_default_max_memory_bytes()
+
+    # Set up worker count
+    if max_workers is None:
+        max_workers = DEFAULT_MAX_WORKERS
 
     # Validate memory limit against chunk size (only if chunking is enabled)
     if chunking_enabled and max_memory_bytes < output_chunk_size:
@@ -1052,6 +1206,7 @@ def hash_upload_manifest(
             data_cache=data_cache,
             account_id=account_id,
             max_memory_bytes=max_memory_bytes,
+            max_workers=max_workers,
             progress_tracker=progress_tracker,
         )
 
@@ -1203,99 +1358,3 @@ def hash_upload_manifest(
         parent_manifest_hash=manifest.parentManifestHash,
         file_chunk_size_bytes=output_chunk_size,
     )
-
-
-def _run_pipeline(
-    work_items: List[WorkItem],
-    hash_alg: HashAlgorithm,
-    data_cache: ContentAddressedDataCache,
-    account_id: Optional[str],
-    max_memory_bytes: int,
-    progress_tracker: Optional[ProgressTracker],
-) -> List[WorkItem]:
-    """
-    Run the READ -> HASH -> UPLOAD pipeline on work items.
-
-    Handles both _ChunkWorkItem (in-memory processing) and _StreamingWorkItem
-    (streaming processing for large files) in a single unified pipeline.
-
-    Args:
-        work_items: List of work items to process (chunks and/or streaming items)
-        hash_alg: Hash algorithm to use
-        data_cache: Content-addressable data cache for writes
-        account_id: AWS account ID (for S3DataCache ExpectedBucketOwner)
-        max_memory_bytes: Maximum memory for buffering
-        progress_tracker: Optional progress tracker
-
-    Returns:
-        List of processed work items with hashes filled in
-    """
-    if not work_items:
-        return []
-
-    # Create queues for pipeline stages
-    read_queue: queue.Queue[Any] = queue.Queue()
-    hash_queue: queue.Queue[Any] = queue.Queue()
-    upload_queue: queue.Queue[Any] = queue.Queue()
-    result_queue: queue.Queue[Any] = queue.Queue()
-
-    # Create memory pool
-    memory_pool = _MemoryPool(max_memory_bytes)
-
-    # Create pipeline stages
-    read_stage = _ReadStage(read_queue, hash_queue, memory_pool)
-    hash_stage = _HashStage(hash_queue, upload_queue, hash_alg)
-    upload_stage = _UploadStage(
-        upload_queue,
-        result_queue,
-        memory_pool,
-        data_cache,
-        hash_alg,
-        account_id,
-        progress_tracker,
-    )
-
-    # Start pipeline stages
-    read_stage.start()
-    hash_stage.start()
-    upload_stage.start()
-
-    # Feed work items to pipeline
-    for item in work_items:
-        read_queue.put(item)
-
-    # Signal end of input
-    read_queue.put(_SHUTDOWN_SENTINEL)
-
-    # Collect results
-    results: List[WorkItem] = []
-    while True:
-        try:
-            item = result_queue.get(timeout=0.1)
-            if item is _SHUTDOWN_SENTINEL:
-                break
-            results.append(item)
-        except queue.Empty:
-            # Check for errors in pipeline stages
-            for stage in [read_stage, hash_stage, upload_stage]:
-                error = stage.get_error()
-                if error is not None:
-                    # Signal shutdown to all stages
-                    read_stage.signal_shutdown()
-                    hash_stage.signal_shutdown()
-                    upload_stage.signal_shutdown()
-                    raise error
-            continue
-
-    # Wait for all stages to complete
-    read_stage.join()
-    hash_stage.join()
-    upload_stage.join()
-
-    # Check for any final errors
-    for stage in [read_stage, hash_stage, upload_stage]:
-        error = stage.get_error()
-        if error is not None:
-            raise error
-
-    return results

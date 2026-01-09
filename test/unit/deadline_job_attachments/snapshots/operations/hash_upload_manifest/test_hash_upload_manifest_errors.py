@@ -17,10 +17,8 @@ from __future__ import annotations
 from __future__ import annotations
 
 import os
-import queue
 import stat
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -525,17 +523,17 @@ class TestStreamingUploadErrors:
 
         # Mock the streaming upload to simulate hash mismatch
         from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
-            _UploadStage,
+            _TaskBasedPipeline,
         )
 
-        original_stream_upload = _UploadStage._stream_upload_to_filesystem
+        original_stream_upload = _TaskBasedPipeline._stream_upload_to_filesystem
 
         def mock_stream_upload(self, item):
             # Modify the pre-computed hash to simulate mismatch
             item.file_hash = "wrong_hash_value_here"
             return original_stream_upload(self, item)
 
-        with patch.object(_UploadStage, "_stream_upload_to_filesystem", mock_stream_upload):
+        with patch.object(_TaskBasedPipeline, "_stream_upload_to_filesystem", mock_stream_upload):
             with pytest.raises(ValueError, match="Hash mismatch during streaming upload"):
                 hash_upload_manifest(
                     manifest=manifest,
@@ -587,16 +585,16 @@ class TestStreamingUploadErrorsS3:
 
         # Mock to simulate hash mismatch
         from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
-            _UploadStage,
+            _TaskBasedPipeline,
         )
 
-        original_stream_upload = _UploadStage._stream_upload_to_s3
+        original_stream_upload = _TaskBasedPipeline._stream_upload_to_s3
 
         def mock_stream_upload(self, item):
             item.file_hash = "wrong_hash_value_here"
             return original_stream_upload(self, item)
 
-        with patch.object(_UploadStage, "_stream_upload_to_s3", mock_stream_upload):
+        with patch.object(_TaskBasedPipeline, "_stream_upload_to_s3", mock_stream_upload):
             with pytest.raises(ValueError, match="Hash mismatch during streaming upload"):
                 hash_upload_manifest(
                     manifest=manifest,
@@ -849,26 +847,26 @@ class TestUnsupportedHashAlgorithm:
 
         data_cache = self._create_filesystem_data_cache(cache_root)
 
-        # Mock the hash stage to use an unsupported algorithm
+        # Mock the pipeline to use an unsupported algorithm for streaming hash
         from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
-            _HashStage,
+            _TaskBasedPipeline,
         )
 
-        original_init = _HashStage.__init__
+        original_stream_hash = _TaskBasedPipeline._stream_hash_file
 
-        def mock_init(
-            self: _HashStage,
-            input_queue: "queue.Queue[Any]",
-            output_queue: "queue.Queue[Any]",
-            hash_alg: HashAlgorithm,  # noqa: F821
-        ) -> None:
-            # Create a mock unsupported algorithm that never equals XXH128
+        def mock_stream_hash(self, file_path):
+            # Temporarily change the hash algorithm to trigger the error
+            original_alg = self._hash_alg
             mock_alg = MagicMock(spec=HashAlgorithm)
             mock_alg.value = "unsupported"
             mock_alg.configure_mock(**{"__eq__": MagicMock(return_value=False)})
-            original_init(self, input_queue, output_queue, mock_alg)
+            self._hash_alg = mock_alg
+            try:
+                return original_stream_hash(self, file_path)
+            finally:
+                self._hash_alg = original_alg
 
-        with patch.object(_HashStage, "__init__", mock_init):
+        with patch.object(_TaskBasedPipeline, "_stream_hash_file", mock_stream_hash):
             with pytest.raises(ValueError, match="Unsupported hash algorithm"):
                 hash_upload_manifest(
                     manifest=manifest,
