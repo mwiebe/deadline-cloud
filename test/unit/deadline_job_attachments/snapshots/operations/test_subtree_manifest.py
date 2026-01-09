@@ -1286,22 +1286,24 @@ class TestSubtreeInvariant:
         )
 
     def test_invariant_collapse_policy(self) -> None:
-        """Two-step subtree with COLLAPSE_ALL equals single-step subtree with COLLAPSE."""
+        """Two-step subtree with COLLAPSE_ESCAPING then COLLAPSE_ALL equals single-step subtree with COLLAPSE_ALL."""
         manifest = self._create_rel_snapshot(
             files=[
                 {"path": "subdir/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
                 {"path": "subdir/target.txt", "hash": "h2", "size": 200, "mtime": 2000},
-                {"path": "subdir/link", "symlink_target": "subdir/target.txt"},
+                {"path": "subdir/link1", "symlink_target": "subdir/target.txt"},
+                {"path": "subdir/link2", "symlink_target": "other/file.txt"},
                 {"path": "other/file.txt", "hash": "h3", "size": 300, "mtime": 3000},
+                {"path": "other/link3", "symlink_target": "subdir/target.txt"},
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", COLLAPSE)
+        # Single-step: SUBTREE(manifest, "subdir", COLLAPSE_ALL)
         single_step = subtree_manifest(
             manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
         )
 
-        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE)
+        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE_ALL)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
         two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
@@ -1360,10 +1362,10 @@ class TestSubtreeInvariant:
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE) - preserves non-escaping symlinks
+        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE_ALL) - preserves non-escaping symlinks
         single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
-        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE)
+        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE_ALL)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
         two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
@@ -1389,12 +1391,12 @@ class TestSubtreeInvariant:
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", COLLAPSE)
+        # Single-step: SUBTREE(manifest, "subdir", COLLAPSE_ALL)
         single_step = subtree_manifest(
             manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
         )
 
-        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE)
+        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE_ALL)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
         two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
@@ -1423,10 +1425,10 @@ class TestSubtreeInvariant:
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE)
+        # Single-step: SUBTREE(manifest, "subdir", EXCLUDE_ALL)
         single_step = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
-        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE)
+        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", EXCLUDE_ALL)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
         two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.EXCLUDE_ALL)
 
@@ -1449,12 +1451,12 @@ class TestSubtreeInvariant:
             ],
         )
 
-        # Single-step: SUBTREE(manifest, "subdir", COLLAPSE)
+        # Single-step: SUBTREE(manifest, "subdir", COLLAPSE_ALL)
         single_step = subtree_manifest(
             manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL
         )
 
-        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE)
+        # Two-step: SUBTREE(manifest, "subdir", COLLAPSE_ESCAPING) then SUBTREE(result, ".", COLLAPSE_ALL)
         step1 = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING)
         two_step = subtree_manifest(step1, ".", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
 
