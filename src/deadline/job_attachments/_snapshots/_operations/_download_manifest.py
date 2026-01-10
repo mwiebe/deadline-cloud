@@ -427,10 +427,7 @@ async def _download_single_file_async(
             else:
                 raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
 
-        # Create parent directories
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Pre-allocate temp file
+        # Pre-allocate temp file (parent directories already created upfront)
         temp_suffix = secrets.token_hex(5)
         temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
         with open(temp_path, "wb") as f:
@@ -774,10 +771,8 @@ async def _download_chunked_file_async(
             else:
                 raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
 
-        # Create parent directories
-        local_path.parent.mkdir(parents=True, exist_ok=True)
-
         # Create temp file path beside the target for atomic write
+        # (parent directories already created upfront)
         temp_suffix = secrets.token_hex(5)
         temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
 
@@ -928,8 +923,7 @@ def _create_symlink(entry: ManifestFilePath) -> None:
     local_path = _get_long_path_compatible_path(Path(entry.path))
     target_path = Path(entry.symlink_target)
 
-    # Create parent directories
-    local_path.parent.mkdir(parents=True, exist_ok=True)
+    # Parent directories are already created upfront by _create_all_directories
 
     # Remove existing symlink if present
     if local_path.is_symlink():
@@ -1092,6 +1086,63 @@ def _create_directory(dir_entry: ManifestDirectoryPath) -> None:
     logger.debug(f"Created directory {dir_entry.path}")
 
 
+def _collect_all_directories(manifest: AbsManifest) -> set[str]:
+    """
+    Collect all directories that need to be created for the download operation.
+
+    This includes:
+    1. All non-deleted directories from the manifest
+    2. All parent directories of all non-deleted files (including symlinks)
+
+    Returns:
+        A set of absolute directory paths that need to be created.
+    """
+    dirs_to_create: set[str] = set()
+
+    # Add all non-deleted directories from the manifest
+    for dir_entry in manifest.dirs:
+        if not dir_entry.deleted:
+            dirs_to_create.add(dir_entry.path)
+
+    # Add parent directories of all non-deleted files
+    # Note: Manifest paths always use "/" separators (even on Windows)
+    for entry in manifest.files:
+        if not entry.deleted:
+            path = entry.path
+            while True:
+                last_slash = path.rfind("/")
+                if last_slash <= 0:
+                    # No parent (root file) or reached root "/"
+                    break
+                path = path[:last_slash]
+                # Handle Windows drive roots like "C:"
+                if os.name == "nt" and len(path) == 2 and path[1] == ":":
+                    break
+                dirs_to_create.add(path)
+
+    return dirs_to_create
+
+
+def _create_all_directories(dirs_to_create: set[str]) -> None:
+    """
+    Create all directories in the given set.
+
+    Directories are sorted by path length (shortest first) to ensure parent
+    directories are created before their children, though mkdir with exist_ok=True
+    handles this gracefully anyway.
+
+    Args:
+        dirs_to_create: Set of absolute directory paths to create.
+    """
+    # Sort by path length to create parents before children
+    sorted_dirs = sorted(dirs_to_create, key=len)
+
+    for dir_path in sorted_dirs:
+        local_path = _get_long_path_compatible_path(Path(dir_path))
+        local_path.mkdir(parents=True, exist_ok=True)
+        logger.debug("Created directory %s", dir_path)
+
+
 def _build_updated_manifest(
     manifest: AbsManifest,
     updated_mtimes: Dict[str, int],
@@ -1230,7 +1281,6 @@ def download_manifest(
     chunked_files: List[ManifestFilePath] = []
     symlinks: List[ManifestFilePath] = []
     deleted_files: List[ManifestFilePath] = []
-    directories: List[ManifestDirectoryPath] = []
     deleted_directories: List[ManifestDirectoryPath] = []
 
     for entry in manifest.files:
@@ -1246,8 +1296,6 @@ def download_manifest(
     for dir_entry in manifest.dirs:
         if dir_entry.deleted:
             deleted_directories.append(dir_entry)
-        else:
-            directories.append(dir_entry)
 
     # Calculate totals for progress tracking
     # Only count symlinks if policy is PRESERVE
@@ -1303,9 +1351,10 @@ def download_manifest(
                 _delete_directory(dir_entry.path)
                 print_function_callback(f"Deleted directory: {dir_entry.path}")
 
-        # 2. Create directories
-        for dir_entry in directories:
-            _create_directory(dir_entry)
+        # 2. Create all directories upfront (manifest dirs + parent dirs of all files)
+        # This avoids per-file mkdir calls during parallel downloads
+        all_dirs_to_create = _collect_all_directories(manifest)
+        _create_all_directories(all_dirs_to_create)
 
         # Get chunk size from manifest for chunked file downloads
         chunk_size_bytes = manifest.fileChunkSizeBytes

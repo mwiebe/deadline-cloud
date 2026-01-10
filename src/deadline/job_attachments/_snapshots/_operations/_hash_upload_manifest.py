@@ -1122,9 +1122,7 @@ def hash_upload_manifest(
                     if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
                         skip_pipeline = True
                         cached_results[item.cache_key] = cached_hash
-                        logger.debug(
-                            f"Fully cached (hash + data cache): {item.file_path}"
-                        )
+                        logger.debug("Fully cached (hash + data cache): %s", item.file_path)
             elif isinstance(item, _ChunkWorkItem):
                 if file_chunk_counts[item.cache_key] == 0:
                     # Whole file (single chunk)

@@ -47,7 +47,6 @@ Example with all options:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import shutil
 import sys
@@ -72,11 +71,9 @@ from deadline.job_attachments._snapshots import (
 )
 from deadline.job_attachments._snapshots._manifest import (
     AbsSnapshot,
-    ManifestFilePath,
     DEFAULT_FILE_CHUNK_SIZE,
     WHOLE_FILE_CHUNK_SIZE,
 )
-from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm, hash_data
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 from deadline.job_attachments.progress_tracker import ProgressTracker, ProgressStatus
@@ -187,6 +184,7 @@ def _print_progress_bar(current: int, total: int, prefix: str = "", width: int =
 def _compute_xxh128(data: bytes) -> str:
     """Compute XXH128 hash of data."""
     import xxhash
+
     return xxhash.xxh128(data).hexdigest()
 
 
@@ -241,7 +239,9 @@ def create_test_files(
         # Use deterministic RNG for reproducibility
         rng = random.Random(42)
 
-        print_fn(f"  Creating {config.subdirectories} subdirectories with random nesting (1-{config.max_nesting_depth})...")
+        print_fn(
+            f"  Creating {config.subdirectories} subdirectories with random nesting (1-{config.max_nesting_depth})..."
+        )
 
         for i in range(config.subdirectories):
             # Random nesting depth between 1 and max_nesting_depth
@@ -298,7 +298,9 @@ def create_test_files(
             for dir_idx, subdir in enumerate(other_dirs):
                 count = files_per_dir + (1 if dir_idx < extra_files else 0)
                 for i in range(count):
-                    file_tasks.append((subdir / f"small_{file_idx:08d}.dat", file_idx, SMALL_FILE_SIZE))
+                    file_tasks.append(
+                        (subdir / f"small_{file_idx:08d}.dat", file_idx, SMALL_FILE_SIZE)
+                    )
                     file_idx += 1
 
         # Create files in parallel using thread pool, collecting hashes
@@ -307,7 +309,9 @@ def create_test_files(
         task_to_path = {i: task[0] for i, task in enumerate(file_tasks)}
 
         with ThreadPoolExecutor() as executor:
-            future_to_idx = {executor.submit(_create_small_file, task): i for i, task in enumerate(file_tasks)}
+            future_to_idx = {
+                executor.submit(_create_small_file, task): i for i, task in enumerate(file_tasks)
+            }
 
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
@@ -333,12 +337,17 @@ def create_test_files(
         small_dir.mkdir(exist_ok=True)
         print_fn(f"  Creating {config.small_files:,} small files ({SMALL_FILE_SIZE} bytes each)...")
 
-        file_tasks = [(small_dir / f"small_{i:08d}.dat", i, SMALL_FILE_SIZE) for i in range(config.small_files)]
+        file_tasks = [
+            (small_dir / f"small_{i:08d}.dat", i, SMALL_FILE_SIZE)
+            for i in range(config.small_files)
+        ]
         completed = 0
         task_to_path = {i: task[0] for i, task in enumerate(file_tasks)}
 
         with ThreadPoolExecutor() as executor:
-            future_to_idx = {executor.submit(_create_small_file, task): i for i, task in enumerate(file_tasks)}
+            future_to_idx = {
+                executor.submit(_create_small_file, task): i for i, task in enumerate(file_tasks)
+            }
 
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
@@ -414,10 +423,11 @@ def create_test_files(
                         chunk_num += 1
 
                         # Progress for this large file
-                        sys.stdout.write(_print_progress_bar(
-                            chunk_num, total_chunks,
-                            f"    Large {i + 1}/{config.large_files}"
-                        ))
+                        sys.stdout.write(
+                            _print_progress_bar(
+                                chunk_num, total_chunks, f"    Large {i + 1}/{config.large_files}"
+                            )
+                        )
                         sys.stdout.flush()
                 print_fn("")
             else:
@@ -670,7 +680,9 @@ def test_hash_upload_filesystem(
         # Print progress every 5 seconds
         if now - progress_state["last_print"] >= 5.0:
             processed_bytes = int(total_bytes * metadata.progress / 100) if total_bytes > 0 else 0
-            print_fn(f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024*1024):.1f} MB)")
+            print_fn(
+                f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024 * 1024):.1f} MB)"
+            )
             progress_state["last_print"] = now
         return True
 
@@ -681,10 +693,12 @@ def test_hash_upload_filesystem(
         on_progress_callback=on_progress,
     )
 
-    print_fn(f"  Starting hash_upload_manifest with {total_files} files, {total_bytes / (1024*1024):.1f} MB...")
+    print_fn(
+        f"  Starting hash_upload_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
+    )
     if not config.use_hash_cache:
-        print_fn(f"  (force_rehash=True, so hash cache checking should be skipped)")
-    print_fn(f"  Note: If this stalls, the issue is in hash_upload_manifest itself, not the test.")
+        print_fn("  (force_rehash=True, so hash cache checking should be skipped)")
+    print_fn("  Note: If this stalls, the issue is in hash_upload_manifest itself, not the test.")
     import threading
     import sys
 
@@ -692,14 +706,19 @@ def test_hash_upload_filesystem(
 
     # Heartbeat thread to show we're not completely dead
     stop_heartbeat = threading.Event()
+
     def heartbeat():
         count = 0
         while not stop_heartbeat.is_set():
             stop_heartbeat.wait(10.0)  # Print every 10 seconds
             if not stop_heartbeat.is_set():
                 count += 1
-                processed_bytes = int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
-                print_fn(f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024*1024):.1f} MB processed")
+                processed_bytes = (
+                    int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
+                )
+                print_fn(
+                    f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024 * 1024):.1f} MB processed"
+                )
                 sys.stdout.flush()
 
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
@@ -786,7 +805,9 @@ def test_hash_upload_s3(
         # Print progress every 5 seconds
         if now - progress_state["last_print"] >= 5.0:
             processed_bytes = int(total_bytes * metadata.progress / 100) if total_bytes > 0 else 0
-            print_fn(f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024*1024):.1f} MB)")
+            print_fn(
+                f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024 * 1024):.1f} MB)"
+            )
             progress_state["last_print"] = now
         return True
 
@@ -861,7 +882,9 @@ def test_download_filesystem(
         now = time.perf_counter()
         if now - progress_state["last_print"] >= 5.0:
             processed_bytes = int(total_bytes * metadata.progress / 100) if total_bytes > 0 else 0
-            print_fn(f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024*1024):.1f} MB)")
+            print_fn(
+                f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024 * 1024):.1f} MB)"
+            )
             progress_state["last_print"] = now
         return True
 
@@ -872,7 +895,9 @@ def test_download_filesystem(
         on_progress_callback=on_progress,
     )
 
-    print_fn(f"  Starting download_manifest with {total_files} files, {total_bytes / (1024*1024):.1f} MB...")
+    print_fn(
+        f"  Starting download_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
+    )
     import threading
     import sys
 
@@ -880,14 +905,19 @@ def test_download_filesystem(
 
     # Heartbeat thread
     stop_heartbeat = threading.Event()
+
     def heartbeat():
         count = 0
         while not stop_heartbeat.is_set():
             stop_heartbeat.wait(10.0)
             if not stop_heartbeat.is_set():
                 count += 1
-                processed_bytes = int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
-                print_fn(f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024*1024):.1f} MB processed")
+                processed_bytes = (
+                    int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
+                )
+                print_fn(
+                    f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024 * 1024):.1f} MB processed"
+                )
                 sys.stdout.flush()
 
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
@@ -968,7 +998,9 @@ def test_download_s3(
         now = time.perf_counter()
         if now - progress_state["last_print"] >= 5.0:
             processed_bytes = int(total_bytes * metadata.progress / 100) if total_bytes > 0 else 0
-            print_fn(f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024*1024):.1f} MB)")
+            print_fn(
+                f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024 * 1024):.1f} MB)"
+            )
             progress_state["last_print"] = now
         return True
 
@@ -979,7 +1011,9 @@ def test_download_s3(
         on_progress_callback=on_progress,
     )
 
-    print_fn(f"  Starting download_manifest with {total_files} files, {total_bytes / (1024*1024):.1f} MB...")
+    print_fn(
+        f"  Starting download_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
+    )
     import threading
     import sys
 
@@ -987,14 +1021,19 @@ def test_download_s3(
 
     # Heartbeat thread
     stop_heartbeat = threading.Event()
+
     def heartbeat():
         count = 0
         while not stop_heartbeat.is_set():
             stop_heartbeat.wait(10.0)
             if not stop_heartbeat.is_set():
                 count += 1
-                processed_bytes = int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
-                print_fn(f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024*1024):.1f} MB processed")
+                processed_bytes = (
+                    int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
+                )
+                print_fn(
+                    f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024 * 1024):.1f} MB processed"
+                )
                 sys.stdout.flush()
 
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
@@ -1289,7 +1328,9 @@ def print_summary(
             throughput_str = f"{r.throughput_mb_s:.1f} MB/s"
         else:
             throughput_str = "N/A"
-        print_fn(f"  {r.operation:<30} {duration_str:>10} {r.files_processed:>10} {throughput_str:>12}")
+        print_fn(
+            f"  {r.operation:<30} {duration_str:>10} {r.files_processed:>10} {throughput_str:>12}"
+        )
 
     print_fn(f"\n  Total test time: {total_time:.2f} seconds")
 
@@ -1332,12 +1373,14 @@ def main() -> int:
 
     # AWS options
     parser.add_argument(
-        "-f", "--farm-id",
+        "-f",
+        "--farm-id",
         type=str,
         help="Deadline Farm ID (required for S3 tests)",
     )
     parser.add_argument(
-        "-q", "--queue-id",
+        "-q",
+        "--queue-id",
         type=str,
         help="Deadline Queue ID (required for S3 tests)",
     )
@@ -1356,10 +1399,10 @@ def main() -> int:
         choices=["tiny", "small", "medium", "large"],
         default=None,
         help="Use a preset configuration (overrides file count options). "
-             "tiny: 400 small, 40 medium, 2 large (1GB). "
-             "small: 1500 small, 400 medium, 5 large (1GB). "
-             "medium: 20000 small, 1000 medium, 10 large (1GB). "
-             "large: 1000000 small, 10000 medium, 10 large (5GB).",
+        "tiny: 400 small, 40 medium, 2 large (1GB). "
+        "small: 1500 small, 400 medium, 5 large (1GB). "
+        "medium: 20000 small, 1000 medium, 10 large (1GB). "
+        "large: 1000000 small, 10000 medium, 10 large (5GB).",
     )
 
     # File counts
@@ -1510,7 +1553,9 @@ def main() -> int:
         skip_download=args.skip_download,
         setup_only=args.setup_only,
         keep_files=args.keep_files,
-        chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE if args.no_chunking else args.chunk_size * 1024 * 1024,
+        chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE
+        if args.no_chunking
+        else args.chunk_size * 1024 * 1024,
         use_hash_cache=not args.no_hash_cache,
     )
 
@@ -1521,12 +1566,16 @@ def main() -> int:
     print(f"Configuration:{preset_str}")
     print(f"  Small files: {config.small_files} x {SMALL_FILE_SIZE} bytes")
     print(f"  Medium files: {config.medium_files} x {MEDIUM_FILE_SIZE // (1024 * 1024)} MB")
-    print(f"  Large files: {config.large_files} x {config.large_file_size // (1024 * 1024 * 1024)} GB")
+    print(
+        f"  Large files: {config.large_files} x {config.large_file_size // (1024 * 1024 * 1024)} GB"
+    )
     print(f"  Subdirectories: {config.subdirectories}")
     print(f"  Max nesting depth: {config.max_nesting_depth}")
     print(f"  Max workers: {config.max_workers}")
     print(f"  Max memory: {config.max_memory_mb} MB")
-    print(f"  Chunk size: {'disabled' if config.chunk_size_bytes == WHOLE_FILE_CHUNK_SIZE else f'{config.chunk_size_bytes // (1024 * 1024)} MB'}")
+    print(
+        f"  Chunk size: {'disabled' if config.chunk_size_bytes == WHOLE_FILE_CHUNK_SIZE else f'{config.chunk_size_bytes // (1024 * 1024)} MB'}"
+    )
     print(f"  Verify correctness: {config.verify_correctness}")
     print(f"  Mode: {'local filesystem' if config.local_only else 'S3'}")
 
