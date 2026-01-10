@@ -837,15 +837,62 @@ def test_download_filesystem(
     rel_manifest = subtree_manifest(manifest, str(source_root))
     download_manifest_abs = join_manifest(rel_manifest, str(download_root))
 
-    with HashCache(str(hash_cache_dir)) as hash_cache:
-        start = time.perf_counter()
-        result = download_manifest(
-            manifest=download_manifest_abs,
-            data_cache=data_cache,
-            hash_cache=hash_cache,
-            max_workers=config.max_workers,
-        )
-        duration = time.perf_counter() - start
+    # Progress tracking
+    total_bytes = download_manifest_abs.totalSize
+    total_files = len(download_manifest_abs.files)
+    progress_state = {"pct": 0.0, "last_print": time.perf_counter()}
+
+    def on_progress(metadata) -> bool:
+        progress_state["pct"] = metadata.progress
+        now = time.perf_counter()
+        if now - progress_state["last_print"] >= 5.0:
+            processed_bytes = int(total_bytes * metadata.progress / 100) if total_bytes > 0 else 0
+            print_fn(f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024*1024):.1f} MB)")
+            progress_state["last_print"] = now
+        return True
+
+    progress_tracker = ProgressTracker(
+        status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
+        total_files=total_files,
+        total_bytes=total_bytes,
+        on_progress_callback=on_progress,
+    )
+
+    print_fn(f"  Starting download_manifest with {total_files} files, {total_bytes / (1024*1024):.1f} MB...")
+    import threading
+    import sys
+
+    sys.stdout.flush()
+
+    # Heartbeat thread
+    stop_heartbeat = threading.Event()
+    def heartbeat():
+        count = 0
+        while not stop_heartbeat.is_set():
+            stop_heartbeat.wait(10.0)
+            if not stop_heartbeat.is_set():
+                count += 1
+                processed_bytes = int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
+                print_fn(f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024*1024):.1f} MB processed")
+                sys.stdout.flush()
+
+    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+    heartbeat_thread.start()
+
+    try:
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            start = time.perf_counter()
+            result = download_manifest(
+                manifest=download_manifest_abs,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_workers=config.max_workers,
+                progress_tracker=progress_tracker,
+            )
+            duration = time.perf_counter() - start
+    finally:
+        stop_heartbeat.set()
+        heartbeat_thread.join(timeout=1.0)
 
     stats = result.statistics
     total_bytes = stats.processed_bytes
@@ -897,15 +944,62 @@ def test_download_s3(
     rel_manifest = subtree_manifest(manifest, str(source_root))
     download_manifest_abs = join_manifest(rel_manifest, str(download_root))
 
-    with HashCache(str(hash_cache_dir)) as hash_cache:
-        start = time.perf_counter()
-        result = download_manifest(
-            manifest=download_manifest_abs,
-            data_cache=data_cache,
-            hash_cache=hash_cache,
-            max_workers=config.max_workers,
-        )
-        duration = time.perf_counter() - start
+    # Progress tracking
+    total_bytes = download_manifest_abs.totalSize
+    total_files = len(download_manifest_abs.files)
+    progress_state = {"pct": 0.0, "last_print": time.perf_counter()}
+
+    def on_progress(metadata) -> bool:
+        progress_state["pct"] = metadata.progress
+        now = time.perf_counter()
+        if now - progress_state["last_print"] >= 5.0:
+            processed_bytes = int(total_bytes * metadata.progress / 100) if total_bytes > 0 else 0
+            print_fn(f"    Progress: {metadata.progress:.1f}% ({processed_bytes / (1024*1024):.1f} MB)")
+            progress_state["last_print"] = now
+        return True
+
+    progress_tracker = ProgressTracker(
+        status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
+        total_files=total_files,
+        total_bytes=total_bytes,
+        on_progress_callback=on_progress,
+    )
+
+    print_fn(f"  Starting download_manifest with {total_files} files, {total_bytes / (1024*1024):.1f} MB...")
+    import threading
+    import sys
+
+    sys.stdout.flush()
+
+    # Heartbeat thread
+    stop_heartbeat = threading.Event()
+    def heartbeat():
+        count = 0
+        while not stop_heartbeat.is_set():
+            stop_heartbeat.wait(10.0)
+            if not stop_heartbeat.is_set():
+                count += 1
+                processed_bytes = int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
+                print_fn(f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024*1024):.1f} MB processed")
+                sys.stdout.flush()
+
+    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
+    heartbeat_thread.start()
+
+    try:
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            start = time.perf_counter()
+            result = download_manifest(
+                manifest=download_manifest_abs,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                max_workers=config.max_workers,
+                progress_tracker=progress_tracker,
+            )
+            duration = time.perf_counter() - start
+    finally:
+        stop_heartbeat.set()
+        heartbeat_thread.join(timeout=1.0)
 
     stats = result.statistics
     total_bytes = stats.processed_bytes
