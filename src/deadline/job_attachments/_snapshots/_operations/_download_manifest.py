@@ -80,6 +80,9 @@ from ._download_manifest_file_system import (
     download_fs_chunk_to_offset,
 )
 
+# Import sparse file allocation utilities
+from ._sparse_file import preallocate_file
+
 logger = logging.getLogger("deadline.job_attachments.download")
 
 # Default number of parallel download workers
@@ -428,10 +431,11 @@ async def _download_single_file_async(
                 raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
 
         # Pre-allocate temp file (parent directories already created upfront)
+        # Uses platform-specific sparse file allocation to avoid slow truncate() on Windows
         temp_suffix = secrets.token_hex(5)
         temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
         with open(temp_path, "wb") as f:
-            f.truncate(file_size)
+            preallocate_file(f, file_size)
 
         return (local_path, False, None, temp_path)
 
@@ -777,9 +781,9 @@ async def _download_chunked_file_async(
         temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
 
         # Pre-allocate the temp file to the exact size
-        # This creates a sparse file on filesystems that support it
+        # Uses platform-specific sparse file allocation to avoid slow truncate() on Windows
         with open(temp_path, "wb") as f:
-            f.truncate(file_size)
+            preallocate_file(f, file_size)
 
         return (local_path, temp_path, False, None)
 
