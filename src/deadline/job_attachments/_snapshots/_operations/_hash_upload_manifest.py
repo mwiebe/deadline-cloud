@@ -35,7 +35,7 @@ import time
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 import logging
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -932,7 +932,6 @@ def hash_upload_manifest(
     max_memory_bytes: Optional[int] = None,
     max_workers: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
 ) -> AbsManifest:
     """
@@ -954,7 +953,6 @@ def hash_upload_manifest(
             - None: Preserve the chunk size from the input manifest
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
             - Positive int: Chunk size in bytes for large files
-        print_function_callback: Progress callback for status messages
         progress_tracker: Optional progress tracker for upload progress
 
     Returns:
@@ -1124,7 +1122,7 @@ def hash_upload_manifest(
                     if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
                         skip_pipeline = True
                         cached_results[item.cache_key] = cached_hash
-                        print_function_callback(
+                        logger.debug(
                             f"Fully cached (hash + data cache): {item.file_path}"
                         )
             elif isinstance(item, _ChunkWorkItem):
@@ -1160,7 +1158,7 @@ def hash_upload_manifest(
                             chunk_dict = cached_results[item.cache_key]
                             if isinstance(chunk_dict, dict):
                                 chunk_dict[item.chunk_index] = cached_hash
-                        print_function_callback(
+                        logger.debug(
                             f"Fully cached (hash + data cache): {item.file_path}"
                             + (
                                 f" chunk {item.chunk_index}"
@@ -1203,7 +1201,6 @@ def hash_upload_manifest(
                                 range_end=WHOLE_FILE_RANGE_END,
                             )
                         )
-                    print_function_callback(f"Hashed and uploaded (streaming): {item.file_path}")
 
             elif isinstance(item, _ChunkWorkItem):
                 if item.chunk_hash is not None:
@@ -1235,14 +1232,6 @@ def hash_upload_manifest(
                                 range_end=range_end,
                             )
                         )
-                    print_function_callback(
-                        f"Hashed and uploaded: {item.file_path}"
-                        + (
-                            f" chunk {item.chunk_index}"
-                            if file_chunk_counts[item.cache_key] > 0
-                            else ""
-                        )
-                    )
 
     # Build result manifest
     hashed_paths: List[ManifestFilePath] = []

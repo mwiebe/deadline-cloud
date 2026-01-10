@@ -557,7 +557,6 @@ def test_collect(
         filenames=[],
         symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
         file_chunk_size_bytes=config.chunk_size_bytes,
-        print_function_callback=lambda msg: None,  # Suppress verbose output
     )
     duration = time.perf_counter() - start
 
@@ -602,7 +601,6 @@ def test_hash(
             manifest=manifest,
             hash_cache=hash_cache,
             force_rehash=True,  # Force rehash for accurate timing
-            print_function_callback=lambda msg: None,
         )
         duration = time.perf_counter() - start
 
@@ -693,14 +691,6 @@ def test_hash_upload_filesystem(
     heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
     heartbeat_thread.start()
 
-    # Print callback that shows progress periodically
-    msg_count = [0]
-    def print_progress_msg(msg: str) -> None:
-        msg_count[0] += 1
-        # Print every 100th message, or if it contains important keywords
-        if msg_count[0] % 100 == 0 or "error" in msg.lower() or "fail" in msg.lower():
-            print_fn(f"    [{msg_count[0]}] {msg}")
-
     try:
         with HashCache(str(hash_cache_dir)) as hash_cache:
             actual_hash_cache = hash_cache if config.use_hash_cache else None
@@ -712,7 +702,6 @@ def test_hash_upload_filesystem(
                 force_rehash=True,
                 max_memory_bytes=config.max_memory_mb * 1024 * 1024,
                 max_workers=config.max_workers,
-                print_function_callback=print_progress_msg,
                 progress_tracker=progress_tracker,
             )
             duration = time.perf_counter() - start
@@ -803,7 +792,6 @@ def test_hash_upload_s3(
             force_rehash=True,
             max_memory_bytes=config.max_memory_mb * 1024 * 1024,
             max_workers=config.max_workers,
-            print_function_callback=lambda msg: None,
             progress_tracker=progress_tracker,
         )
         duration = time.perf_counter() - start
@@ -856,7 +844,6 @@ def test_download_filesystem(
             data_cache=data_cache,
             hash_cache=hash_cache,
             max_workers=config.max_workers,
-            print_function_callback=lambda msg: None,
         )
         duration = time.perf_counter() - start
 
@@ -917,7 +904,6 @@ def test_download_s3(
             data_cache=data_cache,
             hash_cache=hash_cache,
             max_workers=config.max_workers,
-            print_function_callback=lambda msg: None,
         )
         duration = time.perf_counter() - start
 
