@@ -1090,61 +1090,82 @@ def _create_directory(dir_entry: ManifestDirectoryPath) -> None:
     logger.debug(f"Created directory {dir_entry.path}")
 
 
-def _collect_all_directories(manifest: AbsManifest) -> set[str]:
+def _collect_directories_with_files(
+    manifest: AbsManifest,
+    files_to_download: List[ManifestFilePath],
+) -> Tuple[List[str], Dict[str, List[ManifestFilePath]]]:
     """
-    Collect all directories that need to be created for the download operation.
+    Collect all directories and map each directory to the files it contains.
 
-    This includes:
-    1. All non-deleted directories from the manifest
-    2. All parent directories of all non-deleted files (including symlinks)
+    This enables the hybrid directory creation approach where we create a directory
+    and immediately submit downloads for files in that directory, allowing directory
+    creation to overlap with file downloads.
+
+    Args:
+        manifest: The manifest with absolute paths.
+        files_to_download: List of file entries to download (regular and chunked).
 
     Returns:
-        A set of absolute directory paths that need to be created.
+        Tuple of:
+        - sorted_dirs: List of directory paths sorted by length (parents before children)
+        - dir_to_files: Dict mapping each directory path to the list of files in that directory
     """
     dirs_to_create: set[str] = set()
+    dir_to_files: Dict[str, List[ManifestFilePath]] = {}
 
     # Add all non-deleted directories from the manifest
     for dir_entry in manifest.dirs:
         if not dir_entry.deleted:
             dirs_to_create.add(dir_entry.path)
 
-    # Add parent directories of all non-deleted files
-    # Note: Manifest paths always use "/" separators (even on Windows)
-    for entry in manifest.files:
-        if not entry.deleted:
-            path = entry.path
-            while True:
-                last_slash = path.rfind("/")
-                if last_slash <= 0:
-                    # No parent (root file) or reached root "/"
-                    break
-                path = path[:last_slash]
-                # Handle Windows drive roots like "C:"
-                if os.name == "nt" and len(path) == 2 and path[1] == ":":
-                    break
-                dirs_to_create.add(path)
+    # Process all files: collect parent directories and map files to their parent dir
+    for entry in files_to_download:
+        # Get the parent directory of this file
+        path = entry.path
+        last_slash = path.rfind("/")
+        if last_slash <= 0:
+            # Root-level file (no parent directory) - use "" as key
+            parent_dir = ""
+        else:
+            parent_dir = path[:last_slash]
+            # Handle Windows drive roots like "C:"
+            if os.name == "nt" and len(parent_dir) == 2 and parent_dir[1] == ":":
+                parent_dir = ""
 
-    return dirs_to_create
+        # Add file to its parent directory's list
+        if parent_dir not in dir_to_files:
+            dir_to_files[parent_dir] = []
+        dir_to_files[parent_dir].append(entry)
+        dirs_to_create.add(parent_dir)
 
+        # Also collect all ancestor directories
+        ancestor = parent_dir
+        while ancestor:
+            last_slash = ancestor.rfind("/")
+            if last_slash <= 0:
+                break
+            ancestor = ancestor[:last_slash]
+            if os.name == "nt" and len(ancestor) == 2 and ancestor[1] == ":":
+                break
+            dirs_to_create.add(ancestor)
 
-def _create_all_directories(dirs_to_create: set[str]) -> None:
-    """
-    Create all directories in the given set.
-
-    Directories are sorted by path length (shortest first) to ensure parent
-    directories are created before their children, though mkdir with exist_ok=True
-    handles this gracefully anyway.
-
-    Args:
-        dirs_to_create: Set of absolute directory paths to create.
-    """
-    # Sort by path length to create parents before children
+    # Sort directories by path length (parents before children)
+    # "" sorts first (length 0) for root-level files
     sorted_dirs = sorted(dirs_to_create, key=len)
 
-    for dir_path in sorted_dirs:
-        local_path = _get_long_path_compatible_path(Path(dir_path))
-        local_path.mkdir(parents=True, exist_ok=True)
-        logger.debug("Created directory %s", dir_path)
+    return sorted_dirs, dir_to_files
+
+
+def _create_directory_path(dir_path: str) -> None:
+    """
+    Create a single directory (with parents if needed).
+
+    Args:
+        dir_path: Absolute directory path to create.
+    """
+    local_path = _get_long_path_compatible_path(Path(dir_path))
+    local_path.mkdir(parents=True, exist_ok=True)
+    logger.debug("Created directory %s", dir_path)
 
 
 def _build_updated_manifest(
@@ -1355,18 +1376,24 @@ def download_manifest(
                 _delete_directory(dir_entry.path)
                 print_function_callback(f"Deleted directory: {dir_entry.path}")
 
-        # 2. Create all directories upfront (manifest dirs + parent dirs of all files)
-        # This avoids per-file mkdir calls during parallel downloads
-        all_dirs_to_create = _collect_all_directories(manifest)
-        _create_all_directories(all_dirs_to_create)
+        # 2. Collect directories and map them to their files for hybrid creation
+        # This enables interleaving directory creation with file download submission
+        all_files_to_download = regular_files + chunked_files
+        sorted_dirs, dir_to_files = _collect_directories_with_files(
+            manifest, all_files_to_download
+        )
 
         # Get chunk size from manifest for chunked file downloads
         chunk_size_bytes = manifest.fileChunkSizeBytes
 
         # 3. Download all files (regular and chunked) in parallel using asyncio
-        # Both regular files and chunked files use async downloads with multi-part support
+        # Directory creation is interleaved with download submission for better parallelism:
+        # - Create directory (synchronous, on main thread)
+        # - Spawn download tasks for files in that directory (they run in executor)
+        # - Loop to next directory while downloads run concurrently
+        # - After all directories done, gather all download results
         async def download_all_files(executor: concurrent.futures.ThreadPoolExecutor) -> None:
-            """Download all regular and chunked files in parallel using asyncio."""
+            """Download all regular and chunked files with interleaved directory creation."""
             nonlocal processed_files, processed_bytes, skipped_files, skipped_bytes
 
             # Type alias for download result
@@ -1381,43 +1408,58 @@ def download_manifest(
                 result: DownloadResultTuple = await awaitable
                 return (entry, result)
 
-            # Create tasks for all files
+            # Helper to create download task for a file entry
+            def create_download_task(
+                entry: ManifestFilePath,
+            ) -> asyncio.Task[Tuple[ManifestFilePath, DownloadResultTuple]]:
+                """Create an async download task for a file entry."""
+                if entry.chunkhashes is not None:
+                    coro = _download_chunked_file_async(
+                        entry,
+                        hash_alg,
+                        hash_alg_enum,
+                        data_cache,
+                        chunk_size_bytes,
+                        hash_cache,
+                        executor,
+                        collision_lock,
+                        collision_file_dict,
+                        file_conflict_resolution,
+                        progress_tracker,
+                    )
+                else:
+                    coro = _download_single_file_async(
+                        entry,
+                        hash_alg,
+                        hash_alg_enum,
+                        data_cache,
+                        hash_cache,
+                        executor,
+                        collision_lock,
+                        collision_file_dict,
+                        file_conflict_resolution,
+                        progress_tracker,
+                    )
+                return asyncio.create_task(download_with_entry(entry, coro))
+
+            # Track all download tasks
             all_tasks: List[asyncio.Task[Tuple[ManifestFilePath, DownloadResultTuple]]] = []
 
-            # Submit regular file downloads as async tasks (with multi-part support for large files)
-            for entry in regular_files:
-                coro = _download_single_file_async(
-                    entry,
-                    hash_alg,
-                    hash_alg_enum,
-                    data_cache,
-                    hash_cache,
-                    executor,
-                    collision_lock,
-                    collision_file_dict,
-                    file_conflict_resolution,
-                    progress_tracker,
-                )
-                task = asyncio.create_task(download_with_entry(entry, coro))
-                all_tasks.append(task)
+            # Hybrid approach: create each directory synchronously on main thread,
+            # then immediately spawn download tasks for files in that directory.
+            # Downloads run concurrently in the executor while we continue creating
+            # more directories.
+            for dir_path in sorted_dirs:
+                # Create directory synchronously (fast operation, ~0.3ms each)
+                # Skip for "" which represents root-level files
+                if dir_path:
+                    _create_directory_path(dir_path)
 
-            # Submit chunked file downloads as async tasks (with parallel chunk downloads)
-            for entry in chunked_files:
-                coro = _download_chunked_file_async(
-                    entry,
-                    hash_alg,
-                    hash_alg_enum,
-                    data_cache,
-                    chunk_size_bytes,
-                    hash_cache,
-                    executor,
-                    collision_lock,
-                    collision_file_dict,
-                    file_conflict_resolution,
-                    progress_tracker,
-                )
-                task = asyncio.create_task(download_with_entry(entry, coro))
-                all_tasks.append(task)
+                # Immediately spawn download tasks for files in this directory
+                # These tasks start running in the executor right away
+                for entry in dir_to_files.get(dir_path, []):
+                    task = create_download_task(entry)
+                    all_tasks.append(task)
 
             # Process results as they complete
             for completed_coro in asyncio.as_completed(all_tasks):
