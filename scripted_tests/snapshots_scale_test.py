@@ -87,14 +87,14 @@ from deadline.job_attachments.progress_tracker import ProgressTracker, ProgressS
 # =============================================================================
 
 # Default file counts
-DEFAULT_SMALL_FILES = 100000
-DEFAULT_MEDIUM_FILES = 1000
-DEFAULT_LARGE_FILES = 5
+DEFAULT_SMALL_FILES = 400
+DEFAULT_MEDIUM_FILES = 40
+DEFAULT_LARGE_FILES = 2
 
 # File sizes
 SMALL_FILE_SIZE = 1024  # 1 KB
 MEDIUM_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
-LARGE_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB
+LARGE_FILE_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
 
 # Directory structure
 DEFAULT_SUBDIRECTORIES = 1000
@@ -117,6 +117,7 @@ class TestConfig:
     small_files: int
     medium_files: int
     large_files: int
+    large_file_size: int  # Size of large files in bytes
     subdirectories: int
     max_nesting_depth: int
     max_workers: int
@@ -387,9 +388,10 @@ def create_test_files(
     if config.large_files > 0:
         large_dir = root_path / "large"
         large_dir.mkdir(exist_ok=True)
+        large_file_size = config.large_file_size
         print_fn(
             f"  Creating {config.large_files} large files "
-            f"({LARGE_FILE_SIZE // (1024 * 1024 * 1024)} GB each)..."
+            f"({large_file_size // (1024 * 1024 * 1024)} GB each)..."
         )
         for i in range(config.large_files):
             file_path = large_dir / f"large_{i:02d}.dat"
@@ -398,9 +400,9 @@ def create_test_files(
             if not file_path.exists():
                 # Write in chunks to avoid memory issues, computing hash as we go
                 with open(file_path, "wb") as f:
-                    remaining = LARGE_FILE_SIZE
+                    remaining = large_file_size
                     chunk_num = 0
-                    total_chunks = (LARGE_FILE_SIZE + 64 * 1024 * 1024 - 1) // (64 * 1024 * 1024)
+                    total_chunks = (large_file_size + 64 * 1024 * 1024 - 1) // (64 * 1024 * 1024)
                     while remaining > 0:
                         chunk_size = min(64 * 1024 * 1024, remaining)  # 64MB chunks
                         content = generate_deterministic_content(
@@ -427,7 +429,7 @@ def create_test_files(
             rel_path = file_path.relative_to(root_path).as_posix()
             checksums[rel_path] = hasher.hexdigest()
             total_files += 1
-            total_bytes += LARGE_FILE_SIZE
+            total_bytes += large_file_size
 
     print_fn(f"  Total: {total_files:,} files, {total_bytes / (1024 * 1024):,.2f} MB")
     return total_files, total_bytes, checksums
@@ -1347,6 +1349,19 @@ def main() -> int:
         help="Run tests with local filesystem cache only (no AWS required)",
     )
 
+    # Preset configurations
+    parser.add_argument(
+        "--preset",
+        type=str,
+        choices=["tiny", "small", "medium", "large"],
+        default=None,
+        help="Use a preset configuration (overrides file count options). "
+             "tiny: 400 small, 40 medium, 2 large (1GB). "
+             "small: 1500 small, 400 medium, 5 large (1GB). "
+             "medium: 20000 small, 1000 medium, 10 large (1GB). "
+             "large: 1000000 small, 10000 medium, 10 large (5GB).",
+    )
+
     # File counts
     parser.add_argument(
         "--small-files",
@@ -1454,11 +1469,36 @@ def main() -> int:
     if not args.local_only and (not args.farm_id or not args.queue_id):
         parser.error("--farm-id and --queue-id are required unless --local-only is specified")
 
+    # Apply preset configurations (override file counts and large file size)
+    preset_large_file_size = LARGE_FILE_SIZE  # Default 1GB
+    if args.preset == "tiny":
+        # Use defaults: 400 small, 40 medium, 2 large (1GB)
+        args.small_files = DEFAULT_SMALL_FILES
+        args.medium_files = DEFAULT_MEDIUM_FILES
+        args.large_files = DEFAULT_LARGE_FILES
+        preset_large_file_size = 1 * 1024 * 1024 * 1024  # 1GB
+    elif args.preset == "small":
+        args.small_files = 1500
+        args.medium_files = 400
+        args.large_files = 5
+        preset_large_file_size = 1 * 1024 * 1024 * 1024  # 1GB
+    elif args.preset == "medium":
+        args.small_files = 20000
+        args.medium_files = 1000
+        args.large_files = 10
+        preset_large_file_size = 1 * 1024 * 1024 * 1024  # 1GB
+    elif args.preset == "large":
+        args.small_files = 1000000
+        args.medium_files = 10000
+        args.large_files = 10
+        preset_large_file_size = 5 * 1024 * 1024 * 1024  # 5GB
+
     # Build config
     config = TestConfig(
         small_files=args.small_files,
         medium_files=args.medium_files,
         large_files=args.large_files,
+        large_file_size=preset_large_file_size,
         subdirectories=args.subdirectories,
         max_nesting_depth=args.max_nesting_depth,
         max_workers=args.max_workers,
@@ -1477,10 +1517,11 @@ def main() -> int:
     print("=" * 60)
     print("SNAPSHOTS LIBRARY STRESS TEST")
     print("=" * 60)
-    print(f"Configuration:")
+    preset_str = f" (preset: {args.preset})" if args.preset else ""
+    print(f"Configuration:{preset_str}")
     print(f"  Small files: {config.small_files} x {SMALL_FILE_SIZE} bytes")
     print(f"  Medium files: {config.medium_files} x {MEDIUM_FILE_SIZE // (1024 * 1024)} MB")
-    print(f"  Large files: {config.large_files} x {LARGE_FILE_SIZE // (1024 * 1024 * 1024)} GB")
+    print(f"  Large files: {config.large_files} x {config.large_file_size // (1024 * 1024 * 1024)} GB")
     print(f"  Subdirectories: {config.subdirectories}")
     print(f"  Max nesting depth: {config.max_nesting_depth}")
     print(f"  Max workers: {config.max_workers}")
