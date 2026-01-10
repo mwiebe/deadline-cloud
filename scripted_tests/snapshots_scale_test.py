@@ -493,32 +493,40 @@ def verify_downloaded_files(
 
     Returns a CorrectnessResult with verification statistics.
     """
+    import sys
+
     print_fn("Verifying downloaded files...")
     verified = 0
     failed = 0
     failures: List[str] = []
+    total_expected = len(expected_checksums)
 
     for rel_path, expected_checksum in expected_checksums.items():
         file_path = download_root / rel_path
         if not file_path.exists():
             failures.append(f"MISSING: {rel_path}")
             failed += 1
-            continue
-
-        actual_checksum = compute_file_checksum(file_path)
-        if actual_checksum != expected_checksum:
-            failures.append(
-                f"MISMATCH: {rel_path} "
-                f"(expected {expected_checksum[:16]}..., got {actual_checksum[:16]}...)"
-            )
-            failed += 1
         else:
-            verified += 1
+            actual_checksum = compute_file_checksum(file_path)
+            if actual_checksum != expected_checksum:
+                failures.append(
+                    f"MISMATCH: {rel_path} "
+                    f"(expected {expected_checksum[:16]}..., got {actual_checksum[:16]}...)"
+                )
+                failed += 1
+            else:
+                verified += 1
 
-        if (verified + failed) % 500 == 0:
-            print_fn(f"  Verified {verified + failed} files...")
+        # Update progress bar
+        current = verified + failed
+        if current % 500 == 0 or current == total_expected:
+            sys.stdout.write(_print_progress_bar(current, total_expected, "  Verify"))
+            sys.stdout.flush()
+
+    print_fn("")  # Newline after progress bar
 
     # Check for unexpected files
+    unexpected_count = 0
     for dirpath, _, filenames in os.walk(download_root):
         for filename in filenames:
             file_path = Path(dirpath) / filename
@@ -526,6 +534,10 @@ def verify_downloaded_files(
             if rel_path not in expected_checksums:
                 failures.append(f"UNEXPECTED: {rel_path}")
                 failed += 1
+                unexpected_count += 1
+
+    if unexpected_count > 0:
+        print_fn(f"  Found {unexpected_count} unexpected files")
 
     print_fn(f"  Verification complete: {verified} OK, {failed} FAILED")
     return CorrectnessResult(
