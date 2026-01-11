@@ -70,12 +70,13 @@ from ...exceptions import (
 from ..._utils import _get_long_path_compatible_path
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
-# Import S3-specific functions
+# Import S3-specific functions and types
 from ._download_manifest_s3 import (
     download_s3_multipart_async,
     download_s3_chunk_to_offset,
     download_s3_chunk_multipart_async,
     MIN_SIZE_FOR_MULTIPART_DOWNLOAD,
+    S3ParallelDownloadState,
 )
 
 # Import filesystem-specific functions
@@ -130,7 +131,7 @@ class _DownloadFileResult:
 @dataclass
 class _ChunkedFileState:
     """
-    State tracker for a chunked file download.
+    State tracker for a chunked file download (filesystem cache - no multipart).
 
     Tracks how many chunks remain to be downloaded. When the last chunk completes,
     it triggers finalization (atomic move + mtime update + hash cache update).
@@ -271,7 +272,8 @@ class _DownloadPipeline:
         """
         Download a single file synchronously (setup + copy + finalize in one call).
 
-        This eliminates asyncio overhead by doing all work in a single executor task.
+        For small files or filesystem cache: does all work in a single executor task.
+        For large S3 files: submits parts in parallel and returns immediately.
         """
         try:
             # Check for cancellation
@@ -331,60 +333,35 @@ class _DownloadPipeline:
                         f"Unknown file conflict resolution: {self._file_conflict_resolution}"
                     )
 
-            # Create temp file and copy
+            # Create temp file
             temp_suffix = secrets.token_hex(5)
             temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
 
+            # For large S3 files, use parallel multipart download
+            if (
+                isinstance(self._data_cache, S3DataCache)
+                and file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD
+            ):
+                self._setup_and_download_large_single_file(entry, local_path, temp_path, file_size)
+                # Don't decrement pending here - the last part will do it
+                return
+
+            # For small files or filesystem cache, do everything synchronously
             try:
-                # Copy based on data cache type
                 if isinstance(self._data_cache, S3DataCache):
-                    bytes_downloaded = self._download_from_s3(
-                        entry.hash, temp_path, file_size
-                    )
+                    bytes_downloaded = self._download_small_s3_file(entry.hash, temp_path)
                 elif isinstance(self._data_cache, FileSystemDataCache):
                     bytes_downloaded = self._copy_from_filesystem(entry.hash, temp_path)
                 else:
                     raise TypeError(f"Unsupported data cache type: {type(self._data_cache)}")
 
                 # Finalize - atomic move and mtime update
-                os.replace(temp_path, local_path)
+                self._finalize_single_file(entry, local_path, temp_path, bytes_downloaded)
 
-                if entry.mtime is not None:
-                    mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
-                    os.utime(local_path, ns=(mtime_ns, mtime_ns))
-
-                actual_mtime_ns = local_path.stat().st_mtime_ns
-                actual_mtime_us = actual_mtime_ns // 1_000
-
-                # Update hash cache
-                if self._hash_cache is not None and entry.hash is not None:
-                    resolved_path = str(local_path.resolve())
-                    self._hash_cache.put_entry(
-                        HashCacheEntry(
-                            file_path=resolved_path,
-                            hash_algorithm=self._hash_alg_enum,
-                            file_hash=entry.hash,
-                            last_modified_time=str(actual_mtime_ns),
-                            range_start=0,
-                            range_end=WHOLE_FILE_RANGE_END,
-                        )
-                    )
-
-                logger.debug(f"Downloaded {entry.path} to {local_path}")
-                self._record_result(
-                    _DownloadFileResult(
-                        entry=entry,
-                        bytes_downloaded=bytes_downloaded,
-                        local_path=local_path,
-                        was_skipped=False,
-                        actual_mtime_us=actual_mtime_us,
-                    )
-                )
-
-            finally:
-                # Clean up temp file if it still exists
-                if temp_path.exists():
-                    temp_path.unlink(missing_ok=True)
+            except Exception:
+                # Clean up temp file on error
+                temp_path.unlink(missing_ok=True)
+                raise
 
             self._decrement_pending()
 
@@ -392,33 +369,28 @@ class _DownloadPipeline:
             self._record_error(e)
             self._decrement_pending()
 
-    def _download_from_s3(self, hash_value: str, temp_path: Path, file_size: int) -> int:
-        """Download a file from S3 to temp_path."""
+    # =========================================================================
+    # S3-specific: Small file download
+    # =========================================================================
+
+    def _download_small_s3_file(self, hash_value: str, temp_path: Path) -> int:
+        """Download a small file from S3 in a single request."""
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError("Expected S3DataCache")
 
         s3_key = self._data_cache.get_object_key(hash_value, self._hash_alg)
 
         try:
-            # For large files, use multipart download
-            if file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-                # Pre-allocate the file
-                with open(temp_path, "wb") as f:
-                    preallocate_file(f, file_size)
-                # Use synchronous multipart download
-                return self._download_s3_multipart_sync(s3_key, temp_path, file_size)
-            else:
-                # Small file - single request
-                response = self._data_cache.s3_client.get_object(
-                    Bucket=self._data_cache.s3_bucket,
-                    Key=s3_key,
-                )
-                data = response["Body"].read()
-                with open(temp_path, "wb") as f:
-                    f.write(data)
-                if self._progress_tracker:
-                    self._progress_tracker.track_progress_callback(len(data))
-                return len(data)
+            response = self._data_cache.s3_client.get_object(
+                Bucket=self._data_cache.s3_bucket,
+                Key=s3_key,
+            )
+            data = response["Body"].read()
+            with open(temp_path, "wb") as f:
+                f.write(data)
+            if self._progress_tracker:
+                self._progress_tracker.track_progress_callback(len(data))
+            return len(data)
 
         except ClientError as exc:
             status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
@@ -435,40 +407,66 @@ class _DownloadPipeline:
                 error_details=str(bce),
             ) from bce
 
-    def _download_s3_multipart_sync(self, s3_key: str, temp_path: Path, file_size: int) -> int:
-        """Download a large file from S3 using byte-range requests (synchronous)."""
+    # =========================================================================
+    # S3-specific: Large file parallel multipart download
+    # =========================================================================
+
+    def _setup_and_download_large_single_file(
+        self,
+        entry: ManifestFilePath,
+        local_path: Path,
+        temp_path: Path,
+        file_size: int,
+    ) -> None:
+        """
+        Setup parallel multipart download for a large single file.
+
+        Pre-allocates the temp file and submits all parts to the executor.
+        The last part to complete triggers finalization.
+        """
+        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError("Expected S3DataCache")
 
-        # Import the part size constant from the S3 module
-        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        # Pre-allocate the temp file
+        with open(temp_path, "wb") as f:
+            preallocate_file(f, file_size)
 
+        # Calculate number of parts
         part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-        total_downloaded = 0
+        num_parts = (file_size + part_size - 1) // part_size
 
-        with open(temp_path, "r+b") as f:
-            offset = 0
-            while offset < file_size:
-                end = min(offset + part_size - 1, file_size - 1)
-                range_header = f"bytes={offset}-{end}"
+        # Create state tracker
+        state = S3ParallelDownloadState(
+            entry=entry,
+            local_path=local_path,
+            temp_path=temp_path,
+            file_size=file_size,
+            parts_remaining=num_parts,
+        )
 
-                response = self._data_cache.s3_client.get_object(
-                    Bucket=self._data_cache.s3_bucket,
-                    Key=s3_key,
-                    Range=range_header,
-                )
-                data = response["Body"].read()
+        s3_key = self._data_cache.get_object_key(entry.hash, self._hash_alg)  # type: ignore
 
-                f.seek(offset)
-                f.write(data)
-                total_downloaded += len(data)
+        # Submit all parts to executor
+        for part_idx in range(num_parts):
+            offset = part_idx * part_size
+            end = min(offset + part_size - 1, file_size - 1)
+            part_length = end - offset + 1
 
-                if self._progress_tracker:
-                    self._progress_tracker.track_progress_callback(len(data))
+            self._executor.submit(
+                self._download_part_with_callback,
+                state,
+                s3_key,
+                offset,
+                end,
+                part_length,
+                is_chunked=False,
+            )
 
-                offset += part_size
-
-        return total_downloaded
+    # =========================================================================
+    # Filesystem-specific: Copy from cache
+    # =========================================================================
 
     def _copy_from_filesystem(self, hash_value: str, temp_path: Path) -> int:
         """Copy a file from filesystem cache to temp_path."""
@@ -484,69 +482,202 @@ class _DownloadPipeline:
 
         return copied_size
 
-    def _download_s3_chunk_multipart_sync(
+    # =========================================================================
+    # Common: Single file finalization
+    # =========================================================================
+
+    def _finalize_single_file(
         self,
-        chunk_hash: str,
-        chunk_idx: int,
+        entry: ManifestFilePath,
+        local_path: Path,
         temp_path: Path,
-        file_offset: int,
-        chunk_size: int,
-    ) -> int:
+        bytes_downloaded: int,
+    ) -> None:
+        """Finalize a single file download (atomic move + mtime + hash cache)."""
+        os.replace(temp_path, local_path)
+
+        if entry.mtime is not None:
+            mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
+            os.utime(local_path, ns=(mtime_ns, mtime_ns))
+
+        actual_mtime_ns = local_path.stat().st_mtime_ns
+        actual_mtime_us = actual_mtime_ns // 1_000
+
+        # Update hash cache
+        if self._hash_cache is not None and entry.hash is not None:
+            resolved_path = str(local_path.resolve())
+            self._hash_cache.put_entry(
+                HashCacheEntry(
+                    file_path=resolved_path,
+                    hash_algorithm=self._hash_alg_enum,
+                    file_hash=entry.hash,
+                    last_modified_time=str(actual_mtime_ns),
+                    range_start=0,
+                    range_end=WHOLE_FILE_RANGE_END,
+                )
+            )
+
+        logger.debug(f"Downloaded {entry.path} to {local_path}")
+        self._record_result(
+            _DownloadFileResult(
+                entry=entry,
+                bytes_downloaded=bytes_downloaded,
+                local_path=local_path,
+                was_skipped=False,
+                actual_mtime_us=actual_mtime_us,
+            )
+        )
+
+    # =========================================================================
+    # S3-specific: Part download with completion callback
+    # =========================================================================
+
+    def _download_part_with_callback(
+        self,
+        state: S3ParallelDownloadState,
+        s3_key: str,
+        offset: int,
+        end: int,
+        part_length: int,
+        is_chunked: bool,
+    ) -> None:
         """
-        Download a large chunk from S3 using byte-range requests (synchronous).
+        Download one part of a large file and check if all parts are complete.
 
-        Writes the chunk data to the specified offset in the temp file.
+        The last part to complete triggers finalization.
         """
-        if not isinstance(self._data_cache, S3DataCache):
-            raise TypeError("Expected S3DataCache")
-
-        # Import the part size constant from the S3 module
-        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-
-        s3_key = self._data_cache.get_object_key(chunk_hash, self._hash_alg)
-        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-        total_downloaded = 0
-
         try:
-            with open(temp_path, "r+b") as f:
-                chunk_offset = 0  # Offset within the chunk (for S3 Range header)
-                while chunk_offset < chunk_size:
-                    end = min(chunk_offset + part_size - 1, chunk_size - 1)
-                    range_header = f"bytes={chunk_offset}-{end}"
+            # Check for cancellation
+            if self._cancelled:
+                with state.lock:
+                    state.parts_remaining -= 1
+                    if state.parts_remaining == 0:
+                        state.temp_path.unlink(missing_ok=True)
+                        self._decrement_pending()
+                return
 
-                    response = self._data_cache.s3_client.get_object(
-                        Bucket=self._data_cache.s3_bucket,
-                        Key=s3_key,
-                        Range=range_header,
+            if not isinstance(self._data_cache, S3DataCache):
+                raise TypeError("Expected S3DataCache")
+
+            range_header = f"bytes={offset}-{end}"
+
+            response = self._data_cache.s3_client.get_object(
+                Bucket=self._data_cache.s3_bucket,
+                Key=s3_key,
+                Range=range_header,
+            )
+            data = response["Body"].read()
+
+            # Write to the correct position in the file
+            with open(state.temp_path, "r+b") as f:
+                f.seek(offset)
+                f.write(data)
+
+            if self._progress_tracker:
+                self._progress_tracker.track_progress_callback(len(data))
+
+            # Update state and check if all parts are done
+            with state.lock:
+                state.total_bytes_downloaded += len(data)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+                has_errors = len(state.part_errors) > 0
+
+            # If all parts done, finalize (last part to finish does this)
+            if all_done:
+                if has_errors:
+                    state.temp_path.unlink(missing_ok=True)
+                    self._record_error(state.part_errors[0])
+                else:
+                    self._finalize_s3_parallel_download(state, is_chunked)
+                self._decrement_pending()
+
+        except (ClientError, BotoCoreError) as e:
+            # Record error in state, let last part handle cleanup
+            with state.lock:
+                state.part_errors.append(e)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+        except Exception as e:
+            with state.lock:
+                state.part_errors.append(e)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+    # =========================================================================
+    # S3-specific: Parallel download finalization
+    # =========================================================================
+
+    def _finalize_s3_parallel_download(
+        self, state: S3ParallelDownloadState, is_chunked: bool
+    ) -> None:
+        """Finalize a large file download (atomic move + mtime + hash cache)."""
+        try:
+            entry = state.entry
+            local_path = state.local_path
+            temp_path = state.temp_path
+
+            os.replace(temp_path, local_path)
+
+            if entry.mtime is not None:
+                mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
+                os.utime(local_path, ns=(mtime_ns, mtime_ns))
+
+            actual_mtime_ns = local_path.stat().st_mtime_ns
+            actual_mtime_us = actual_mtime_ns // 1_000
+
+            # Update hash cache
+            if self._hash_cache is not None:
+                if is_chunked and entry.chunkhashes is not None:
+                    # For chunked files, store each chunk's hash
+                    _update_hash_cache_for_chunked_file(
+                        entry,
+                        local_path,
+                        self._hash_alg_enum,
+                        self._hash_cache,
+                        self._chunk_size_bytes,
+                        actual_mtime_ns,
                     )
-                    data = response["Body"].read()
+                elif entry.hash is not None:
+                    # For single files, store the whole file hash
+                    resolved_path = str(local_path.resolve())
+                    self._hash_cache.put_entry(
+                        HashCacheEntry(
+                            file_path=resolved_path,
+                            hash_algorithm=self._hash_alg_enum,
+                            file_hash=entry.hash,
+                            last_modified_time=str(actual_mtime_ns),
+                            range_start=0,
+                            range_end=WHOLE_FILE_RANGE_END,
+                        )
+                    )
 
-                    # Write to the correct position in the file
-                    f.seek(file_offset + chunk_offset)
-                    f.write(data)
-                    total_downloaded += len(data)
+            file_type = "chunked file" if is_chunked else "file"
+            logger.debug(f"Downloaded {file_type} {entry.path} to {local_path}")
+            self._record_result(
+                _DownloadFileResult(
+                    entry=entry,
+                    bytes_downloaded=state.total_bytes_downloaded,
+                    local_path=local_path,
+                    was_skipped=False,
+                    actual_mtime_us=actual_mtime_us,
+                )
+            )
 
-                    if self._progress_tracker:
-                        self._progress_tracker.track_progress_callback(len(data))
-
-                    chunk_offset += part_size
-
-            return total_downloaded
-
-        except ClientError as exc:
-            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-            raise JobAttachmentsS3ClientError(
-                action=f"downloading chunk {chunk_idx}",
-                status_code=status_code,
-                bucket_name=self._data_cache.s3_bucket,
-                key_or_prefix=s3_key,
-                message=str(exc),
-            ) from exc
-        except BotoCoreError as bce:
-            raise JobAttachmentS3BotoCoreError(
-                action=f"downloading chunk {chunk_idx}",
-                error_details=str(bce),
-            ) from bce
+        except Exception as e:
+            state.temp_path.unlink(missing_ok=True)
+            self._record_error(e)
 
     # =========================================================================
     # Chunked File Download (fan-out/fan-in)
@@ -554,11 +685,11 @@ class _DownloadPipeline:
 
     def _setup_and_download_chunked_file(self, entry: ManifestFilePath) -> None:
         """
-        Setup a chunked file download and submit all chunk downloads.
+        Setup a chunked file download and submit all downloads.
 
-        This runs in the executor. After setup, it submits chunk downloads
-        which also run in the executor. The last chunk to complete triggers
-        finalization.
+        For S3: submits all parts of all chunks in parallel using S3ParallelDownloadState.
+        For filesystem: submits all chunks in parallel using _ChunkedFileState.
+        The last part/chunk to complete triggers finalization.
         """
         try:
             # Check for cancellation
@@ -624,37 +755,299 @@ class _DownloadPipeline:
             with open(temp_path, "wb") as f:
                 preallocate_file(f, file_size)
 
-            # Create state tracker for this chunked file
-            state = _ChunkedFileState(
-                entry=entry,
-                local_path=local_path,
-                temp_path=temp_path,
-                file_size=file_size,
-                chunks_remaining=len(entry.chunkhashes),
-            )
-
-            # Submit all chunk downloads
-            num_chunks = len(entry.chunkhashes)
-            for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
-                offset = chunk_idx * self._chunk_size_bytes
-                # Calculate actual chunk size (last chunk may be smaller)
-                if chunk_idx == num_chunks - 1:
-                    actual_chunk_size = file_size - offset
-                else:
-                    actual_chunk_size = self._chunk_size_bytes
-
-                self._executor.submit(
-                    self._download_chunk_with_callback,
-                    state,
-                    chunk_idx,
-                    chunk_hash,
-                    offset,
-                    actual_chunk_size,
-                )
+            # For S3, use parallel parts across all chunks
+            if isinstance(self._data_cache, S3DataCache):
+                self._setup_chunked_file_parallel_parts(entry, local_path, temp_path, file_size)
+            else:
+                # For filesystem, use parallel chunks (no multipart needed)
+                self._setup_chunked_file_parallel_chunks(entry, local_path, temp_path, file_size)
 
         except Exception as e:
             self._record_error(e)
             self._decrement_pending()
+
+    def _setup_chunked_file_parallel_parts(
+        self,
+        entry: ManifestFilePath,
+        local_path: Path,
+        temp_path: Path,
+        file_size: int,
+    ) -> None:
+        """
+        Setup parallel part downloads for a chunked file from S3.
+
+        For small chunks (< part_size), downloads without Range header.
+        For large chunks, calculates all parts and submits them all to the executor.
+        The last part to complete triggers finalization.
+        """
+        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError("Expected S3DataCache")
+
+        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        num_chunks = len(entry.chunkhashes)  # type: ignore
+
+        # Calculate total number of parts across all chunks
+        total_parts = 0
+        for chunk_idx in range(num_chunks):
+            chunk_file_offset = chunk_idx * self._chunk_size_bytes
+            if chunk_idx == num_chunks - 1:
+                chunk_size = file_size - chunk_file_offset
+            else:
+                chunk_size = self._chunk_size_bytes
+
+            # Small chunks count as 1 part, large chunks have multiple parts
+            if chunk_size < MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+                total_parts += 1
+            else:
+                num_parts_in_chunk = (chunk_size + part_size - 1) // part_size
+                total_parts += num_parts_in_chunk
+
+        # Create state tracker
+        state = S3ParallelDownloadState(
+            entry=entry,
+            local_path=local_path,
+            temp_path=temp_path,
+            file_size=file_size,
+            parts_remaining=total_parts,
+        )
+
+        # Submit all parts of all chunks to executor
+        for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):  # type: ignore
+            chunk_file_offset = chunk_idx * self._chunk_size_bytes
+            if chunk_idx == num_chunks - 1:
+                chunk_size = file_size - chunk_file_offset
+            else:
+                chunk_size = self._chunk_size_bytes
+
+            s3_key = self._data_cache.get_object_key(chunk_hash, self._hash_alg)
+
+            # For small chunks, download without Range header (single request)
+            if chunk_size < MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+                self._executor.submit(
+                    self._download_small_chunk_with_callback,
+                    state,
+                    s3_key,
+                    chunk_file_offset,
+                )
+            else:
+                # For large chunks, submit all parts
+                num_parts_in_chunk = (chunk_size + part_size - 1) // part_size
+                for part_idx in range(num_parts_in_chunk):
+                    # Offset within the chunk (for S3 Range header)
+                    chunk_offset = part_idx * part_size
+                    end_in_chunk = min(chunk_offset + part_size - 1, chunk_size - 1)
+
+                    # Offset within the file (for writing)
+                    file_offset = chunk_file_offset + chunk_offset
+
+                    self._executor.submit(
+                        self._download_chunk_part_with_callback,
+                        state,
+                        s3_key,
+                        chunk_offset,
+                        end_in_chunk,
+                        file_offset,
+                    )
+
+    def _download_small_chunk_with_callback(
+        self,
+        state: S3ParallelDownloadState,
+        s3_key: str,
+        file_offset: int,
+    ) -> None:
+        """
+        Download a small chunk without Range header and check if all parts are complete.
+
+        The last part to complete triggers finalization.
+        """
+        try:
+            # Check for cancellation
+            if self._cancelled:
+                with state.lock:
+                    state.parts_remaining -= 1
+                    if state.parts_remaining == 0:
+                        state.temp_path.unlink(missing_ok=True)
+                        self._decrement_pending()
+                return
+
+            if not isinstance(self._data_cache, S3DataCache):
+                raise TypeError("Expected S3DataCache")
+
+            # Download without Range header
+            response = self._data_cache.s3_client.get_object(
+                Bucket=self._data_cache.s3_bucket,
+                Key=s3_key,
+            )
+            data = response["Body"].read()
+
+            # Write to the correct position in the file
+            with open(state.temp_path, "r+b") as f:
+                f.seek(file_offset)
+                f.write(data)
+
+            if self._progress_tracker:
+                self._progress_tracker.track_progress_callback(len(data))
+
+            # Update state and check if all parts are done
+            with state.lock:
+                state.total_bytes_downloaded += len(data)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+                has_errors = len(state.part_errors) > 0
+
+            # If all parts done, finalize (last part to finish does this)
+            if all_done:
+                if has_errors:
+                    state.temp_path.unlink(missing_ok=True)
+                    self._record_error(state.part_errors[0])
+                else:
+                    self._finalize_s3_parallel_download(state, is_chunked=True)
+                self._decrement_pending()
+
+        except (ClientError, BotoCoreError) as e:
+            with state.lock:
+                state.part_errors.append(e)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+        except Exception as e:
+            with state.lock:
+                state.part_errors.append(e)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+    def _download_chunk_part_with_callback(
+        self,
+        state: S3ParallelDownloadState,
+        s3_key: str,
+        chunk_offset: int,
+        end_in_chunk: int,
+        file_offset: int,
+    ) -> None:
+        """
+        Download one part of a chunk and check if all parts are complete.
+
+        The last part to complete triggers finalization.
+        """
+        try:
+            # Check for cancellation
+            if self._cancelled:
+                with state.lock:
+                    state.parts_remaining -= 1
+                    if state.parts_remaining == 0:
+                        state.temp_path.unlink(missing_ok=True)
+                        self._decrement_pending()
+                return
+
+            if not isinstance(self._data_cache, S3DataCache):
+                raise TypeError("Expected S3DataCache")
+
+            range_header = f"bytes={chunk_offset}-{end_in_chunk}"
+
+            response = self._data_cache.s3_client.get_object(
+                Bucket=self._data_cache.s3_bucket,
+                Key=s3_key,
+                Range=range_header,
+            )
+            data = response["Body"].read()
+
+            # Write to the correct position in the file
+            with open(state.temp_path, "r+b") as f:
+                f.seek(file_offset)
+                f.write(data)
+
+            if self._progress_tracker:
+                self._progress_tracker.track_progress_callback(len(data))
+
+            # Update state and check if all parts are done
+            with state.lock:
+                state.total_bytes_downloaded += len(data)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+                has_errors = len(state.part_errors) > 0
+
+            # If all parts done, finalize (last part to finish does this)
+            if all_done:
+                if has_errors:
+                    state.temp_path.unlink(missing_ok=True)
+                    self._record_error(state.part_errors[0])
+                else:
+                    self._finalize_s3_parallel_download(state, is_chunked=True)
+                self._decrement_pending()
+
+        except (ClientError, BotoCoreError) as e:
+            with state.lock:
+                state.part_errors.append(e)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+        except Exception as e:
+            with state.lock:
+                state.part_errors.append(e)
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+    def _setup_chunked_file_parallel_chunks(
+        self,
+        entry: ManifestFilePath,
+        local_path: Path,
+        temp_path: Path,
+        file_size: int,
+    ) -> None:
+        """
+        Setup parallel chunk downloads for a chunked file from filesystem cache.
+
+        Submits all chunks to the executor. The last chunk to complete triggers finalization.
+        """
+        # Create state tracker for this chunked file
+        state = _ChunkedFileState(
+            entry=entry,
+            local_path=local_path,
+            temp_path=temp_path,
+            file_size=file_size,
+            chunks_remaining=len(entry.chunkhashes),  # type: ignore
+        )
+
+        # Submit all chunk downloads
+        num_chunks = len(entry.chunkhashes)  # type: ignore
+        for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):  # type: ignore
+            offset = chunk_idx * self._chunk_size_bytes
+            # Calculate actual chunk size (last chunk may be smaller)
+            if chunk_idx == num_chunks - 1:
+                actual_chunk_size = file_size - offset
+            else:
+                actual_chunk_size = self._chunk_size_bytes
+
+            self._executor.submit(
+                self._download_chunk_with_callback,
+                state,
+                chunk_idx,
+                chunk_hash,
+                offset,
+                actual_chunk_size,
+            )
 
     def _download_chunk_with_callback(
         self,
@@ -665,10 +1058,9 @@ class _DownloadPipeline:
         chunk_size: int,
     ) -> None:
         """
-        Download one chunk and check if file is complete.
+        Download one chunk from filesystem cache and check if file is complete.
 
         The last chunk to complete triggers finalization.
-        For large chunks (>= MIN_SIZE_FOR_MULTIPART_DOWNLOAD), uses multipart download.
         """
         try:
             # Check for cancellation
@@ -676,30 +1068,20 @@ class _DownloadPipeline:
                 with state.lock:
                     state.chunks_remaining -= 1
                     if state.chunks_remaining == 0:
-                        # Clean up temp file
                         state.temp_path.unlink(missing_ok=True)
                         self._decrement_pending()
                 return
 
-            # Download chunk to offset - use multipart for large chunks
-            if isinstance(self._data_cache, S3DataCache) and chunk_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-                bytes_written = self._download_s3_chunk_multipart_sync(
-                    chunk_hash,
-                    chunk_idx,
-                    state.temp_path,
-                    offset,
-                    chunk_size,
-                )
-            else:
-                bytes_written = _download_chunk_to_offset(
-                    chunk_hash,
-                    chunk_idx,
-                    state.temp_path,
-                    offset,
-                    self._hash_alg,
-                    self._data_cache,
-                    self._progress_tracker,
-                )
+            # Download chunk to offset (filesystem only - S3 uses parallel parts)
+            bytes_written = _download_chunk_to_offset(
+                chunk_hash,
+                chunk_idx,
+                state.temp_path,
+                offset,
+                self._hash_alg,
+                self._data_cache,
+                self._progress_tracker,
+            )
 
             # Update state and check if all chunks are done
             with state.lock:
@@ -711,7 +1093,6 @@ class _DownloadPipeline:
             # If all chunks done, finalize (last chunk to finish does this)
             if all_done:
                 if has_errors:
-                    # Clean up and report first error
                     state.temp_path.unlink(missing_ok=True)
                     self._record_error(state.chunk_errors[0])
                 else:
@@ -719,7 +1100,6 @@ class _DownloadPipeline:
                 self._decrement_pending()
 
         except Exception as e:
-            # Record error in state, let last chunk handle cleanup
             with state.lock:
                 state.chunk_errors.append(e)
                 state.chunks_remaining -= 1
@@ -2049,9 +2429,7 @@ def download_manifest(
         # 2. Collect directories and map them to their files for hybrid creation
         # This enables interleaving directory creation with file download submission
         all_files_to_download = regular_files + chunked_files
-        sorted_dirs, dir_to_files = _collect_directories_with_files(
-            manifest, all_files_to_download
-        )
+        sorted_dirs, dir_to_files = _collect_directories_with_files(manifest, all_files_to_download)
 
         # Get chunk size from manifest for chunked file downloads
         chunk_size_bytes = manifest.fileChunkSizeBytes

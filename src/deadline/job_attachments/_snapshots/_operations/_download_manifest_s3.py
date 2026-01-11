@@ -8,6 +8,7 @@ This module implements S3-specific download functionality including:
 - Multi-part parallel downloads for large files
 - Byte-range requests for parallel part downloads
 - Chunk downloads for chunked files
+- State tracking for parallel S3 downloads
 """
 
 from __future__ import annotations
@@ -16,8 +17,10 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TYPE_CHECKING
 
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -28,6 +31,9 @@ from ...exceptions import (
 )
 from ...progress_tracker import ProgressTracker
 
+if TYPE_CHECKING:
+    from .._manifest import ManifestFilePath
+
 logger = logging.getLogger("deadline.job_attachments.download")
 
 # Part size for multi-part parallel downloads (8MB)
@@ -36,6 +42,32 @@ DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = 8 * 1024 * 1024  # 8MB
 
 # Minimum file size to use multi-part download (files smaller than this use single request)
 MIN_SIZE_FOR_MULTIPART_DOWNLOAD = 16 * 1024 * 1024  # 16MB
+
+
+@dataclass
+class S3ParallelDownloadState:
+    """
+    State tracker for parallel byte-range downloads from S3.
+
+    Used for both single large files and chunked files when downloading from S3.
+    Tracks how many byte-range parts remain to be downloaded across all chunks
+    (or the single file). When the last part completes, it triggers finalization.
+
+    For single files: parts_remaining = number of byte-range parts
+    For chunked files: parts_remaining = sum of parts across all chunks
+
+    Note: This is only used for S3 downloads. Filesystem cache downloads use
+    _ChunkedFileState instead, which tracks whole chunks rather than byte-range parts.
+    """
+
+    entry: "ManifestFilePath"
+    local_path: Path
+    temp_path: Path
+    file_size: int
+    parts_remaining: int
+    total_bytes_downloaded: int = 0
+    part_errors: List[Exception] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def download_file_from_s3(
