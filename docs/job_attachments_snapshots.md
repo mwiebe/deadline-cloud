@@ -312,7 +312,6 @@ def collect_manifest(
     optional_filenames: Optional[List[Path | str]] = None,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
     file_chunk_size_bytes: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsSnapshot:
 ```
 
@@ -557,7 +556,6 @@ def hash_upload_manifest(
     force_rehash: bool = False,
     max_memory_bytes: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
 ) -> AbsManifest:
 ```
@@ -572,7 +570,6 @@ def hash_upload_manifest(
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `max_memory_bytes` | Maximum memory to use for buffering (default: auto-detect) |
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
-| `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
 **Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
