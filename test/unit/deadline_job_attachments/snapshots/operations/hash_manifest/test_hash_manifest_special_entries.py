@@ -11,7 +11,6 @@ These tests cover:
 """
 
 from pathlib import Path
-from typing import List
 
 from deadline.job_attachments._snapshots import (
     hash_manifest,
@@ -96,15 +95,12 @@ class TestSymlinkPassthrough:
             total_size=0,
         )
 
-        messages: List[str] = []
-        hash_manifest(
-            manifest=input_manifest,
-            print_function_callback=messages.append,
-        )
+        hashed = hash_manifest(manifest=input_manifest)
 
-        assert len(messages) == 1
-        assert "Symlink (no hash)" in messages[0]
-        assert symlink_path in messages[0]
+        # Symlink should be passed through unchanged
+        assert len(hashed.files) == 1
+        assert hashed.files[0].symlink_target == target_path
+        assert hashed.files[0].hash is None
 
     def test_diff_manifest_with_symlinks(self, tmp_path: Path) -> None:
         """Diff manifest with symlink entries passes them through unchanged."""

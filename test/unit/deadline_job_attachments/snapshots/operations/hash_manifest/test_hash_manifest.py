@@ -8,12 +8,10 @@ These tests cover:
 - Metadata preservation (size, mtime, runnable)
 - End-to-end with collect_manifest
 - Manifest type preservation (snapshot vs diff)
-- Progress callbacks
 """
 
 import os
 from pathlib import Path
-from typing import List
 
 from deadline.job_attachments._snapshots import (
     hash_manifest,
@@ -180,47 +178,6 @@ class TestGetOrComputeHash:
 
         expected = hash_file(str(test_file), HashAlgorithm.XXH128)
         assert result == expected
-
-
-class TestProgressCallback:
-    """Tests for progress callback functionality."""
-
-    def test_callback_called_for_each_file(self, tmp_path: Path) -> None:
-        """Progress callback is called for each file."""
-        (tmp_path / "a.txt").write_text("aaa")
-        (tmp_path / "b.txt").write_text("bbb")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
-        )
-
-        messages: List[str] = []
-        hash_manifest(collected, print_function_callback=messages.append)
-
-        assert len(messages) == 2
-        assert all("Hashed:" in msg for msg in messages)
-
-    def test_callback_for_symlinks(self, tmp_path: Path) -> None:
-        """Progress callback indicates symlinks are not hashed."""
-        target = tmp_path / "target.txt"
-        target.write_text("content")
-        link = tmp_path / "link.txt"
-
-        link.symlink_to("target.txt")
-
-        collected = collect_manifest(
-            [tmp_path],
-            [],
-            symlink_policy=SymlinkPolicy.PRESERVE,
-        )
-
-        messages: List[str] = []
-        hash_manifest(collected, print_function_callback=messages.append)
-
-        symlink_msg = [m for m in messages if "link.txt" in m][0]
-        assert "Symlink" in symlink_msg or "no hash" in symlink_msg
 
 
 class TestHashDiffManifest:

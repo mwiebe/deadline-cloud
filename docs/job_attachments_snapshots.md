@@ -415,7 +415,6 @@ def hash_manifest(
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     file_chunk_size_bytes: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsManifest:
 ```
 
@@ -427,7 +426,6 @@ def hash_manifest(
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
-| `print_function_callback` | Progress callback for status messages |
 
 **Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 

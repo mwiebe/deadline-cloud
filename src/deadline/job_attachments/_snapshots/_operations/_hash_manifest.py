@@ -24,8 +24,9 @@ deletions, and other v2025-only features.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import List, Optional
 
 from .._manifest import (
     AbsManifest,
@@ -36,13 +37,14 @@ from .._manifest import (
 from ...asset_manifests.hash_algorithms import hash_file, HashAlgorithm
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 
+logger = logging.getLogger(__name__)
+
 
 def hash_manifest(
     manifest: AbsManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     file_chunk_size_bytes: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AbsManifest:
     """
     Fill in hashes for a manifest structure with absolute paths.
@@ -61,7 +63,6 @@ def hash_manifest(
             - None: Preserve the chunk size from the input manifest
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
             - Positive int: Chunk size in bytes for large files
-        print_function_callback: Progress callback
 
     Returns:
         A NEW manifest of the same type with all hashes filled in. The manifest type
@@ -119,7 +120,7 @@ def hash_manifest(
                     symlink_target=entry.symlink_target,
                 )
             )
-            print_function_callback(f"Symlink (no hash): {entry.path}")
+            logger.debug("Symlink (no hash): %s", entry.path)
             continue
 
         # Deleted entries don't need hashing - pass through unchanged
@@ -175,7 +176,7 @@ def hash_manifest(
                     runnable=entry.runnable,
                 )
             )
-            print_function_callback(f"Hashed (chunked, {len(chunk_hashes)} chunks): {entry.path}")
+            logger.debug("Hashed (chunked, %d chunks): %s", len(chunk_hashes), entry.path)
         else:
             # Small file or no chunking: hash should be None (unhashed), chunkhashes should be None
             if entry.hash is not None:
@@ -207,7 +208,7 @@ def hash_manifest(
                     runnable=entry.runnable,
                 )
             )
-            print_function_callback(f"Hashed: {entry.path}")
+            logger.debug("Hashed: %s", entry.path)
 
         if entry.size is not None:
             total_size += entry.size
