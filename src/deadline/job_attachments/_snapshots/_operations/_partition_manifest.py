@@ -31,9 +31,10 @@ All composable operations use unified manifest classes from manifest.py internal
 
 from __future__ import annotations
 
+import logging
 import os
 import posixpath
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from .._manifest import (
     AbsSnapshot,
@@ -47,6 +48,8 @@ from .._manifest import (
 )
 from ._subtree_manifest import subtree_manifest
 
+logger = logging.getLogger(__name__)
+
 
 def partition_manifest(
     manifest: AnyManifest,
@@ -54,7 +57,6 @@ def partition_manifest(
     *,
     referenced_paths: Optional[List[str]] = None,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> List[Tuple[str, RelManifest]]:
     """
     Partition a manifest into multiple (root, RelManifest) pairs.
@@ -68,7 +70,6 @@ def partition_manifest(
                          determination even if no files exist under them.
         symlink_policy: How to handle symlinks that escape their partition root.
                        Only COLLAPSE_ALL, COLLAPSE_ESCAPING, and EXCLUDE_ALL are supported.
-        print_function_callback: Progress callback for status messages
 
     Returns:
         A list of (root, RelManifest) tuples where:
@@ -134,7 +135,6 @@ def partition_manifest(
         manifest_dirs=all_dirs,
         referenced_paths=referenced_paths,
         manifest_is_absolute=manifest_is_absolute,
-        print_function_callback=print_function_callback,
     )
 
     # Build result: extract subtree for each root
@@ -160,7 +160,7 @@ def partition_manifest(
                     dirs=list(manifest.dirs),
                 )
             result.append((root, rel_manifest))
-            print_function_callback(f"Partitioned root '{root}' with {len(manifest.files)} entries")
+            logger.debug("Partitioned root '%s' with %d entries", root, len(manifest.files))
         else:
             # Use subtree_manifest to extract the subtree (returns empty manifest if no entries)
             subtree = subtree_manifest(
@@ -169,7 +169,7 @@ def partition_manifest(
                 symlink_policy=symlink_policy,
             )
             result.append((root, subtree))
-            print_function_callback(f"Partitioned root '{root}' with {len(subtree.files)} entries")
+            logger.debug("Partitioned root '%s' with %d entries", root, len(subtree.files))
 
     return result
 
@@ -263,7 +263,6 @@ def _determine_all_roots(
     manifest_dirs: Set[str],
     referenced_paths: List[str],
     manifest_is_absolute: bool,
-    print_function_callback: Callable[[Any], None],
 ) -> List[str]:
     """
     Determine all roots for partitioning.
@@ -280,10 +279,10 @@ def _determine_all_roots(
 
         if manifest_is_absolute and os.name == "nt":
             # Windows: one root per drive letter or UNC root
-            return _determine_windows_roots(all_paths_for_roots, print_function_callback)
+            return _determine_windows_roots(all_paths_for_roots)
         else:
             # POSIX or relative paths: single root (longest common prefix)
-            return _determine_common_root(all_paths_for_roots, print_function_callback)
+            return _determine_common_root(all_paths_for_roots)
 
     # Explicit roots provided - find remaining paths not under any explicit root
     remaining_paths: List[str] = []
@@ -302,7 +301,6 @@ def _determine_all_roots(
         remaining_paths=remaining_paths,
         explicit_roots=explicit_roots,
         manifest_is_absolute=manifest_is_absolute,
-        print_function_callback=print_function_callback,
     )
 
     return explicit_roots + sorted(additional_roots)
@@ -310,7 +308,6 @@ def _determine_all_roots(
 
 def _determine_windows_roots(
     paths: List[str],
-    print_function_callback: Callable[[Any], None],
 ) -> List[str]:
     """
     Determine roots for Windows paths - one per drive letter or UNC root.
@@ -331,7 +328,7 @@ def _determine_windows_roots(
     for drive_root, drive_paths in sorted(paths_by_drive.items()):
         common = _longest_common_path_prefix(drive_paths)
         roots.append(common)
-        print_function_callback(f"Auto-determined root for {drive_root}: {common}")
+        logger.debug("Auto-determined root for %s: %s", drive_root, common)
 
     return roots
 
@@ -356,7 +353,6 @@ def _get_windows_drive_root(path: str) -> str:
 
 def _determine_common_root(
     paths: List[str],
-    print_function_callback: Callable[[Any], None],
 ) -> List[str]:
     """
     Determine a single root as the longest common path prefix.
@@ -365,7 +361,7 @@ def _determine_common_root(
         return []
 
     common = _longest_common_path_prefix(paths)
-    print_function_callback(f"Auto-determined common root: {common}")
+    logger.debug("Auto-determined common root: %s", common)
     return [common]
 
 
@@ -421,7 +417,6 @@ def _determine_additional_roots(
     remaining_paths: List[str],
     explicit_roots: List[str],
     manifest_is_absolute: bool,
-    print_function_callback: Callable[[Any], None],
 ) -> List[str]:
     """
     Determine additional roots for paths not covered by explicit roots.
@@ -445,7 +440,6 @@ def _determine_additional_roots(
             roots = _find_valid_roots_for_paths(
                 paths=drive_paths,
                 explicit_roots=explicit_roots,
-                print_function_callback=print_function_callback,
             )
             additional_roots.extend(roots)
 
@@ -455,14 +449,12 @@ def _determine_additional_roots(
         return _find_valid_roots_for_paths(
             paths=remaining_paths,
             explicit_roots=explicit_roots,
-            print_function_callback=print_function_callback,
         )
 
 
 def _find_valid_roots_for_paths(
     paths: List[str],
     explicit_roots: List[str],
-    print_function_callback: Callable[[Any], None],
 ) -> List[str]:
     """
     Find valid roots for the given paths that don't include any explicit root as a subpath.
@@ -478,7 +470,7 @@ def _find_valid_roots_for_paths(
     # Check if candidate includes any explicit root as a subpath
     includes_explicit = any(_is_path_under_root(root, candidate) for root in explicit_roots)
     if not includes_explicit:
-        print_function_callback(f"Auto-determined additional root: {candidate}")
+        logger.debug("Auto-determined additional root: %s", candidate)
         return [candidate]
 
     # The common root would include an explicit root - need to split into multiple roots
@@ -491,7 +483,7 @@ def _find_valid_roots_for_paths(
 
     if problematic_root is None:
         # Shouldn't happen, but fallback
-        print_function_callback(f"Auto-determined additional root: {candidate}")
+        logger.debug("Auto-determined additional root: %s", candidate)
         return [candidate]
 
     # We need to group paths by their top-level directory relative to candidate
@@ -523,14 +515,13 @@ def _find_valid_roots_for_paths(
                 _is_path_under_root(root, group_common) for root in explicit_roots
             )
             if not group_includes_explicit:
-                print_function_callback(f"Auto-determined additional root: {group_common}")
+                logger.debug("Auto-determined additional root: %s", group_common)
                 result.append(group_common)
             else:
                 # Need to recurse further within this group
                 group_roots = _find_valid_roots_for_paths(
                     paths=group_paths,
                     explicit_roots=explicit_roots,
-                    print_function_callback=print_function_callback,
                 )
                 result.extend(group_roots)
         return result
@@ -553,14 +544,13 @@ def _find_valid_roots_for_paths(
                 _is_path_under_root(root, group_common) for root in explicit_roots
             )
             if not group_includes_explicit:
-                print_function_callback(f"Auto-determined additional root: {group_common}")
+                logger.debug("Auto-determined additional root: %s", group_common)
                 result.append(group_common)
             else:
                 # Need to recurse further within this group
                 group_roots = _find_valid_roots_for_paths(
                     paths=group_paths,
                     explicit_roots=explicit_roots,
-                    print_function_callback=print_function_callback,
                 )
                 result.extend(group_roots)
         return result
@@ -600,14 +590,13 @@ def _find_valid_roots_for_paths(
                 _is_path_under_root(root, group_common) for root in explicit_roots
             )
             if not group_includes_explicit:
-                print_function_callback(f"Auto-determined additional root: {group_common}")
+                logger.debug("Auto-determined additional root: %s", group_common)
                 result.append(group_common)
             else:
                 # Still problematic - recurse
                 group_roots = _find_valid_roots_for_paths(
                     paths=group_paths,
                     explicit_roots=explicit_roots,
-                    print_function_callback=print_function_callback,
                 )
                 result.extend(group_roots)
         return result
