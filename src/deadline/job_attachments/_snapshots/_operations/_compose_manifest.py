@@ -20,8 +20,9 @@ deletions, and other v2025-only features.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from .._manifest import (
     AbsSnapshot,
@@ -32,6 +33,8 @@ from .._manifest import (
     Snapshot,
     SnapshotDiff,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -299,7 +302,6 @@ def _split_path(path: str) -> List[str]:
 
 def compose_manifests(
     manifests: List[AnyManifest],
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AnyManifest:
     """
     Compose multiple manifests into a single manifest by layering them together.
@@ -314,7 +316,6 @@ def compose_manifests(
                    (all absolute or all relative). The first manifest should
                    be a snapshot, followed by zero or more diff manifests,
                    OR all manifests should be diffs.
-        print_function_callback: Progress callback
 
     Returns:
         A single composed manifest representing the final state.
@@ -334,14 +335,13 @@ def compose_manifests(
     # Determine composition type based on first manifest
     first = manifests[0]
     if isinstance(first, (AbsSnapshot, Snapshot)):
-        return _compose_snapshot_diffs(manifests, print_function_callback)
+        return _compose_snapshot_diffs(manifests)
     else:
-        return _compose_diffs(manifests, print_function_callback)
+        return _compose_diffs(manifests)
 
 
 def _compose_snapshot_diffs(
     manifests: List[AnyManifest],
-    print_function_callback: Callable[[Any], None],
 ) -> AnyManifest:
     """
     Compose manifests: (snapshot, diff, diff, ...) → snapshot.
@@ -384,7 +384,7 @@ def _compose_snapshot_diffs(
         components = _split_path(dir_entry.path)
         root.insert_path(components)
 
-    print_function_callback("Base snapshot loaded into trie")
+    logger.debug("Base snapshot loaded into trie")
 
     # Apply each diff in order
     for diff_index, diff_manifest in enumerate(manifests[1:], start=1):
@@ -394,7 +394,7 @@ def _compose_snapshot_diffs(
             if entry.deleted:
                 # Delete the file node
                 if root.delete_subtree(components):
-                    print_function_callback(f"Diff {diff_index}: deleted {entry.path}")
+                    logger.debug("Diff %d: deleted %s", diff_index, entry.path)
 
         # Apply directory deletions (empty directories only)
         # Sort by path length descending so subdirectories are deleted before parents
@@ -403,7 +403,7 @@ def _compose_snapshot_diffs(
         for dir_entry in deleted_dirs:
             components = _split_path(dir_entry.path)
             if root.delete_if_empty(components):
-                print_function_callback(f"Diff {diff_index}: deleted empty dir {dir_entry.path}")
+                logger.debug("Diff %d: deleted empty dir %s", diff_index, dir_entry.path)
 
         # Apply file additions/modifications
         for entry in diff_manifest.files:
@@ -412,7 +412,7 @@ def _compose_snapshot_diffs(
                 # Add or update entry
                 node = root.insert_path(components)
                 node.file_entry = entry
-                print_function_callback(f"Diff {diff_index}: added/updated {entry.path}")
+                logger.debug("Diff %d: added/updated %s", diff_index, entry.path)
 
         # Apply directory additions
         for dir_entry in diff_manifest.dirs:
@@ -454,7 +454,6 @@ def _compose_snapshot_diffs(
 
 def _compose_diffs(
     manifests: List[AnyManifest],
-    print_function_callback: Callable[[Any], None],
 ) -> AnyManifest:
     """
     Compose diff manifests: (diff, diff, ...) → diff.
@@ -495,7 +494,7 @@ def _compose_diffs(
             if entry.deleted:
                 # Mark as deleted
                 root.mark_deleted(components)
-                print_function_callback(f"Diff {diff_index}: deleted {entry.path}")
+                logger.debug("Diff %d: deleted %s", diff_index, entry.path)
 
         # Apply directory deletions (empty directories only)
         for dir_entry in diff_manifest.dirs:
@@ -503,7 +502,7 @@ def _compose_diffs(
             if dir_entry.deleted:
                 # Mark directory as deleted
                 root.mark_deleted(components)
-                print_function_callback(f"Diff {diff_index}: deleted empty dir {dir_entry.path}")
+                logger.debug("Diff %d: deleted empty dir %s", diff_index, dir_entry.path)
 
         # Apply file additions/modifications
         for entry in diff_manifest.files:
@@ -513,7 +512,7 @@ def _compose_diffs(
                 node = root.insert_path(components)
                 node.deleted = False
                 node.file_entry = entry
-                print_function_callback(f"Diff {diff_index}: added/updated {entry.path}")
+                logger.debug("Diff %d: added/updated %s", diff_index, entry.path)
 
         # Apply directory additions
         for dir_entry in diff_manifest.dirs:

@@ -1493,7 +1493,6 @@ Layers multiple manifests together into a single manifest, as if applying each m
 ```python
 def compose_manifests(
     manifests: List[Manifest],
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> Manifest:
 ```
 
