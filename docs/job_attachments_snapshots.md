@@ -70,7 +70,7 @@ ContentAddressedDataCache
 │  2. HASH: AbsManifest → AbsManifest                                     │
 │         Computes hashes for all files in the manifest.                  │
 │                                                                         │
-│  3. HASH_UPLOAD: (AbsManifest, DataCache) → AbsManifest                 │
+│  3. HASH_UPLOAD: (AbsManifest, DataCache) → UploadResult                │
 │         Hashes files and uploads them to a data cache.                  │
 │                                                                         │
 │  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadResult                 │
@@ -557,7 +557,7 @@ def hash_upload_manifest(
     max_memory_bytes: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
     progress_tracker: Optional[ProgressTracker] = None,
-) -> AbsManifest:
+) -> UploadResult:
 ```
 
 **Parameters:**
@@ -572,7 +572,28 @@ def hash_upload_manifest(
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 | `progress_tracker` | Optional progress tracker for upload progress |
 
-**Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
+**Returns:** `UploadResult` containing:
+- `statistics`: `SummaryStatistics` with upload metrics (see below)
+- `manifest`: A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in
+
+**UploadResult Statistics:**
+
+The `statistics` field contains a `SummaryStatistics` object with:
+
+| Field | Description |
+|-------|-------------|
+| `total_files` | Total number of files in the manifest |
+| `total_bytes` | Total size of all files |
+| `processed_files` | Number of files that were actually uploaded |
+| `processed_bytes` | Bytes that were actually uploaded |
+| `skipped_files` | Number of files skipped (already in data cache) |
+| `skipped_bytes` | Bytes skipped (already in data cache) |
+| `total_time` | Total operation time in seconds |
+| `transfer_rate` | Upload throughput in bytes/second |
+
+Files are skipped when:
+1. The hash cache has the file's hash AND the data cache already contains that hash (pre-pipeline skip)
+2. The S3 conditional write (`IfNoneMatch='*'`) returns `PreconditionFailed`, indicating the object already exists
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -730,15 +751,20 @@ with HashCache("/tmp/hash_cache") as hash_cache:
         )
 
         # Hash and upload in a single pipelined pass
-        hashed = hash_upload_manifest(
+        result = hash_upload_manifest(
             manifest=abs_manifest,
             data_cache=data_cache,
             hash_cache=hash_cache,
             max_memory_bytes=1024 * 1024 * 1024,  # 1GB memory limit
         )
 
+# Print upload statistics
+stats = result.statistics
+print(f"Uploaded {stats.processed_files} files ({stats.processed_bytes} bytes)")
+print(f"Skipped {stats.skipped_files} files ({stats.skipped_bytes} bytes) - already in cache")
+
 # Now entries have their hashes filled in AND files are uploaded (paths are still absolute)
-for entry in hashed.files[:2]:
+for entry in result.manifest.files[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
     elif entry.chunkhashes:
@@ -777,14 +803,15 @@ data_cache = FileSystemDataCache(
 
 # Hash and write to local filesystem
 with HashCache("/tmp/hash_cache") as hash_cache:
-    hashed = hash_upload_manifest(
+    result = hash_upload_manifest(
         manifest=abs_manifest,
         data_cache=data_cache,
         hash_cache=hash_cache,
     )
 
 # Files are now stored in /tmp/debug_snapshot/data/{hash}.xxh128
-print(f"Debug snapshot created with {len(hashed.files)} entries")
+print(f"Debug snapshot created with {len(result.manifest.files)} entries")
+print(f"Uploaded: {result.statistics.processed_bytes} bytes, Skipped: {result.statistics.skipped_bytes} bytes")
 ```
 
 **Performance Comparison:**

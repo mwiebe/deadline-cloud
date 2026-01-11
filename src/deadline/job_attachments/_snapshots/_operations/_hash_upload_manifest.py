@@ -60,6 +60,7 @@ from .._content_addressed_data_cache import (
     S3DataCache,
     FileSystemDataCache,
 )
+from ...progress_tracker import SummaryStatistics
 
 logger = logging.getLogger("deadline.job_attachments.hash_upload")
 
@@ -71,6 +72,21 @@ DEFAULT_STREAM_BUFFER_SIZE = 64 * 1024 * 1024  # 64MB
 
 # Default number of parallel workers
 DEFAULT_MAX_WORKERS = 10
+
+
+@dataclass
+class UploadResult:
+    """
+    Result of a hash_upload_manifest operation.
+
+    Attributes:
+        statistics: Summary statistics about the upload operation including
+            processed/skipped files and bytes.
+        manifest: The manifest with all hashes filled in.
+    """
+
+    statistics: SummaryStatistics
+    manifest: AbsManifest
 
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
@@ -933,7 +949,7 @@ def hash_upload_manifest(
     max_workers: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
     progress_tracker: Optional[ProgressTracker] = None,
-) -> AbsManifest:
+) -> UploadResult:
     """
     Fill in hashes for a manifest AND write file content to a data cache in a pipelined manner.
 
@@ -956,7 +972,9 @@ def hash_upload_manifest(
         progress_tracker: Optional progress tracker for upload progress
 
     Returns:
-        A NEW manifest of the same type with all hashes filled in
+        UploadResult containing:
+        - statistics: SummaryStatistics with processed/skipped files and bytes
+        - manifest: A NEW manifest of the same type with all hashes filled in
 
     Raises:
         ValueError: If the manifest contains relative paths (paths must be absolute)
@@ -1096,6 +1114,13 @@ def hash_upload_manifest(
             )
             file_chunk_counts[cache_key] = 0  # 0 means whole file (not chunked)
 
+    # Track statistics
+    start_time = time.perf_counter()
+    skipped_files = 0
+    skipped_bytes = 0
+    processed_files = 0
+    processed_bytes = 0
+
     # Check caches and filter out fully cached items
     items_to_process: List[WorkItem] = []
     cached_results: Dict[
@@ -1168,6 +1193,24 @@ def hash_upload_manifest(
         if not skip_pipeline:
             items_to_process.append(item)
 
+    # Calculate skipped vs processed based on what's going through the pipeline
+    # Track which files are fully skipped before pipeline (all chunks cached in hash+S3 cache)
+    files_with_work: set = set()
+    for item in items_to_process:
+        files_with_work.add(item.cache_key)
+
+    # Files skipped before pipeline (hash cache + S3 check cache hit)
+    pre_skipped_files = 0
+    pre_skipped_bytes = 0
+    for cache_key, (idx, entry) in entry_map.items():
+        file_size = entry.size or 0
+        if cache_key not in files_with_work:
+            pre_skipped_files += 1
+            pre_skipped_bytes += file_size
+
+    # Track uploads that were skipped during pipeline (PreconditionFailed)
+    pipeline_skipped_bytes_per_file: Dict[str, int] = {}  # cache_key -> skipped bytes
+
     # Run the unified pipeline
     if items_to_process:
         pipeline_results = _run_pipeline(
@@ -1230,6 +1273,35 @@ def hash_upload_manifest(
                                 range_end=range_end,
                             )
                         )
+
+        # Track skipped uploads from pipeline (PreconditionFailed or S3 check cache)
+        for item in pipeline_results:
+            if item.skipped:
+                chunk_size = item.chunk_end - item.chunk_start if isinstance(item, _ChunkWorkItem) else item.file_size
+                if item.cache_key not in pipeline_skipped_bytes_per_file:
+                    pipeline_skipped_bytes_per_file[item.cache_key] = 0
+                pipeline_skipped_bytes_per_file[item.cache_key] += chunk_size
+
+    # Calculate final statistics
+    # A file is "skipped" if ALL its bytes were skipped (either pre-pipeline or during pipeline)
+    for cache_key, (idx, entry) in entry_map.items():
+        file_size = entry.size or 0
+        if cache_key not in files_with_work:
+            # Skipped before pipeline
+            skipped_files += 1
+            skipped_bytes += file_size
+        else:
+            # Went through pipeline - check if all bytes were skipped
+            skipped_in_pipeline = pipeline_skipped_bytes_per_file.get(cache_key, 0)
+            if skipped_in_pipeline >= file_size:
+                # All bytes skipped during upload
+                skipped_files += 1
+                skipped_bytes += file_size
+            else:
+                # At least some bytes were uploaded
+                processed_files += 1
+                processed_bytes += file_size - skipped_in_pipeline
+                skipped_bytes += skipped_in_pipeline
 
     # Build result manifest
     hashed_paths: List[ManifestFilePath] = []
@@ -1311,11 +1383,30 @@ def hash_upload_manifest(
 
     # Return the same manifest type as input
     manifest_type = type(manifest)
-    return manifest_type(
+    result_manifest = manifest_type(
         hash_alg=manifest.hashAlg,
         dirs=dir_entries,
         files=hashed_paths,
         total_size=total_size,
         parent_manifest_hash=manifest.parentManifestHash,
         file_chunk_size_bytes=output_chunk_size,
+    )
+
+    # Build statistics
+    end_time = time.perf_counter()
+    total_time = end_time - start_time
+    statistics = SummaryStatistics(
+        total_time=total_time,
+        total_files=len(entry_map),
+        total_bytes=total_size,
+        processed_files=processed_files,
+        processed_bytes=processed_bytes,
+        skipped_files=skipped_files,
+        skipped_bytes=skipped_bytes,
+        transfer_rate=processed_bytes / total_time if total_time > 0 else 0.0,
+    )
+
+    return UploadResult(
+        statistics=statistics,
+        manifest=result_manifest,
     )

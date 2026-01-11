@@ -2,7 +2,7 @@
 
 from ._collect_manifest import collect_manifest
 from ._hash_manifest import hash_manifest
-from ._hash_upload_manifest import hash_upload_manifest
+from ._hash_upload_manifest import hash_upload_manifest, UploadResult
 from ._download_manifest import download_manifest, DownloadResult
 from ._filter_manifest import filter_manifest, IncludeExcludePathsFilter
 from ._diff_manifest import compute_diff_manifest
@@ -15,6 +15,7 @@ __all__ = [
     "collect_manifest",
     "hash_manifest",
     "hash_upload_manifest",
+    "UploadResult",
     "download_manifest",
     "DownloadResult",
     "filter_manifest",

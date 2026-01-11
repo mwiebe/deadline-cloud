@@ -103,7 +103,17 @@ DEFAULT_MAX_NESTING_DEPTH = 10
 
 # Default concurrency
 DEFAULT_MAX_WORKERS = 10
-DEFAULT_MAX_MEMORY_MB = 512
+
+
+def _get_default_max_memory_mb() -> int:
+    """Calculate default memory limit matching the internal implementation."""
+    import psutil
+
+    mem = psutil.virtual_memory()
+    min_memory = 256 * 1024 * 1024  # 256MB
+    quarter_of_total = mem.total // 4
+    available_minus_1gb = mem.available - (1024 * 1024 * 1024)
+    return max(min_memory, quarter_of_total, available_minus_1gb) // (1024 * 1024)
 
 
 # =============================================================================
@@ -755,24 +765,27 @@ def test_hash_upload_filesystem(
         actual_hash_cache = hash_cache if config.use_hash_cache else None
         start = time.perf_counter()
         with profile_operation("upload", config.cprofile_operation, print_fn):
-            hashed_manifest = hash_upload_manifest(
+            upload_result = hash_upload_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=actual_hash_cache,
-                force_rehash=True,
+                force_rehash=not config.use_hash_cache,
                 max_memory_bytes=config.max_memory_mb * 1024 * 1024,
                 max_workers=config.max_workers,
                 progress_tracker=progress_tracker,
             )
         duration = time.perf_counter() - start
 
+    hashed_manifest = upload_result.manifest
+    stats = upload_result.statistics
     file_count = len(hashed_manifest.files)
     total_bytes = hashed_manifest.totalSize
     throughput = (total_bytes / (1024 * 1024)) / duration if duration > 0 else 0
 
     # Count files in data cache
     cache_files = list(data_cache_root.glob("*"))
-    print_fn(f"  Files processed: {file_count}")
+    print_fn(f"  Files processed: {stats.processed_files} ({stats.processed_bytes / (1024 * 1024):.2f} MB)")
+    print_fn(f"  Files skipped (already in cache): {stats.skipped_files} ({stats.skipped_bytes / (1024 * 1024):.2f} MB)")
     print_fn(f"  Objects in data cache: {len(cache_files)}")
     print_fn(f"  Total size: {total_bytes / (1024 * 1024):.2f} MB")
     print_fn(f"  Duration: {duration:.2f} seconds")
@@ -844,22 +857,26 @@ def test_hash_upload_s3(
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
-            hashed_manifest = hash_upload_manifest(
-                manifest=manifest,
-                data_cache=data_cache,
-                hash_cache=hash_cache,
-                force_rehash=True,
-                max_memory_bytes=config.max_memory_mb * 1024 * 1024,
-                max_workers=config.max_workers,
-                progress_tracker=progress_tracker,
-            )
+            with profile_operation("upload", config.cprofile_operation, print_fn):
+                upload_result = hash_upload_manifest(
+                    manifest=manifest,
+                    data_cache=data_cache,
+                    hash_cache=hash_cache,
+                    force_rehash=not config.use_hash_cache,
+                    max_memory_bytes=config.max_memory_mb * 1024 * 1024,
+                    max_workers=config.max_workers,
+                    progress_tracker=progress_tracker,
+                )
             duration = time.perf_counter() - start
 
+    hashed_manifest = upload_result.manifest
+    stats = upload_result.statistics
     file_count = len(hashed_manifest.files)
     total_bytes = hashed_manifest.totalSize
     throughput = (total_bytes / (1024 * 1024)) / duration if duration > 0 else 0
 
-    print_fn(f"  Files processed: {file_count}")
+    print_fn(f"  Files processed: {stats.processed_files} ({stats.processed_bytes / (1024 * 1024):.2f} MB)")
+    print_fn(f"  Files skipped (already in cache): {stats.skipped_files} ({stats.skipped_bytes / (1024 * 1024):.2f} MB)")
     print_fn(f"  Total size: {total_bytes / (1024 * 1024):.2f} MB")
     print_fn(f"  Duration: {duration:.2f} seconds")
     print_fn(f"  Throughput: {throughput:.2f} MB/s")
@@ -1429,8 +1446,8 @@ def main() -> int:
     parser.add_argument(
         "--max-memory",
         type=int,
-        default=DEFAULT_MAX_MEMORY_MB,
-        help=f"Maximum memory in MB for pipeline (default: {DEFAULT_MAX_MEMORY_MB})",
+        default=None,
+        help="Maximum memory in MB for pipeline (default: auto-detect)",
     )
 
     # Chunk size
@@ -1536,6 +1553,9 @@ def main() -> int:
         args.large_files = 10
         preset_large_file_size = 5 * 1024 * 1024 * 1024  # 5GB
 
+    # Calculate default memory if not specified
+    max_memory_mb = args.max_memory if args.max_memory is not None else _get_default_max_memory_mb()
+
     # Build config
     config = TestConfig(
         small_files=args.small_files,
@@ -1545,7 +1565,7 @@ def main() -> int:
         subdirectories=args.subdirectories,
         max_nesting_depth=args.max_nesting_depth,
         max_workers=args.max_workers,
-        max_memory_mb=args.max_memory,
+        max_memory_mb=max_memory_mb,
         verify_correctness=not args.no_verify,
         local_only=args.local_only,
         s3_bucket=s3_bucket,
@@ -1573,7 +1593,10 @@ def main() -> int:
     print(f"  Subdirectories: {config.subdirectories}")
     print(f"  Max nesting depth: {config.max_nesting_depth}")
     print(f"  Max workers: {config.max_workers}")
-    print(f"  Max memory: {config.max_memory_mb} MB")
+    max_memory_str = f"{config.max_memory_mb / 1024:.1f} GB"
+    if args.max_memory is None:
+        max_memory_str += " (auto)"
+    print(f"  Max memory: {max_memory_str}")
     print(
         f"  Chunk size: {'disabled' if config.chunk_size_bytes == WHOLE_FILE_CHUNK_SIZE else f'{config.chunk_size_bytes // (1024 * 1024)} MB'}"
     )
