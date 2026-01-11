@@ -74,8 +74,9 @@ class TestHelperFunctions:
 
     def test_is_absolute_path_windows_drive(self) -> None:
         """Windows drive letter paths are detected."""
-        assert _is_absolute_path("C:/Users/file.txt") is True
-        assert _is_absolute_path("D:/Projects/file.txt") is True
+        with patch("os.name", "nt"):
+            assert _is_absolute_path("C:/Users/file.txt") is True
+            assert _is_absolute_path("D:/Projects/file.txt") is True
 
     def test_is_absolute_path_windows_unc(self) -> None:
         """Windows UNC paths are detected."""
@@ -416,10 +417,11 @@ class TestJoinManifestWindowsPaths:
             total_size=100,
         )
 
-        result = join_manifest(manifest, "C:\\projects\\scene")
+        with patch("os.name", "nt"):
+            result = join_manifest(manifest, "C:\\projects\\scene")
 
-        # Backslashes should be converted to forward slashes
-        assert result.files[0].path == "C:/projects/scene/wood.png"
+            # Backslashes should be converted to forward slashes
+            assert result.files[0].path == "C:/projects/scene/wood.png"
 
 
 class TestPathSeparatorHandling:

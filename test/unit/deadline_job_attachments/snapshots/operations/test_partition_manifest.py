@@ -614,13 +614,11 @@ class TestPartitionManifestValidation:
             files=[{"path": "assets/file.txt", "hash": "h1", "size": 100, "mtime": 1000}]
         )
 
-        if os.name == "nt":
+        # Test on Windows with Windows absolute path
+        with patch("os.name", "nt"):
             abs_ref = "C:/Users/output"
-        else:
-            abs_ref = "/home/user/output"
-
-        with pytest.raises(ValueError, match="absolute.*relative"):
-            partition_manifest(manifest, referenced_paths=[abs_ref])
+            with pytest.raises(ValueError, match="absolute.*relative"):
+                partition_manifest(manifest, referenced_paths=[abs_ref])
 
 
 class TestPartitionManifestSymlinks:
