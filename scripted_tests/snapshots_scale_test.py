@@ -15,8 +15,8 @@ It also verifies correctness under high concurrency by checking that
 downloaded files exactly match the original source files.
 
 Usage:
-  # With S3 (requires farm/queue for bucket info)
-  python snapshots_scale_test.py -f $FARM_ID -q $QUEUE_ID
+  # With S3 (using default AWS credentials)
+  python snapshots_scale_test.py --s3-uri s3://amzn-s3-demo-bucket/my-prefix
 
   # With local filesystem cache only (no AWS required)
   python snapshots_scale_test.py --local-only
@@ -125,8 +125,8 @@ class TestConfig:
     max_memory_mb: int
     verify_correctness: bool
     local_only: bool
-    farm_id: Optional[str]
-    queue_id: Optional[str]
+    s3_bucket: Optional[str]
+    s3_prefix: Optional[str]
     skip_download: bool
     setup_only: bool
     keep_files: bool
@@ -807,14 +807,6 @@ def test_hash_upload_s3(
     s3_check_cache_dir.mkdir(parents=True, exist_ok=True)
 
     s3_client = boto3.client("s3")
-    s3_check_cache = S3CheckCache(str(s3_check_cache_dir))
-
-    data_cache = S3DataCache(
-        s3_bucket=s3_bucket,
-        s3_key_prefix=s3_prefix,
-        s3_client=s3_client,
-        s3_check_cache=s3_check_cache,
-    )
 
     # Progress tracking
     # ProgressReportMetadata has: progress (%), transferRate, progressMessage, processedFiles
@@ -842,18 +834,26 @@ def test_hash_upload_s3(
         on_progress_callback=on_progress,
     )
 
-    with HashCache(str(hash_cache_dir)) as hash_cache:
-        start = time.perf_counter()
-        hashed_manifest = hash_upload_manifest(
-            manifest=manifest,
-            data_cache=data_cache,
-            hash_cache=hash_cache,
-            force_rehash=True,
-            max_memory_bytes=config.max_memory_mb * 1024 * 1024,
-            max_workers=config.max_workers,
-            progress_tracker=progress_tracker,
+    with S3CheckCache(str(s3_check_cache_dir)) as s3_check_cache:
+        data_cache = S3DataCache(
+            s3_bucket=s3_bucket,
+            s3_key_prefix=s3_prefix,
+            s3_client=s3_client,
+            s3_check_cache=s3_check_cache,
         )
-        duration = time.perf_counter() - start
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            start = time.perf_counter()
+            hashed_manifest = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+                force_rehash=True,
+                max_memory_bytes=config.max_memory_mb * 1024 * 1024,
+                max_workers=config.max_workers,
+                progress_tracker=progress_tracker,
+            )
+            duration = time.perf_counter() - start
 
     file_count = len(hashed_manifest.files)
     total_bytes = hashed_manifest.totalSize
@@ -1206,8 +1206,8 @@ def run_high_concurrency_test(
 
 def run_s3_test(
     source_root: Path,
-    farm_id: str,
-    queue_id: str,
+    s3_bucket: str,
+    s3_prefix: str,
     config: TestConfig,
     expected_checksums: Optional[Dict[str, str]] = None,
     print_fn=print,
@@ -1215,27 +1215,14 @@ def run_s3_test(
     """
     Run stress test with S3 backend.
 
-    Requires a Deadline Cloud farm and queue to get S3 bucket information.
+    Uses default AWS credentials.
     """
-    from deadline.job_attachments._aws.deadline import get_queue
-
     print_fn("\n" + "=" * 60)
     print_fn("S3 STRESS TEST")
-    print_fn(f"  farm_id: {farm_id}")
-    print_fn(f"  queue_id: {queue_id}")
+    print_fn(f"  s3_bucket: {s3_bucket}")
+    print_fn(f"  s3_prefix: {s3_prefix}")
     print_fn(f"  max_workers: {config.max_workers}")
     print_fn("=" * 60)
-
-    # Get queue settings
-    queue = get_queue(farm_id=farm_id, queue_id=queue_id)
-    if queue.jobAttachmentSettings is None:
-        raise ValueError("Queue does not have job attachment settings configured")
-
-    s3_bucket = queue.jobAttachmentSettings.s3BucketName
-    s3_prefix = f"{queue.jobAttachmentSettings.rootPrefix}/StressTest/Data"
-
-    print_fn(f"  S3 bucket: {s3_bucket}")
-    print_fn(f"  S3 prefix: {s3_prefix}")
 
     results: List[TimingResult] = []
     correctness_result: Optional[CorrectnessResult] = None
@@ -1373,16 +1360,9 @@ def main() -> int:
 
     # AWS options
     parser.add_argument(
-        "-f",
-        "--farm-id",
+        "--s3-uri",
         type=str,
-        help="Deadline Farm ID (required for S3 tests)",
-    )
-    parser.add_argument(
-        "-q",
-        "--queue-id",
-        type=str,
-        help="Deadline Queue ID (required for S3 tests)",
+        help="S3 URI for data cache (e.g., s3://amzn-s3-demo-bucket/prefix). Uses default AWS credentials.",
     )
 
     # Local-only mode
@@ -1516,8 +1496,21 @@ def main() -> int:
     args = parser.parse_args()
 
     # Validate arguments
-    if not args.local_only and (not args.farm_id or not args.queue_id):
-        parser.error("--farm-id and --queue-id are required unless --local-only is specified")
+    if not args.local_only and not args.s3_uri:
+        parser.error("--s3-uri is required unless --local-only is specified")
+
+    # Parse S3 URI
+    s3_bucket = None
+    s3_prefix = None
+    if args.s3_uri:
+        if not args.s3_uri.startswith("s3://"):
+            parser.error("--s3-uri must start with s3://")
+        uri_path = args.s3_uri[5:]  # Remove "s3://"
+        if "/" in uri_path:
+            s3_bucket, s3_prefix = uri_path.split("/", 1)
+        else:
+            s3_bucket = uri_path
+            s3_prefix = ""
 
     # Apply preset configurations (override file counts and large file size)
     preset_large_file_size = LARGE_FILE_SIZE  # Default 1GB
@@ -1555,8 +1548,8 @@ def main() -> int:
         max_memory_mb=args.max_memory,
         verify_correctness=not args.no_verify,
         local_only=args.local_only,
-        farm_id=args.farm_id,
-        queue_id=args.queue_id,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
         skip_download=args.skip_download,
         setup_only=args.setup_only,
         keep_files=args.keep_files,
@@ -1621,8 +1614,8 @@ def main() -> int:
         else:
             results, correctness = run_s3_test(
                 source_root=source_root,
-                farm_id=config.farm_id,  # type: ignore
-                queue_id=config.queue_id,  # type: ignore
+                s3_bucket=config.s3_bucket,  # type: ignore
+                s3_prefix=config.s3_prefix,  # type: ignore
                 config=config,
                 expected_checksums=expected_checksums,
             )
