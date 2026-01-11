@@ -14,7 +14,7 @@ be written on the local filesystem.
 Key features:
 - Parallel downloads for improved throughput (both regular and chunked files)
 - Support for chunked large files (>256MB) with parallel chunk downloads
-- Callback-based pipeline for efficient thread pool usage (no asyncio overhead)
+- Callback-based pipeline for efficient thread pool usage
 - File conflict resolution (skip, overwrite, create copy)
 - Progress tracking and cancellation support
 - Symlink creation
@@ -25,21 +25,15 @@ Key features:
 
 from __future__ import annotations
 
-import asyncio
 import concurrent.futures
 import logging
 import os
-import secrets
-import shutil
-import threading
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
-
-from botocore.exceptions import BotoCoreError, ClientError
 
 from .._manifest import (
     AbsSnapshot,
@@ -50,11 +44,9 @@ from .._manifest import (
     _is_absolute_path,
     SymlinkPolicy,
 )
-from ...asset_manifests.hash_algorithms import HashAlgorithm
 from .._content_addressed_data_cache import (
     ContentAddressedDataCache,
     S3DataCache,
-    FileSystemDataCache,
 )
 from ...models import FileConflictResolution
 from ...progress_tracker import (
@@ -62,30 +54,14 @@ from ...progress_tracker import (
     ProgressStatus,
     ProgressTracker,
 )
-from ...exceptions import (
-    AssetSyncCancelledError,
-    JobAttachmentsS3ClientError,
-    JobAttachmentS3BotoCoreError,
-)
+from ...exceptions import AssetSyncCancelledError
 from ..._utils import _get_long_path_compatible_path
-from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
+from ...caches.hash_cache import HashCache
 
-# Import S3-specific functions and types
-from ._download_manifest_s3 import (
-    download_s3_multipart_async,
-    download_s3_chunk_to_offset,
-    download_s3_chunk_multipart_async,
-    MIN_SIZE_FOR_MULTIPART_DOWNLOAD,
-    S3ParallelDownloadState,
-)
-
-# Import filesystem-specific functions
-from ._download_manifest_file_system import (
-    download_fs_chunk_to_offset,
-)
-
-# Import sparse file allocation utilities
-from ._sparse_file import preallocate_file
+# Import pipeline classes
+from ._download_manifest_pipeline import DownloadPipelineBase
+from ._download_manifest_s3_pipeline import S3DownloadPipeline
+from ._download_manifest_file_system_pipeline import FileSystemDownloadPipeline
 
 logger = logging.getLogger("deadline.job_attachments.download")
 
@@ -113,1050 +89,8 @@ class DownloadResult:
 
 
 # =============================================================================
-# Callback-based Download Pipeline
+# Helper Functions
 # =============================================================================
-
-
-@dataclass
-class _DownloadFileResult:
-    """Result of downloading a single file (regular or chunked)."""
-
-    entry: ManifestFilePath
-    bytes_downloaded: int
-    local_path: Optional[Path]
-    was_skipped: bool
-    actual_mtime_us: Optional[int]
-
-
-@dataclass
-class _ChunkedFileState:
-    """
-    State tracker for a chunked file download (filesystem cache - no multipart).
-
-    Tracks how many chunks remain to be downloaded. When the last chunk completes,
-    it triggers finalization (atomic move + mtime update + hash cache update).
-    """
-
-    entry: ManifestFilePath
-    local_path: Path
-    temp_path: Path
-    file_size: int
-    chunks_remaining: int
-    total_bytes_downloaded: int = 0
-    chunk_errors: List[Exception] = field(default_factory=list)
-    lock: threading.Lock = field(default_factory=threading.Lock)
-
-
-class _DownloadPipeline:
-    """
-    Callback-based download pipeline using direct thread pool submission.
-
-    This avoids asyncio overhead by using executor.submit() with callbacks
-    instead of run_in_executor() with await.
-
-    For single files: one executor submission handles setup + copy + finalize
-    For chunked files: fan-out to parallel chunk downloads, fan-in via atomic counter
-
-    Flow for single files:
-        submit() → executor runs _download_single_file_sync() → _record_result()
-
-    Flow for chunked files:
-        submit() → executor runs _setup_chunked_file()
-                   → submits N chunk downloads in parallel
-                   → last chunk to complete calls _finalize_chunked_file()
-                   → _record_result()
-    """
-
-    def __init__(
-        self,
-        executor: concurrent.futures.ThreadPoolExecutor,
-        data_cache: ContentAddressedDataCache,
-        hash_alg: str,
-        hash_alg_enum: HashAlgorithm,
-        chunk_size_bytes: int,
-        hash_cache: Optional[HashCache],
-        collision_lock: Lock,
-        collision_file_dict: DefaultDict[str, int],
-        file_conflict_resolution: FileConflictResolution,
-        progress_tracker: Optional[ProgressTracker],
-    ) -> None:
-        self._executor = executor
-        self._data_cache = data_cache
-        self._hash_alg = hash_alg
-        self._hash_alg_enum = hash_alg_enum
-        self._chunk_size_bytes = chunk_size_bytes
-        self._hash_cache = hash_cache
-        self._collision_lock = collision_lock
-        self._collision_file_dict = collision_file_dict
-        self._file_conflict_resolution = file_conflict_resolution
-        self._progress_tracker = progress_tracker
-
-        # Track completion
-        self._pending_count = 0
-        self._submitted_count = 0  # Track total submissions to detect empty case
-        self._lock = threading.Lock()
-        self._done_event = threading.Event()
-
-        # Collect results
-        self._results: List[_DownloadFileResult] = []
-        self._results_lock = threading.Lock()
-
-        # Track errors
-        self._error: Optional[Exception] = None
-        self._error_lock = threading.Lock()
-
-        # Cancellation flag
-        self._cancelled = False
-
-    def submit_single_file(self, entry: ManifestFilePath) -> None:
-        """Submit a single (non-chunked) file for download."""
-        with self._lock:
-            self._pending_count += 1
-            self._submitted_count += 1
-        self._executor.submit(self._download_single_file_sync, entry)
-
-    def submit_chunked_file(self, entry: ManifestFilePath) -> None:
-        """Submit a chunked file for download."""
-        with self._lock:
-            self._pending_count += 1
-            self._submitted_count += 1
-        self._executor.submit(self._setup_and_download_chunked_file, entry)
-
-    def wait_for_completion(self) -> List[_DownloadFileResult]:
-        """Wait for all submitted files to complete and return results."""
-        # Handle empty case - if nothing was ever submitted, we're already done
-        with self._lock:
-            if self._submitted_count == 0:
-                return []
-
-        self._done_event.wait()
-
-        # Check for errors
-        with self._error_lock:
-            if self._error is not None:
-                raise self._error
-
-        with self._results_lock:
-            return list(self._results)
-
-    def cancel(self) -> None:
-        """Signal cancellation to stop processing new work."""
-        self._cancelled = True
-
-    def _decrement_pending(self) -> None:
-        """Decrement pending count and signal completion if done."""
-        with self._lock:
-            self._pending_count -= 1
-            if self._pending_count == 0:
-                self._done_event.set()
-
-    def _record_error(self, error: Exception) -> None:
-        """Record an error (first error wins)."""
-        with self._error_lock:
-            if self._error is None:
-                self._error = error
-                logger.exception(f"Download pipeline error: {error}")
-        # Signal completion so wait doesn't hang
-        self._done_event.set()
-
-    def _record_result(self, result: _DownloadFileResult) -> None:
-        """Record a completed download result."""
-        with self._results_lock:
-            self._results.append(result)
-
-    # =========================================================================
-    # Single File Download (all-in-one)
-    # =========================================================================
-
-    def _download_single_file_sync(self, entry: ManifestFilePath) -> None:
-        """
-        Download a single file synchronously (setup + copy + finalize in one call).
-
-        For small files or filesystem cache: does all work in a single executor task.
-        For large S3 files: submits parts in parallel and returns immediately.
-        """
-        try:
-            # Check for cancellation
-            if self._cancelled:
-                self._decrement_pending()
-                return
-
-            if entry.hash is None:
-                raise ValueError(f"File entry '{entry.path}' has no hash")
-
-            local_path = _get_long_path_compatible_path(Path(entry.path))
-            file_size = entry.size or 0
-
-            # Check hash cache first
-            can_skip, cached_mtime_us = _check_hash_cache_for_skip(
-                entry, self._hash_alg_enum, self._hash_cache
-            )
-            if can_skip:
-                # Report progress for skipped file
-                if self._progress_tracker:
-                    self._progress_tracker.track_progress_callback(file_size)
-                self._record_result(
-                    _DownloadFileResult(
-                        entry=entry,
-                        bytes_downloaded=file_size,
-                        local_path=local_path,
-                        was_skipped=True,
-                        actual_mtime_us=cached_mtime_us,
-                    )
-                )
-                self._decrement_pending()
-                return
-
-            # Handle file conflicts
-            if local_path.exists():
-                if self._file_conflict_resolution == FileConflictResolution.SKIP:
-                    self._record_result(
-                        _DownloadFileResult(
-                            entry=entry,
-                            bytes_downloaded=file_size,
-                            local_path=None,
-                            was_skipped=True,
-                            actual_mtime_us=None,
-                        )
-                    )
-                    self._decrement_pending()
-                    return
-                elif self._file_conflict_resolution == FileConflictResolution.OVERWRITE:
-                    pass
-                elif self._file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-                    local_path = _get_new_copy_file_path(
-                        local_path, self._collision_lock, self._collision_file_dict
-                    )
-                    local_path = _get_long_path_compatible_path(local_path)
-                else:
-                    raise ValueError(
-                        f"Unknown file conflict resolution: {self._file_conflict_resolution}"
-                    )
-
-            # Create temp file
-            temp_suffix = secrets.token_hex(5)
-            temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-
-            # For large S3 files, use parallel multipart download
-            if (
-                isinstance(self._data_cache, S3DataCache)
-                and file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD
-            ):
-                self._setup_and_download_large_single_file(entry, local_path, temp_path, file_size)
-                # Don't decrement pending here - the last part will do it
-                return
-
-            # For small files or filesystem cache, do everything synchronously
-            try:
-                if isinstance(self._data_cache, S3DataCache):
-                    bytes_downloaded = self._download_small_s3_file(entry.hash, temp_path)
-                elif isinstance(self._data_cache, FileSystemDataCache):
-                    bytes_downloaded = self._copy_from_filesystem(entry.hash, temp_path)
-                else:
-                    raise TypeError(f"Unsupported data cache type: {type(self._data_cache)}")
-
-                # Finalize - atomic move and mtime update
-                self._finalize_single_file(entry, local_path, temp_path, bytes_downloaded)
-
-            except Exception:
-                # Clean up temp file on error
-                temp_path.unlink(missing_ok=True)
-                raise
-
-            self._decrement_pending()
-
-        except Exception as e:
-            self._record_error(e)
-            self._decrement_pending()
-
-    # =========================================================================
-    # S3-specific: Small file download
-    # =========================================================================
-
-    def _download_small_s3_file(self, hash_value: str, temp_path: Path) -> int:
-        """Download a small file from S3 in a single request."""
-        if not isinstance(self._data_cache, S3DataCache):
-            raise TypeError("Expected S3DataCache")
-
-        s3_key = self._data_cache.get_object_key(hash_value, self._hash_alg)
-
-        try:
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-            )
-            data = response["Body"].read()
-            with open(temp_path, "wb") as f:
-                f.write(data)
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
-            return len(data)
-
-        except ClientError as exc:
-            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-            raise JobAttachmentsS3ClientError(
-                action="downloading file",
-                status_code=status_code,
-                bucket_name=self._data_cache.s3_bucket,
-                key_or_prefix=s3_key,
-                message=str(exc),
-            ) from exc
-        except BotoCoreError as bce:
-            raise JobAttachmentS3BotoCoreError(
-                action="downloading file",
-                error_details=str(bce),
-            ) from bce
-
-    # =========================================================================
-    # S3-specific: Large file parallel multipart download
-    # =========================================================================
-
-    def _setup_and_download_large_single_file(
-        self,
-        entry: ManifestFilePath,
-        local_path: Path,
-        temp_path: Path,
-        file_size: int,
-    ) -> None:
-        """
-        Setup parallel multipart download for a large single file.
-
-        Pre-allocates the temp file and submits all parts to the executor.
-        The last part to complete triggers finalization.
-        """
-        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-
-        if not isinstance(self._data_cache, S3DataCache):
-            raise TypeError("Expected S3DataCache")
-
-        # Pre-allocate the temp file
-        with open(temp_path, "wb") as f:
-            preallocate_file(f, file_size)
-
-        # Calculate number of parts
-        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-        num_parts = (file_size + part_size - 1) // part_size
-
-        # Create state tracker
-        state = S3ParallelDownloadState(
-            entry=entry,
-            local_path=local_path,
-            temp_path=temp_path,
-            file_size=file_size,
-            parts_remaining=num_parts,
-        )
-
-        s3_key = self._data_cache.get_object_key(entry.hash, self._hash_alg)  # type: ignore
-
-        # Submit all parts to executor
-        for part_idx in range(num_parts):
-            offset = part_idx * part_size
-            end = min(offset + part_size - 1, file_size - 1)
-            part_length = end - offset + 1
-
-            self._executor.submit(
-                self._download_part_with_callback,
-                state,
-                s3_key,
-                offset,
-                end,
-                part_length,
-                is_chunked=False,
-            )
-
-    # =========================================================================
-    # Filesystem-specific: Copy from cache
-    # =========================================================================
-
-    def _copy_from_filesystem(self, hash_value: str, temp_path: Path) -> int:
-        """Copy a file from filesystem cache to temp_path."""
-        if not isinstance(self._data_cache, FileSystemDataCache):
-            raise TypeError("Expected FileSystemDataCache")
-
-        source_path = Path(self._data_cache.get_object_key(hash_value, self._hash_alg))
-        shutil.copy2(source_path, temp_path)
-        copied_size = temp_path.stat().st_size
-
-        if self._progress_tracker:
-            self._progress_tracker.track_progress_callback(copied_size)
-
-        return copied_size
-
-    # =========================================================================
-    # Common: Single file finalization
-    # =========================================================================
-
-    def _finalize_single_file(
-        self,
-        entry: ManifestFilePath,
-        local_path: Path,
-        temp_path: Path,
-        bytes_downloaded: int,
-    ) -> None:
-        """Finalize a single file download (atomic move + mtime + hash cache)."""
-        os.replace(temp_path, local_path)
-
-        if entry.mtime is not None:
-            mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
-            os.utime(local_path, ns=(mtime_ns, mtime_ns))
-
-        actual_mtime_ns = local_path.stat().st_mtime_ns
-        actual_mtime_us = actual_mtime_ns // 1_000
-
-        # Update hash cache
-        if self._hash_cache is not None and entry.hash is not None:
-            resolved_path = str(local_path.resolve())
-            self._hash_cache.put_entry(
-                HashCacheEntry(
-                    file_path=resolved_path,
-                    hash_algorithm=self._hash_alg_enum,
-                    file_hash=entry.hash,
-                    last_modified_time=str(actual_mtime_ns),
-                    range_start=0,
-                    range_end=WHOLE_FILE_RANGE_END,
-                )
-            )
-
-        logger.debug(f"Downloaded {entry.path} to {local_path}")
-        self._record_result(
-            _DownloadFileResult(
-                entry=entry,
-                bytes_downloaded=bytes_downloaded,
-                local_path=local_path,
-                was_skipped=False,
-                actual_mtime_us=actual_mtime_us,
-            )
-        )
-
-    # =========================================================================
-    # S3-specific: Part download with completion callback
-    # =========================================================================
-
-    def _download_part_with_callback(
-        self,
-        state: S3ParallelDownloadState,
-        s3_key: str,
-        offset: int,
-        end: int,
-        part_length: int,
-        is_chunked: bool,
-    ) -> None:
-        """
-        Download one part of a large file and check if all parts are complete.
-
-        The last part to complete triggers finalization.
-        """
-        try:
-            # Check for cancellation
-            if self._cancelled:
-                with state.lock:
-                    state.parts_remaining -= 1
-                    if state.parts_remaining == 0:
-                        state.temp_path.unlink(missing_ok=True)
-                        self._decrement_pending()
-                return
-
-            if not isinstance(self._data_cache, S3DataCache):
-                raise TypeError("Expected S3DataCache")
-
-            range_header = f"bytes={offset}-{end}"
-
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-                Range=range_header,
-            )
-            data = response["Body"].read()
-
-            # Write to the correct position in the file
-            with open(state.temp_path, "r+b") as f:
-                f.seek(offset)
-                f.write(data)
-
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
-
-            # Update state and check if all parts are done
-            with state.lock:
-                state.total_bytes_downloaded += len(data)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-                has_errors = len(state.part_errors) > 0
-
-            # If all parts done, finalize (last part to finish does this)
-            if all_done:
-                if has_errors:
-                    state.temp_path.unlink(missing_ok=True)
-                    self._record_error(state.part_errors[0])
-                else:
-                    self._finalize_s3_parallel_download(state, is_chunked)
-                self._decrement_pending()
-
-        except (ClientError, BotoCoreError) as e:
-            # Record error in state, let last part handle cleanup
-            with state.lock:
-                state.part_errors.append(e)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-        except Exception as e:
-            with state.lock:
-                state.part_errors.append(e)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-    # =========================================================================
-    # S3-specific: Parallel download finalization
-    # =========================================================================
-
-    def _finalize_s3_parallel_download(
-        self, state: S3ParallelDownloadState, is_chunked: bool
-    ) -> None:
-        """Finalize a large file download (atomic move + mtime + hash cache)."""
-        try:
-            entry = state.entry
-            local_path = state.local_path
-            temp_path = state.temp_path
-
-            os.replace(temp_path, local_path)
-
-            if entry.mtime is not None:
-                mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
-                os.utime(local_path, ns=(mtime_ns, mtime_ns))
-
-            actual_mtime_ns = local_path.stat().st_mtime_ns
-            actual_mtime_us = actual_mtime_ns // 1_000
-
-            # Update hash cache
-            if self._hash_cache is not None:
-                if is_chunked and entry.chunkhashes is not None:
-                    # For chunked files, store each chunk's hash
-                    _update_hash_cache_for_chunked_file(
-                        entry,
-                        local_path,
-                        self._hash_alg_enum,
-                        self._hash_cache,
-                        self._chunk_size_bytes,
-                        actual_mtime_ns,
-                    )
-                elif entry.hash is not None:
-                    # For single files, store the whole file hash
-                    resolved_path = str(local_path.resolve())
-                    self._hash_cache.put_entry(
-                        HashCacheEntry(
-                            file_path=resolved_path,
-                            hash_algorithm=self._hash_alg_enum,
-                            file_hash=entry.hash,
-                            last_modified_time=str(actual_mtime_ns),
-                            range_start=0,
-                            range_end=WHOLE_FILE_RANGE_END,
-                        )
-                    )
-
-            file_type = "chunked file" if is_chunked else "file"
-            logger.debug(f"Downloaded {file_type} {entry.path} to {local_path}")
-            self._record_result(
-                _DownloadFileResult(
-                    entry=entry,
-                    bytes_downloaded=state.total_bytes_downloaded,
-                    local_path=local_path,
-                    was_skipped=False,
-                    actual_mtime_us=actual_mtime_us,
-                )
-            )
-
-        except Exception as e:
-            state.temp_path.unlink(missing_ok=True)
-            self._record_error(e)
-
-    # =========================================================================
-    # Chunked File Download (fan-out/fan-in)
-    # =========================================================================
-
-    def _setup_and_download_chunked_file(self, entry: ManifestFilePath) -> None:
-        """
-        Setup a chunked file download and submit all downloads.
-
-        For S3: submits all parts of all chunks in parallel using S3ParallelDownloadState.
-        For filesystem: submits all chunks in parallel using _ChunkedFileState.
-        The last part/chunk to complete triggers finalization.
-        """
-        try:
-            # Check for cancellation
-            if self._cancelled:
-                self._decrement_pending()
-                return
-
-            if entry.chunkhashes is None:
-                raise ValueError(f"Chunked file entry '{entry.path}' has no chunkhashes")
-
-            local_path = _get_long_path_compatible_path(Path(entry.path))
-            file_size = entry.size or 0
-
-            # Check hash cache first
-            can_skip, cached_mtime_us = _check_hash_cache_for_chunked_skip(
-                entry, self._hash_alg_enum, self._hash_cache, self._chunk_size_bytes
-            )
-            if can_skip:
-                if self._progress_tracker:
-                    self._progress_tracker.track_progress_callback(file_size)
-                self._record_result(
-                    _DownloadFileResult(
-                        entry=entry,
-                        bytes_downloaded=file_size,
-                        local_path=local_path,
-                        was_skipped=True,
-                        actual_mtime_us=cached_mtime_us,
-                    )
-                )
-                self._decrement_pending()
-                return
-
-            # Handle file conflicts
-            if local_path.exists():
-                if self._file_conflict_resolution == FileConflictResolution.SKIP:
-                    self._record_result(
-                        _DownloadFileResult(
-                            entry=entry,
-                            bytes_downloaded=file_size,
-                            local_path=None,
-                            was_skipped=True,
-                            actual_mtime_us=None,
-                        )
-                    )
-                    self._decrement_pending()
-                    return
-                elif self._file_conflict_resolution == FileConflictResolution.OVERWRITE:
-                    pass
-                elif self._file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-                    local_path = _get_new_copy_file_path(
-                        local_path, self._collision_lock, self._collision_file_dict
-                    )
-                    local_path = _get_long_path_compatible_path(local_path)
-                else:
-                    raise ValueError(
-                        f"Unknown file conflict resolution: {self._file_conflict_resolution}"
-                    )
-
-            # Create and pre-allocate temp file
-            temp_suffix = secrets.token_hex(5)
-            temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-
-            with open(temp_path, "wb") as f:
-                preallocate_file(f, file_size)
-
-            # For S3, use parallel parts across all chunks
-            if isinstance(self._data_cache, S3DataCache):
-                self._setup_chunked_file_parallel_parts(entry, local_path, temp_path, file_size)
-            else:
-                # For filesystem, use parallel chunks (no multipart needed)
-                self._setup_chunked_file_parallel_chunks(entry, local_path, temp_path, file_size)
-
-        except Exception as e:
-            self._record_error(e)
-            self._decrement_pending()
-
-    def _setup_chunked_file_parallel_parts(
-        self,
-        entry: ManifestFilePath,
-        local_path: Path,
-        temp_path: Path,
-        file_size: int,
-    ) -> None:
-        """
-        Setup parallel part downloads for a chunked file from S3.
-
-        For small chunks (< part_size), downloads without Range header.
-        For large chunks, calculates all parts and submits them all to the executor.
-        The last part to complete triggers finalization.
-        """
-        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-
-        if not isinstance(self._data_cache, S3DataCache):
-            raise TypeError("Expected S3DataCache")
-
-        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
-        num_chunks = len(entry.chunkhashes)  # type: ignore
-
-        # Calculate total number of parts across all chunks
-        total_parts = 0
-        for chunk_idx in range(num_chunks):
-            chunk_file_offset = chunk_idx * self._chunk_size_bytes
-            if chunk_idx == num_chunks - 1:
-                chunk_size = file_size - chunk_file_offset
-            else:
-                chunk_size = self._chunk_size_bytes
-
-            # Small chunks count as 1 part, large chunks have multiple parts
-            if chunk_size < MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-                total_parts += 1
-            else:
-                num_parts_in_chunk = (chunk_size + part_size - 1) // part_size
-                total_parts += num_parts_in_chunk
-
-        # Create state tracker
-        state = S3ParallelDownloadState(
-            entry=entry,
-            local_path=local_path,
-            temp_path=temp_path,
-            file_size=file_size,
-            parts_remaining=total_parts,
-        )
-
-        # Submit all parts of all chunks to executor
-        for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):  # type: ignore
-            chunk_file_offset = chunk_idx * self._chunk_size_bytes
-            if chunk_idx == num_chunks - 1:
-                chunk_size = file_size - chunk_file_offset
-            else:
-                chunk_size = self._chunk_size_bytes
-
-            s3_key = self._data_cache.get_object_key(chunk_hash, self._hash_alg)
-
-            # For small chunks, download without Range header (single request)
-            if chunk_size < MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-                self._executor.submit(
-                    self._download_small_chunk_with_callback,
-                    state,
-                    s3_key,
-                    chunk_file_offset,
-                )
-            else:
-                # For large chunks, submit all parts
-                num_parts_in_chunk = (chunk_size + part_size - 1) // part_size
-                for part_idx in range(num_parts_in_chunk):
-                    # Offset within the chunk (for S3 Range header)
-                    chunk_offset = part_idx * part_size
-                    end_in_chunk = min(chunk_offset + part_size - 1, chunk_size - 1)
-
-                    # Offset within the file (for writing)
-                    file_offset = chunk_file_offset + chunk_offset
-
-                    self._executor.submit(
-                        self._download_chunk_part_with_callback,
-                        state,
-                        s3_key,
-                        chunk_offset,
-                        end_in_chunk,
-                        file_offset,
-                    )
-
-    def _download_small_chunk_with_callback(
-        self,
-        state: S3ParallelDownloadState,
-        s3_key: str,
-        file_offset: int,
-    ) -> None:
-        """
-        Download a small chunk without Range header and check if all parts are complete.
-
-        The last part to complete triggers finalization.
-        """
-        try:
-            # Check for cancellation
-            if self._cancelled:
-                with state.lock:
-                    state.parts_remaining -= 1
-                    if state.parts_remaining == 0:
-                        state.temp_path.unlink(missing_ok=True)
-                        self._decrement_pending()
-                return
-
-            if not isinstance(self._data_cache, S3DataCache):
-                raise TypeError("Expected S3DataCache")
-
-            # Download without Range header
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-            )
-            data = response["Body"].read()
-
-            # Write to the correct position in the file
-            with open(state.temp_path, "r+b") as f:
-                f.seek(file_offset)
-                f.write(data)
-
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
-
-            # Update state and check if all parts are done
-            with state.lock:
-                state.total_bytes_downloaded += len(data)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-                has_errors = len(state.part_errors) > 0
-
-            # If all parts done, finalize (last part to finish does this)
-            if all_done:
-                if has_errors:
-                    state.temp_path.unlink(missing_ok=True)
-                    self._record_error(state.part_errors[0])
-                else:
-                    self._finalize_s3_parallel_download(state, is_chunked=True)
-                self._decrement_pending()
-
-        except (ClientError, BotoCoreError) as e:
-            with state.lock:
-                state.part_errors.append(e)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-        except Exception as e:
-            with state.lock:
-                state.part_errors.append(e)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-    def _download_chunk_part_with_callback(
-        self,
-        state: S3ParallelDownloadState,
-        s3_key: str,
-        chunk_offset: int,
-        end_in_chunk: int,
-        file_offset: int,
-    ) -> None:
-        """
-        Download one part of a chunk and check if all parts are complete.
-
-        The last part to complete triggers finalization.
-        """
-        try:
-            # Check for cancellation
-            if self._cancelled:
-                with state.lock:
-                    state.parts_remaining -= 1
-                    if state.parts_remaining == 0:
-                        state.temp_path.unlink(missing_ok=True)
-                        self._decrement_pending()
-                return
-
-            if not isinstance(self._data_cache, S3DataCache):
-                raise TypeError("Expected S3DataCache")
-
-            range_header = f"bytes={chunk_offset}-{end_in_chunk}"
-
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-                Range=range_header,
-            )
-            data = response["Body"].read()
-
-            # Write to the correct position in the file
-            with open(state.temp_path, "r+b") as f:
-                f.seek(file_offset)
-                f.write(data)
-
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
-
-            # Update state and check if all parts are done
-            with state.lock:
-                state.total_bytes_downloaded += len(data)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-                has_errors = len(state.part_errors) > 0
-
-            # If all parts done, finalize (last part to finish does this)
-            if all_done:
-                if has_errors:
-                    state.temp_path.unlink(missing_ok=True)
-                    self._record_error(state.part_errors[0])
-                else:
-                    self._finalize_s3_parallel_download(state, is_chunked=True)
-                self._decrement_pending()
-
-        except (ClientError, BotoCoreError) as e:
-            with state.lock:
-                state.part_errors.append(e)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-        except Exception as e:
-            with state.lock:
-                state.part_errors.append(e)
-                state.parts_remaining -= 1
-                all_done = state.parts_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-    def _setup_chunked_file_parallel_chunks(
-        self,
-        entry: ManifestFilePath,
-        local_path: Path,
-        temp_path: Path,
-        file_size: int,
-    ) -> None:
-        """
-        Setup parallel chunk downloads for a chunked file from filesystem cache.
-
-        Submits all chunks to the executor. The last chunk to complete triggers finalization.
-        """
-        # Create state tracker for this chunked file
-        state = _ChunkedFileState(
-            entry=entry,
-            local_path=local_path,
-            temp_path=temp_path,
-            file_size=file_size,
-            chunks_remaining=len(entry.chunkhashes),  # type: ignore
-        )
-
-        # Submit all chunk downloads
-        num_chunks = len(entry.chunkhashes)  # type: ignore
-        for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):  # type: ignore
-            offset = chunk_idx * self._chunk_size_bytes
-            # Calculate actual chunk size (last chunk may be smaller)
-            if chunk_idx == num_chunks - 1:
-                actual_chunk_size = file_size - offset
-            else:
-                actual_chunk_size = self._chunk_size_bytes
-
-            self._executor.submit(
-                self._download_chunk_with_callback,
-                state,
-                chunk_idx,
-                chunk_hash,
-                offset,
-                actual_chunk_size,
-            )
-
-    def _download_chunk_with_callback(
-        self,
-        state: _ChunkedFileState,
-        chunk_idx: int,
-        chunk_hash: str,
-        offset: int,
-        chunk_size: int,
-    ) -> None:
-        """
-        Download one chunk from filesystem cache and check if file is complete.
-
-        The last chunk to complete triggers finalization.
-        """
-        try:
-            # Check for cancellation
-            if self._cancelled:
-                with state.lock:
-                    state.chunks_remaining -= 1
-                    if state.chunks_remaining == 0:
-                        state.temp_path.unlink(missing_ok=True)
-                        self._decrement_pending()
-                return
-
-            # Download chunk to offset (filesystem only - S3 uses parallel parts)
-            bytes_written = _download_chunk_to_offset(
-                chunk_hash,
-                chunk_idx,
-                state.temp_path,
-                offset,
-                self._hash_alg,
-                self._data_cache,
-                self._progress_tracker,
-            )
-
-            # Update state and check if all chunks are done
-            with state.lock:
-                state.total_bytes_downloaded += bytes_written
-                state.chunks_remaining -= 1
-                all_done = state.chunks_remaining == 0
-                has_errors = len(state.chunk_errors) > 0
-
-            # If all chunks done, finalize (last chunk to finish does this)
-            if all_done:
-                if has_errors:
-                    state.temp_path.unlink(missing_ok=True)
-                    self._record_error(state.chunk_errors[0])
-                else:
-                    self._finalize_chunked_file(state)
-                self._decrement_pending()
-
-        except Exception as e:
-            with state.lock:
-                state.chunk_errors.append(e)
-                state.chunks_remaining -= 1
-                all_done = state.chunks_remaining == 0
-
-            if all_done:
-                state.temp_path.unlink(missing_ok=True)
-                self._record_error(e)
-                self._decrement_pending()
-
-    def _finalize_chunked_file(self, state: _ChunkedFileState) -> None:
-        """Finalize a chunked file download (atomic move + mtime + hash cache)."""
-        try:
-            entry = state.entry
-            local_path = state.local_path
-            temp_path = state.temp_path
-
-            # Atomic move
-            os.replace(temp_path, local_path)
-
-            # Restore modification time
-            if entry.mtime is not None:
-                mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
-                os.utime(local_path, ns=(mtime_ns, mtime_ns))
-
-            # Get actual filesystem mtime
-            actual_mtime_ns = local_path.stat().st_mtime_ns
-            actual_mtime_us = actual_mtime_ns // 1_000
-
-            # Update hash cache with all chunk hashes
-            if self._hash_cache is not None:
-                _update_hash_cache_for_chunked_file(
-                    entry,
-                    local_path,
-                    self._hash_alg_enum,
-                    self._hash_cache,
-                    self._chunk_size_bytes,
-                    actual_mtime_ns,
-                )
-
-            logger.debug(
-                f"Downloaded chunked file {entry.path} ({len(entry.chunkhashes)} chunks)"  # type: ignore
-            )
-            self._record_result(
-                _DownloadFileResult(
-                    entry=entry,
-                    bytes_downloaded=state.total_bytes_downloaded,
-                    local_path=local_path,
-                    was_skipped=False,
-                    actual_mtime_us=actual_mtime_us,
-                )
-            )
-
-        except Exception as e:
-            # Clean up temp file on error
-            state.temp_path.unlink(missing_ok=True)
-            self._record_error(e)
 
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
@@ -1178,798 +112,6 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
             )
 
 
-def _check_hash_cache_for_skip(
-    entry: ManifestFilePath,
-    hash_alg: HashAlgorithm,
-    hash_cache: Optional[HashCache],
-) -> Tuple[bool, Optional[int]]:
-    """
-    Check if a file can be skipped because it already exists with the correct hash.
-
-    Uses the hash cache to check if the local file's cached hash matches the
-    expected hash from the manifest. This avoids re-downloading files that
-    already have the correct content.
-
-    Args:
-        entry: The manifest file entry to check
-        hash_alg: The hash algorithm used in the manifest
-        hash_cache: Optional hash cache to check against
-
-    Returns:
-        Tuple of (can_skip, actual_mtime_us):
-        - can_skip: True if the file exists and has the correct hash
-        - actual_mtime_us: The file's mtime in microseconds if can_skip is True, else None
-    """
-    if hash_cache is None or entry.hash is None:
-        return (False, None)
-
-    local_path = _get_long_path_compatible_path(Path(entry.path))
-
-    # File must exist to skip
-    if not local_path.exists() or not local_path.is_file():
-        return (False, None)
-
-    # Get the file's current mtime
-    try:
-        stat_result = local_path.stat()
-        current_mtime_ns = stat_result.st_mtime_ns
-        current_mtime_str = str(current_mtime_ns)
-    except OSError:
-        return (False, None)
-
-    # Check the hash cache for this file
-    # Use resolved path because hash cache always uses resolved paths
-    resolved_path = str(Path(entry.path).resolve())
-    cache_entry = hash_cache.get_entry(
-        file_path_key=resolved_path,
-        hash_algorithm=hash_alg,
-        range_start=0,
-        range_end=WHOLE_FILE_RANGE_END,
-    )
-
-    if cache_entry is None:
-        return (False, None)
-
-    # Check if the cached mtime matches the current file mtime
-    if cache_entry.last_modified_time != current_mtime_str:
-        return (False, None)
-
-    # Check if the cached hash matches the expected hash
-    if cache_entry.file_hash != entry.hash:
-        return (False, None)
-
-    # File exists with correct hash - can skip download
-    actual_mtime_us = current_mtime_ns // 1_000
-    logger.debug(f"Skipping download of {entry.path} - hash cache indicates file is up to date")
-    return (True, actual_mtime_us)
-
-
-def _check_hash_cache_for_chunked_skip(
-    entry: ManifestFilePath,
-    hash_alg: HashAlgorithm,
-    hash_cache: Optional[HashCache],
-    chunk_size_bytes: int,
-) -> Tuple[bool, Optional[int]]:
-    """
-    Check if a chunked file can be skipped because it already exists with correct chunk hashes.
-
-    For chunked files, we check each chunk's hash in the hash cache. If all chunks
-    have matching hashes with the same mtime, the file can be skipped.
-
-    Args:
-        entry: The manifest file entry with chunkhashes to check
-        hash_alg: The hash algorithm used in the manifest
-        hash_cache: Optional hash cache to check against
-        chunk_size_bytes: The chunk size in bytes from the manifest
-
-    Returns:
-        Tuple of (can_skip, actual_mtime_us):
-        - can_skip: True if the file exists and all chunk hashes match
-        - actual_mtime_us: The file's mtime in microseconds if can_skip is True, else None
-    """
-    if hash_cache is None or entry.chunkhashes is None:
-        return (False, None)
-
-    local_path = _get_long_path_compatible_path(Path(entry.path))
-
-    # File must exist to skip
-    if not local_path.exists() or not local_path.is_file():
-        return (False, None)
-
-    # Get the file's current mtime
-    try:
-        stat_result = local_path.stat()
-        current_mtime_ns = stat_result.st_mtime_ns
-        current_mtime_str = str(current_mtime_ns)
-    except OSError:
-        return (False, None)
-
-    # Use resolved path because hash cache always uses resolved paths
-    resolved_path = str(Path(entry.path).resolve())
-    file_size = entry.size or 0
-    num_chunks = len(entry.chunkhashes)
-
-    # Check each chunk's hash in the cache
-    for chunk_idx, expected_hash in enumerate(entry.chunkhashes):
-        range_start = chunk_idx * chunk_size_bytes
-        # Last chunk may be smaller
-        if chunk_idx == num_chunks - 1:
-            range_end = file_size
-        else:
-            range_end = range_start + chunk_size_bytes
-
-        cache_entry = hash_cache.get_entry(
-            file_path_key=resolved_path,
-            hash_algorithm=hash_alg,
-            range_start=range_start,
-            range_end=range_end,
-        )
-
-        if cache_entry is None:
-            return (False, None)
-
-        # Check if the cached mtime matches the current file mtime
-        if cache_entry.last_modified_time != current_mtime_str:
-            return (False, None)
-
-        # Check if the cached hash matches the expected hash
-        if cache_entry.file_hash != expected_hash:
-            return (False, None)
-
-    # All chunks match - can skip download
-    actual_mtime_us = current_mtime_ns // 1_000
-    logger.debug(
-        f"Skipping download of chunked file {entry.path} - "
-        f"hash cache indicates all {num_chunks} chunks are up to date"
-    )
-    return (True, actual_mtime_us)
-
-
-def _update_hash_cache_for_chunked_file(
-    entry: ManifestFilePath,
-    local_path: Path,
-    hash_alg: HashAlgorithm,
-    hash_cache: HashCache,
-    chunk_size_bytes: int,
-    mtime_ns: int,
-) -> None:
-    """
-    Update the hash cache with all chunk hashes for a downloaded chunked file.
-
-    After a chunked file is downloaded and finalized (os.replace'd), this function
-    stores each chunk's hash in the hash cache with the appropriate byte range.
-
-    Args:
-        entry: The manifest file entry with chunkhashes
-        local_path: The final local path of the downloaded file
-        hash_alg: The hash algorithm used in the manifest
-        hash_cache: The hash cache to update
-        chunk_size_bytes: The chunk size in bytes from the manifest
-        mtime_ns: The file's mtime in nanoseconds after finalization
-    """
-    if entry.chunkhashes is None:
-        return
-
-    resolved_path = str(local_path.resolve())
-    mtime_str = str(mtime_ns)
-    file_size = entry.size or 0
-    num_chunks = len(entry.chunkhashes)
-
-    for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
-        range_start = chunk_idx * chunk_size_bytes
-        # Last chunk may be smaller
-        if chunk_idx == num_chunks - 1:
-            range_end = file_size
-        else:
-            range_end = range_start + chunk_size_bytes
-
-        hash_cache.put_entry(
-            HashCacheEntry(
-                file_path=resolved_path,
-                hash_algorithm=hash_alg,
-                file_hash=chunk_hash,
-                last_modified_time=mtime_str,
-                range_start=range_start,
-                range_end=range_end,
-            )
-        )
-
-
-def _get_new_copy_file_path(
-    local_file_path: Path,
-    collision_lock: Lock,
-    collision_file_dict: DefaultDict[str, int],
-) -> Path:
-    """
-    Generate a unique file path when a file already exists.
-
-    Creates paths like "file (1).ext", "file (2).ext", etc.
-    Thread-safe using the provided lock.
-    """
-    with collision_lock:
-        file_str = str(local_file_path)
-        num = collision_file_dict[file_str]
-        new_file_path = local_file_path
-
-        while True:
-            try:
-                # Atomic file creation to verify uniqueness
-                with open(new_file_path, "x"):
-                    break
-            except FileExistsError:
-                num += 1
-                new_file_path = local_file_path.parent / (
-                    f"{local_file_path.stem} ({num}){local_file_path.suffix}"
-                )
-
-        collision_file_dict[file_str] = num
-        return new_file_path
-
-
-async def _download_single_file_async(
-    entry: ManifestFilePath,
-    hash_alg: str,
-    hash_alg_enum: HashAlgorithm,
-    data_cache: ContentAddressedDataCache,
-    hash_cache: Optional[HashCache],
-    executor: concurrent.futures.ThreadPoolExecutor,
-    collision_lock: Lock,
-    collision_file_dict: DefaultDict[str, int],
-    file_conflict_resolution: FileConflictResolution,
-    progress_tracker: Optional[ProgressTracker],
-) -> Tuple[int, Optional[Path], bool, Optional[int]]:
-    """
-    Download a single file entry from the data cache with parallel multi-part support.
-
-    For S3 downloads of files larger than MIN_SIZE_FOR_MULTIPART_DOWNLOAD,
-    uses parallel byte-range requests for improved throughput. Smaller files
-    and filesystem cache downloads use single-threaded download.
-
-    Args:
-        entry: The manifest file entry to download.
-        hash_alg: The hash algorithm string (e.g., "xxh128").
-        hash_alg_enum: The hash algorithm enum.
-        data_cache: The data cache to download from.
-        hash_cache: Optional hash cache for skip detection.
-        executor: The shared ThreadPoolExecutor for parallel downloads.
-        collision_lock: Lock for thread-safe collision tracking.
-        collision_file_dict: Dict for tracking file name collisions.
-        file_conflict_resolution: How to handle existing files.
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
-    """
-    import secrets
-
-    if entry.hash is None:
-        raise ValueError(f"File entry '{entry.path}' has no hash")
-
-    local_path = _get_long_path_compatible_path(Path(entry.path))
-    file_size = entry.size or 0
-
-    loop = asyncio.get_running_loop()
-
-    # Check hash cache first (run in executor to avoid blocking)
-    def check_cache_and_conflicts() -> Tuple[Path, bool, Optional[int], Optional[Path]]:
-        """
-        Check hash cache and handle file conflicts.
-
-        Returns:
-            Tuple of (local_path, should_skip, cached_mtime_us, temp_path or None)
-            If should_skip is True, temp_path is None.
-            If should_skip is False, temp_path is the pre-allocated temp file.
-        """
-        nonlocal local_path
-
-        # Check hash cache first
-        can_skip, cached_mtime_us = _check_hash_cache_for_skip(entry, hash_alg_enum, hash_cache)
-        if can_skip:
-            return (local_path, True, cached_mtime_us, None)
-
-        # Handle file conflicts
-        if local_path.exists():
-            if file_conflict_resolution == FileConflictResolution.SKIP:
-                return (local_path, True, None, None)
-            elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
-                pass
-            elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-                local_path = _get_new_copy_file_path(
-                    local_path, collision_lock, collision_file_dict
-                )
-                local_path = _get_long_path_compatible_path(local_path)
-            else:
-                raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
-
-        # Pre-allocate temp file (parent directories already created upfront)
-        # Uses platform-specific sparse file allocation to avoid slow truncate() on Windows
-        temp_suffix = secrets.token_hex(5)
-        temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-        with open(temp_path, "wb") as f:
-            preallocate_file(f, file_size)
-
-        return (local_path, False, None, temp_path)
-
-    # Run setup in executor
-    local_path, should_skip, cached_mtime_us, temp_path = await loop.run_in_executor(
-        executor, check_cache_and_conflicts
-    )
-
-    if should_skip:
-        return (file_size, local_path if cached_mtime_us else None, True, cached_mtime_us)
-
-    assert temp_path is not None  # For type checker
-
-    try:
-        # Download based on data cache type
-        if isinstance(data_cache, S3DataCache):
-            s3_key = data_cache.get_object_key(entry.hash, hash_alg)
-
-            # Use multi-part download for large files
-            if file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-                bytes_downloaded = await download_s3_multipart_async(
-                    s3_client=data_cache.s3_client,
-                    s3_bucket=data_cache.s3_bucket,
-                    s3_key=s3_key,
-                    temp_path=temp_path,
-                    file_size=file_size,
-                    executor=executor,
-                    progress_tracker=progress_tracker,
-                )
-            else:
-                # Small file - download in single request (run in executor)
-                def download_small_file() -> int:
-                    try:
-                        response = data_cache.s3_client.get_object(
-                            Bucket=data_cache.s3_bucket,
-                            Key=s3_key,
-                        )
-                        data = response["Body"].read()
-                        with open(temp_path, "wb") as f:
-                            f.write(data)
-                        if progress_tracker:
-                            progress_tracker.track_progress_callback(len(data))
-                        return len(data)
-                    except ClientError as exc:
-                        status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
-                        raise JobAttachmentsS3ClientError(
-                            action="downloading file",
-                            status_code=status_code,
-                            bucket_name=data_cache.s3_bucket,
-                            key_or_prefix=s3_key,
-                            message=str(exc),
-                        ) from exc
-                    except BotoCoreError as bce:
-                        raise JobAttachmentS3BotoCoreError(
-                            action="downloading file",
-                            error_details=str(bce),
-                        ) from bce
-
-                bytes_downloaded = await loop.run_in_executor(executor, download_small_file)
-
-        elif isinstance(data_cache, FileSystemDataCache):
-            # Filesystem cache - copy file (run in executor)
-            def copy_from_filesystem() -> int:
-                import shutil
-
-                source_path = Path(data_cache.get_object_key(entry.hash, hash_alg))  # type: ignore[arg-type]
-                shutil.copy2(source_path, temp_path)
-                copied_size = temp_path.stat().st_size
-                if progress_tracker:
-                    progress_tracker.track_progress_callback(copied_size)
-                return copied_size
-
-            bytes_downloaded = await loop.run_in_executor(executor, copy_from_filesystem)
-        else:
-            raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
-
-        # Finalization - atomic move and mtime update (run in executor)
-        def finalize_file() -> int:
-            os.replace(temp_path, local_path)
-
-            # Restore modification time if available
-            if entry.mtime is not None:
-                mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
-                os.utime(local_path, ns=(mtime_ns, mtime_ns))
-
-            # Get actual filesystem mtime
-            actual_mtime_ns = local_path.stat().st_mtime_ns
-            actual_mtime_us = actual_mtime_ns // 1_000
-
-            # Update hash cache
-            if hash_cache is not None and entry.hash is not None:
-                resolved_path = str(local_path.resolve())
-                hash_cache.put_entry(
-                    HashCacheEntry(
-                        file_path=resolved_path,
-                        hash_algorithm=hash_alg_enum,
-                        file_hash=entry.hash,
-                        last_modified_time=str(actual_mtime_ns),
-                        range_start=0,
-                        range_end=WHOLE_FILE_RANGE_END,
-                    )
-                )
-
-            return actual_mtime_us
-
-        actual_mtime_us = await loop.run_in_executor(executor, finalize_file)
-
-        logger.debug(f"Downloaded {entry.path} to {local_path}")
-        return (bytes_downloaded, local_path, False, actual_mtime_us)
-
-    finally:
-        # Clean up temp file if it still exists
-        temp_path.unlink(missing_ok=True)
-
-
-def _download_chunk_to_offset(
-    chunk_hash: str,
-    chunk_idx: int,
-    temp_path: Path,
-    offset: int,
-    hash_alg: str,
-    data_cache: ContentAddressedDataCache,
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Download a single chunk and write it to a specific offset in the temp file.
-
-    Each thread opens its own file handle and seeks to the correct offset before
-    writing. Since chunks write to non-overlapping regions, no locking is needed.
-
-    This is the synchronous version used for small chunks. For large chunks,
-    use _download_chunk_to_offset_async which supports multi-part parallel downloads.
-
-    Args:
-        chunk_hash: The hash of the chunk to download.
-        chunk_idx: The index of this chunk (for logging).
-        temp_path: Path to the pre-allocated temp file.
-        offset: The byte offset where this chunk should be written.
-        hash_alg: The hash algorithm string (e.g., "xxh128").
-        data_cache: The data cache to download from.
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        The number of bytes written.
-    """
-    if isinstance(data_cache, S3DataCache):
-        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
-        return download_s3_chunk_to_offset(
-            s3_client=data_cache.s3_client,
-            s3_bucket=data_cache.s3_bucket,
-            s3_key=s3_key,
-            chunk_idx=chunk_idx,
-            temp_path=temp_path,
-            offset=offset,
-            progress_tracker=progress_tracker,
-        )
-    elif isinstance(data_cache, FileSystemDataCache):
-        source_path = Path(data_cache.get_object_key(chunk_hash, hash_alg))
-        return download_fs_chunk_to_offset(
-            source_path=source_path,
-            chunk_idx=chunk_idx,
-            temp_path=temp_path,
-            offset=offset,
-            progress_tracker=progress_tracker,
-        )
-    else:
-        raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
-
-
-async def _download_chunk_to_offset_async(
-    chunk_hash: str,
-    chunk_idx: int,
-    temp_path: Path,
-    offset: int,
-    chunk_size: int,
-    hash_alg: str,
-    data_cache: ContentAddressedDataCache,
-    executor: concurrent.futures.ThreadPoolExecutor,
-    progress_tracker: Optional[ProgressTracker],
-) -> int:
-    """
-    Download a chunk with parallel multi-part support for large chunks.
-
-    For S3 chunks larger than MIN_SIZE_FOR_MULTIPART_DOWNLOAD, uses parallel
-    byte-range requests. Smaller chunks use single-request download.
-
-    Args:
-        chunk_hash: The hash of the chunk to download.
-        chunk_idx: The index of this chunk (for logging).
-        temp_path: Path to the pre-allocated temp file.
-        offset: The byte offset in the temp file where this chunk starts.
-        chunk_size: The size of this chunk in bytes.
-        hash_alg: The hash algorithm string (e.g., "xxh128").
-        data_cache: The data cache to download from.
-        executor: The shared ThreadPoolExecutor for parallel downloads.
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        The number of bytes written.
-    """
-    loop = asyncio.get_running_loop()
-
-    if isinstance(data_cache, S3DataCache):
-        s3_key = data_cache.get_object_key(chunk_hash, hash_alg)
-
-        # Use multi-part download for large chunks
-        if chunk_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
-            return await download_s3_chunk_multipart_async(
-                s3_client=data_cache.s3_client,
-                s3_bucket=data_cache.s3_bucket,
-                s3_key=s3_key,
-                chunk_idx=chunk_idx,
-                temp_path=temp_path,
-                offset=offset,
-                chunk_size=chunk_size,
-                executor=executor,
-                progress_tracker=progress_tracker,
-            )
-        else:
-            # Small chunk - use single request (run in executor)
-            return await loop.run_in_executor(
-                executor,
-                _download_chunk_to_offset,
-                chunk_hash,
-                chunk_idx,
-                temp_path,
-                offset,
-                hash_alg,
-                data_cache,
-                progress_tracker,
-            )
-
-    elif isinstance(data_cache, FileSystemDataCache):
-        # Filesystem cache - always use single-threaded copy
-        return await loop.run_in_executor(
-            executor,
-            _download_chunk_to_offset,
-            chunk_hash,
-            chunk_idx,
-            temp_path,
-            offset,
-            hash_alg,
-            data_cache,
-            progress_tracker,
-        )
-
-    else:
-        raise TypeError(f"Unsupported data cache type: {type(data_cache)}")
-
-
-async def _download_chunked_file_async(
-    entry: ManifestFilePath,
-    hash_alg: str,
-    hash_alg_enum: HashAlgorithm,
-    data_cache: ContentAddressedDataCache,
-    chunk_size_bytes: int,
-    hash_cache: Optional[HashCache],
-    executor: concurrent.futures.ThreadPoolExecutor,
-    collision_lock: Lock,
-    collision_file_dict: DefaultDict[str, int],
-    file_conflict_resolution: FileConflictResolution,
-    progress_tracker: Optional[ProgressTracker],
-) -> Tuple[int, Optional[Path], bool, Optional[int]]:
-    """
-    Async wrapper for downloading a chunked file with parallel chunk downloads.
-
-    Downloads all chunks in parallel using the thread pool, then performs the
-    atomic os.replace and mtime update as a continuation after all chunks complete.
-
-    This allows multiple chunked files to have their chunks downloading concurrently,
-    rather than waiting for one chunked file to complete before starting the next.
-
-    The async flow uses continuations to chain phases together:
-    1. [preallocate] - run_in_executor: check hash cache, create temp file, handle conflicts, mkdir
-       └─► continuation: schedule all chunk downloads
-    2. [chunk downloads] - asyncio.gather over multiple run_in_executor calls
-       └─► continuation: finalization
-    3. [finalization] - run_in_executor: atomic os.replace + mtime update + hash cache update
-
-    If pre-allocation fails, the continuation is never scheduled and the error propagates.
-
-    Args:
-        entry: The manifest file entry with chunkhashes.
-        hash_alg: The hash algorithm string (e.g., "xxh128").
-        hash_alg_enum: The hash algorithm enum.
-        data_cache: The data cache to download from.
-        chunk_size_bytes: The chunk size in bytes from the manifest.
-        hash_cache: Optional hash cache for skip detection and update.
-        executor: The shared ThreadPoolExecutor for parallel downloads.
-        collision_lock: Lock for thread-safe collision tracking.
-        collision_file_dict: Dict for tracking file name collisions.
-        file_conflict_resolution: How to handle existing files.
-        progress_tracker: Optional progress tracker for download progress.
-
-    Returns:
-        Tuple of (bytes_downloaded, local_path or None if skipped, was_skipped, actual_mtime_us)
-        actual_mtime_us is the actual filesystem mtime in microseconds, or None if skipped.
-    """
-    import secrets
-
-    if entry.chunkhashes is None:
-        raise ValueError(f"Chunked file entry '{entry.path}' has no chunkhashes")
-
-    local_path = _get_long_path_compatible_path(Path(entry.path))
-    file_size = entry.size or 0
-
-    loop = asyncio.get_running_loop()
-
-    # Pre-allocation function (runs in executor)
-    def preallocate_temp_file() -> Tuple[Path, Path, bool, Optional[int]]:
-        """
-        Check hash cache, handle file conflicts, create directories, and pre-allocate temp file.
-
-        Returns:
-            Tuple of (local_path, temp_path, should_skip, cached_mtime_us)
-        """
-        nonlocal local_path
-
-        # Check hash cache first for chunked files
-        can_skip, cached_mtime_us = _check_hash_cache_for_chunked_skip(
-            entry, hash_alg_enum, hash_cache, chunk_size_bytes
-        )
-        if can_skip:
-            return (local_path, Path(), True, cached_mtime_us)
-
-        # Handle file conflicts
-        if local_path.exists():
-            if file_conflict_resolution == FileConflictResolution.SKIP:
-                return (local_path, Path(), True, None)
-            elif file_conflict_resolution == FileConflictResolution.OVERWRITE:
-                pass  # Continue to download
-            elif file_conflict_resolution == FileConflictResolution.CREATE_COPY:
-                local_path = _get_new_copy_file_path(
-                    local_path, collision_lock, collision_file_dict
-                )
-                local_path = _get_long_path_compatible_path(local_path)
-            else:
-                raise ValueError(f"Unknown file conflict resolution: {file_conflict_resolution}")
-
-        # Create temp file path beside the target for atomic write
-        # (parent directories already created upfront)
-        temp_suffix = secrets.token_hex(5)
-        temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
-
-        # Pre-allocate the temp file to the exact size
-        # Uses platform-specific sparse file allocation to avoid slow truncate() on Windows
-        with open(temp_path, "wb") as f:
-            preallocate_file(f, file_size)
-
-        return (local_path, temp_path, False, None)
-
-    # Continuation: download chunks and finalize (scheduled after pre-allocation)
-    async def download_chunks_and_finalize(
-        final_local_path: Path, temp_path: Path
-    ) -> Tuple[int, Optional[Path], bool, Optional[int]]:
-        """Download all chunks in parallel with multi-part support, then finalize."""
-        try:
-            # Download all chunks in parallel (with multi-part for large chunks)
-            chunk_tasks: List[asyncio.Task[int]] = []
-            num_chunks = len(entry.chunkhashes)  # type: ignore[arg-type]
-
-            for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):  # type: ignore[arg-type]
-                offset = chunk_idx * chunk_size_bytes
-                # Calculate actual chunk size (last chunk may be smaller)
-                if chunk_idx == num_chunks - 1:
-                    # Last chunk: remaining bytes
-                    actual_chunk_size = file_size - offset
-                else:
-                    actual_chunk_size = chunk_size_bytes
-
-                # Use async chunk download with multi-part support
-                task = asyncio.create_task(
-                    _download_chunk_to_offset_async(
-                        chunk_hash,
-                        chunk_idx,
-                        temp_path,
-                        offset,
-                        actual_chunk_size,
-                        hash_alg,
-                        data_cache,
-                        executor,
-                        progress_tracker,
-                    )
-                )
-                chunk_tasks.append(task)
-
-            # Wait for all chunks to complete concurrently
-            chunk_results = await asyncio.gather(*chunk_tasks, return_exceptions=True)
-
-            # Check for errors
-            errors: List[Exception] = []
-            total_bytes = 0
-            for chunk_idx, result in enumerate(chunk_results):
-                if isinstance(result, BaseException):
-                    logger.error(f"Failed to download chunk {chunk_idx} of {entry.path}: {result}")
-                    if isinstance(result, Exception):
-                        errors.append(result)
-                    else:
-                        # BaseException but not Exception (e.g., KeyboardInterrupt)
-                        raise result
-                else:
-                    total_bytes += result
-
-            # If any chunk failed, raise the first error
-            if errors:
-                raise errors[0]
-
-            # Finalization - atomic move, mtime update, and hash cache update (run in executor)
-            def finalize_chunked_file() -> int:
-                """Finalize the chunked file download (atomic move + mtime + hash cache)."""
-                os.replace(temp_path, final_local_path)
-
-                # Restore modification time if available
-                if entry.mtime is not None:
-                    mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
-                    os.utime(final_local_path, ns=(mtime_ns, mtime_ns))
-
-                # Get the actual filesystem mtime (may differ from requested due to OS precision)
-                actual_mtime_ns = final_local_path.stat().st_mtime_ns
-
-                # Update hash cache with all chunk hashes
-                if hash_cache is not None:
-                    _update_hash_cache_for_chunked_file(
-                        entry,
-                        final_local_path,
-                        hash_alg_enum,
-                        hash_cache,
-                        chunk_size_bytes,
-                        actual_mtime_ns,
-                    )
-
-                return actual_mtime_ns // 1_000
-
-            actual_mtime_us = await loop.run_in_executor(executor, finalize_chunked_file)
-
-            logger.debug(
-                f"Downloaded chunked file {entry.path} ({len(entry.chunkhashes)} chunks)"  # type: ignore[arg-type]
-            )
-            return (total_bytes, final_local_path, False, actual_mtime_us)
-
-        finally:
-            # Clean up temp file if it still exists (i.e., on error before os.replace)
-            temp_path.unlink(missing_ok=True)
-
-    # Chain pre-allocation → chunk downloads → finalization using add_done_callback
-    # This schedules the continuation immediately when pre-allocation completes,
-    # without an intermediate await in this function's body.
-    result_future: asyncio.Future[Tuple[int, Optional[Path], bool, Optional[int]]] = (
-        loop.create_future()
-    )
-
-    def on_prealloc_done(
-        prealloc_future: asyncio.Future[Tuple[Path, Path, bool, Optional[int]]],
-    ) -> None:
-        """Callback that schedules chunk downloads after pre-allocation completes."""
-        try:
-            final_local_path, temp_path, should_skip, cached_mtime_us = prealloc_future.result()
-
-            if should_skip:
-                result_future.set_result((file_size, None, True, cached_mtime_us))
-                return
-
-            # Schedule the continuation (chunk downloads + finalization)
-            async def run_continuation() -> None:
-                try:
-                    result = await download_chunks_and_finalize(final_local_path, temp_path)
-                    result_future.set_result(result)
-                except Exception as e:
-                    result_future.set_exception(e)
-
-            asyncio.ensure_future(run_continuation())
-
-        except Exception as e:
-            result_future.set_exception(e)
-
-    # Schedule pre-allocation and attach the continuation callback
-    prealloc_future = asyncio.ensure_future(loop.run_in_executor(executor, preallocate_temp_file))
-    prealloc_future.add_done_callback(on_prealloc_done)
-
-    # Single await for the entire operation
-    return await result_future
-
-
 def _create_symlink(entry: ManifestFilePath) -> None:
     """Create a symlink for a symlink entry."""
     if entry.symlink_target is None:
@@ -1978,14 +120,10 @@ def _create_symlink(entry: ManifestFilePath) -> None:
     local_path = _get_long_path_compatible_path(Path(entry.path))
     target_path = Path(entry.symlink_target)
 
-    # Parent directories are already created upfront by _create_all_directories
-
     # Remove existing symlink if present
     if local_path.is_symlink():
         local_path.unlink()
     elif local_path.exists():
-        # If it's a regular file/dir, we need to handle conflict
-        # For symlinks, we always overwrite
         if local_path.is_dir():
             import shutil
 
@@ -1993,7 +131,6 @@ def _create_symlink(entry: ManifestFilePath) -> None:
         else:
             local_path.unlink()
 
-    # Create the symlink
     local_path.symlink_to(target_path)
     logger.debug(f"Created symlink {entry.path} -> {entry.symlink_target}")
 
@@ -2001,89 +138,50 @@ def _create_symlink(entry: ManifestFilePath) -> None:
 def _sort_symlinks_by_dependency(symlinks: List[ManifestFilePath]) -> List[ManifestFilePath]:
     """
     Sort symlinks so that targets are created before symlinks that point to them.
-
-    For chained symlinks (A -> B -> C), we need to create C first, then B, then A.
-    This uses a topological sort based on the dependency graph.
-
-    If there are cycles in the symlink dependencies (which shouldn't happen in valid
-    manifests), the symlinks that are part of the cycle are placed at the end in
-    their original order, after all non-cyclic symlinks have been properly sorted.
-
-    Args:
-        symlinks: List of symlink entries to sort
-
-    Returns:
-        List of symlink entries in dependency order (targets before dependents)
     """
     if not symlinks:
         return []
 
-    # Build a map from path to entry for quick lookup
     path_to_entry: dict[str, ManifestFilePath] = {entry.path: entry for entry in symlinks}
-
-    # Build adjacency list: symlink -> list of symlinks it depends on
-    # A symlink depends on another if its target is that other symlink's path
     dependencies: dict[str, List[str]] = {entry.path: [] for entry in symlinks}
 
     for entry in symlinks:
         target = entry.symlink_target
         if target and target in path_to_entry:
-            # This symlink depends on another symlink (chained)
             dependencies[entry.path].append(target)
 
-    # Topological sort using Kahn's algorithm
-    # Count incoming edges (how many symlinks point to each symlink)
     in_degree: dict[str, int] = {path: 0 for path in path_to_entry}
     for path, deps in dependencies.items():
         for dep in deps:
             in_degree[dep] += 1
 
-    # Start with symlinks that no other symlink points to
-    # These are the "leaf" symlinks that should be created first
     queue: deque[str] = deque(path for path, degree in in_degree.items() if degree == 0)
     sorted_paths: List[str] = []
 
     while queue:
         path = queue.popleft()
         sorted_paths.append(path)
-
-        # For each symlink that this one depends on, decrement its in-degree
         for dep in dependencies[path]:
             in_degree[dep] -= 1
             if in_degree[dep] == 0:
                 queue.append(dep)
 
-    # If we couldn't sort all symlinks, there's a cycle
     cyclic_symlinks: List[ManifestFilePath] = []
     if len(sorted_paths) != len(symlinks):
-        # Find symlinks that are part of the cycle (not in sorted_paths)
         sorted_set = set(sorted_paths)
         cyclic_symlinks = [entry for entry in symlinks if entry.path not in sorted_set]
         logger.warning(
-            f"Detected cycle in symlink dependencies involving {len(cyclic_symlinks)} symlinks, "
-            "placing them at the end"
+            f"Detected cycle in symlink dependencies involving {len(cyclic_symlinks)} symlinks"
         )
 
-    # Reverse to get targets before dependents, then append any cyclic symlinks
     sorted_paths.reverse()
     result = [path_to_entry[path] for path in sorted_paths]
     result.extend(cyclic_symlinks)
-
     return result
 
 
 def _delete_file(path: str) -> None:
-    """
-    Delete a file or symlink at the given path.
-
-    Only deletes if the path is a file or symlink. If the path is a directory
-    or doesn't exist, it is left alone. This prevents accidental deletion
-    if the filesystem state doesn't match the manifest (e.g., a directory
-    exists where a file was expected).
-
-    Args:
-        path: The path to delete
-    """
+    """Delete a file or symlink at the given path."""
     local_path = _get_long_path_compatible_path(Path(path))
 
     if local_path.is_symlink():
@@ -2099,36 +197,18 @@ def _delete_file(path: str) -> None:
 
 
 def _delete_directory(path: str) -> None:
-    """
-    Delete an empty directory at the given path.
-
-    Only deletes if the path is an empty directory. If the directory contains
-    files, it is left in place. If the path is a file or doesn't exist, it is
-    left alone. This prevents accidental deletion if the filesystem state
-    doesn't match the manifest.
-
-    Diff manifests must explicitly include deletion markers for all contained
-    files and subdirectories before the parent directory can be deleted.
-    This prevents accidental deletion of files that were added outside the
-    manifest system.
-
-    Args:
-        path: The path to delete
-    """
+    """Delete an empty directory at the given path."""
     local_path = _get_long_path_compatible_path(Path(path))
 
     if local_path.is_symlink():
-        # Symlink to a directory - treat as a symlink, not a directory
         logger.debug(f"Expected directory but found symlink, skipping deletion: {path}")
     elif local_path.is_file():
         logger.debug(f"Expected directory but found file, skipping deletion: {path}")
     elif local_path.is_dir():
         try:
-            local_path.rmdir()  # Only removes empty directories
+            local_path.rmdir()
             logger.debug(f"Deleted empty directory {path}")
         except OSError:
-            # Directory not empty - this is expected if there are files
-            # not tracked by the manifest. Leave it in place.
             logger.debug(f"Directory not empty, skipping deletion: {path}")
     else:
         logger.debug(f"Directory does not exist, skipping deletion: {path}")
@@ -2145,51 +225,29 @@ def _collect_directories_with_files(
     manifest: AbsManifest,
     files_to_download: List[ManifestFilePath],
 ) -> Tuple[List[str], Dict[str, List[ManifestFilePath]]]:
-    """
-    Collect all directories and map each directory to the files it contains.
-
-    This enables the hybrid directory creation approach where we create a directory
-    and immediately submit downloads for files in that directory, allowing directory
-    creation to overlap with file downloads.
-
-    Args:
-        manifest: The manifest with absolute paths.
-        files_to_download: List of file entries to download (regular and chunked).
-
-    Returns:
-        Tuple of:
-        - sorted_dirs: List of directory paths sorted by length (parents before children)
-        - dir_to_files: Dict mapping each directory path to the list of files in that directory
-    """
+    """Collect all directories and map each directory to the files it contains."""
     dirs_to_create: set[str] = set()
     dir_to_files: Dict[str, List[ManifestFilePath]] = {}
 
-    # Add all non-deleted directories from the manifest
     for dir_entry in manifest.dirs:
         if not dir_entry.deleted:
             dirs_to_create.add(dir_entry.path)
 
-    # Process all files: collect parent directories and map files to their parent dir
     for entry in files_to_download:
-        # Get the parent directory of this file
         path = entry.path
         last_slash = path.rfind("/")
         if last_slash <= 0:
-            # Root-level file (no parent directory) - use "" as key
             parent_dir = ""
         else:
             parent_dir = path[:last_slash]
-            # Handle Windows drive roots like "C:"
             if os.name == "nt" and len(parent_dir) == 2 and parent_dir[1] == ":":
                 parent_dir = ""
 
-        # Add file to its parent directory's list
         if parent_dir not in dir_to_files:
             dir_to_files[parent_dir] = []
         dir_to_files[parent_dir].append(entry)
         dirs_to_create.add(parent_dir)
 
-        # Also collect all ancestor directories
         ancestor = parent_dir
         while ancestor:
             last_slash = ancestor.rfind("/")
@@ -2200,22 +258,14 @@ def _collect_directories_with_files(
                 break
             dirs_to_create.add(ancestor)
 
-    # Sort directories by path length (parents before children)
-    # "" sorts first (length 0) for root-level files
     sorted_dirs = sorted(dirs_to_create, key=len)
-
     return sorted_dirs, dir_to_files
 
 
 def _create_directory_path(dir_path: str) -> None:
-    """
-    Create a single directory (with parents if needed).
-
-    Args:
-        dir_path: Absolute directory path to create.
-    """
+    """Create a single directory."""
     local_path = _get_long_path_compatible_path(Path(dir_path))
-    local_path.mkdir(parents=True, exist_ok=True)
+    local_path.mkdir(exist_ok=True)
     logger.debug("Created directory %s", dir_path)
 
 
@@ -2223,29 +273,10 @@ def _build_updated_manifest(
     manifest: AbsManifest,
     updated_mtimes: Dict[str, int],
 ) -> AbsManifest:
-    """
-    Build a copy of the manifest with mtime values updated to match actual filesystem timestamps.
-
-    This is useful for cross-OS scenarios where file system mtime precision differs.
-    For example, a snapshot created on Linux with nanosecond precision may have different
-    mtime values when the files are written to Windows (100-nanosecond precision) or
-    macOS (microsecond precision). Using the updated manifest as the basis for subsequent
-    diff operations ensures reliable change detection.
-
-    Args:
-        manifest: The original manifest with absolute paths.
-        updated_mtimes: Dict mapping file paths to their actual filesystem mtime in microseconds.
-
-    Returns:
-        A new manifest of the same type with updated mtime values for downloaded files.
-        Files not in updated_mtimes (e.g., skipped files, symlinks, deleted entries)
-        retain their original mtime values.
-    """
-    # Build updated file entries
+    """Build a copy of the manifest with mtime values updated to match filesystem."""
     updated_files: List[ManifestFilePath] = []
     for entry in manifest.files:
         if entry.path in updated_mtimes:
-            # Create a new entry with the updated mtime
             updated_files.append(
                 ManifestFilePath(
                     path=entry.path,
@@ -2259,10 +290,8 @@ def _build_updated_manifest(
                 )
             )
         else:
-            # Keep the original entry unchanged
             updated_files.append(entry)
 
-    # Create the appropriate manifest type
     if isinstance(manifest, AbsSnapshot):
         return AbsSnapshot(
             hash_alg=manifest.hashAlg,
@@ -2273,7 +302,6 @@ def _build_updated_manifest(
             file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
     else:
-        # AbsSnapshotDiff
         return AbsSnapshotDiff(
             hash_alg=manifest.hashAlg,
             files=updated_files,
@@ -2282,6 +310,11 @@ def _build_updated_manifest(
             parent_manifest_hash=manifest.parentManifestHash,
             file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
+
+
+# =============================================================================
+# Main Download Function
+# =============================================================================
 
 
 def download_manifest(
@@ -2309,36 +342,23 @@ def download_manifest(
         data_cache: Data cache to download from (S3DataCache or FileSystemDataCache)
         hash_cache: Optional hash cache to check for files that already have the
             correct content. If a file exists locally and its cached hash matches
-            the expected hash from the manifest, the download is skipped. This
-            avoids re-downloading files that are already up to date.
+            the expected hash from the manifest, the download is skipped.
         file_conflict_resolution: How to handle existing files. Default OVERWRITE.
-            Note: When hash_cache is provided, files with matching hashes are
-            skipped regardless of this setting.
         apply_deletes: If True (default), apply deletions from diff manifests.
-            If False, skip deletions and only download new/modified files.
         symlink_policy: How to handle symlinks. Default PRESERVE.
-            PRESERVE: Create symlinks as specified in the manifest.
-            EXCLUDE: Skip symlink entries entirely.
-            Other policies are not supported for DOWNLOAD.
         max_workers: Maximum parallel download workers. Default: auto-detect.
         print_function_callback: Progress callback for status messages
         progress_tracker: Optional progress tracker for download progress and cancellation
 
     Returns:
-        DownloadResult containing:
-        - statistics: DownloadSummaryStatistics with download results
-        - manifest: A copy of the input manifest with mtime values updated to match
-          the actual local filesystem timestamps. This is useful for cross-OS scenarios
-          where file system mtime precision differs.
+        DownloadResult containing statistics and updated manifest.
 
     Raises:
         ValueError: If the manifest contains relative paths or unsupported symlink_policy
         AssetSyncCancelledError: If cancelled via progress tracker
     """
-    # Validate absolute paths
     _validate_absolute_paths(manifest)
 
-    # Validate symlink_policy
     if symlink_policy not in (SymlinkPolicy.PRESERVE, SymlinkPolicy.EXCLUDE_ALL):
         raise ValueError(
             f"DOWNLOAD operation only supports PRESERVE or EXCLUDE_ALL symlink policies. "
@@ -2348,7 +368,6 @@ def download_manifest(
     hash_alg = manifest.hashAlg.value
     hash_alg_enum = manifest.hashAlg
 
-    # Determine number of workers
     if max_workers is None:
         max_workers = DEFAULT_MAX_WORKERS
 
@@ -2374,14 +393,12 @@ def download_manifest(
             deleted_directories.append(dir_entry)
 
     # Calculate totals for progress tracking
-    # Only count symlinks if policy is PRESERVE
     symlink_count = len(symlinks) if symlink_policy == SymlinkPolicy.PRESERVE else 0
     total_files = len(regular_files) + len(chunked_files) + symlink_count
     total_bytes = sum((e.size or 0) for e in regular_files) + sum(
         (e.size or 0) for e in chunked_files
     )
 
-    # Set up progress tracker if not provided
     if progress_tracker is None:
         progress_tracker = ProgressTracker(
             status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
@@ -2394,14 +411,9 @@ def download_manifest(
 
     start_time = time.perf_counter()
 
-    # Thread-safe collision tracking
     collision_lock = Lock()
     collision_file_dict: DefaultDict[str, int] = defaultdict(int)
-
-    # Track downloaded files by root for statistics
     downloaded_files_by_root: DefaultDict[str, List[str]] = defaultdict(list)
-
-    # Track updated mtimes for each file path (path -> actual_mtime_us)
     updated_mtimes: Dict[str, int] = {}
 
     processed_files = 0
@@ -2410,9 +422,8 @@ def download_manifest(
     skipped_bytes = 0
 
     try:
-        # 1. Process deletions first (for diff manifests only), if enabled
+        # 1. Process deletions first (for diff manifests only)
         if apply_deletes and isinstance(manifest, AbsSnapshotDiff):
-            # Sort by path length descending so children are deleted before parents
             sorted_deleted_files = sorted(deleted_files, key=lambda e: len(e.path), reverse=True)
             sorted_deleted_dirs = sorted(
                 deleted_directories, key=lambda d: len(d.path), reverse=True
@@ -2426,22 +437,22 @@ def download_manifest(
                 _delete_directory(dir_entry.path)
                 print_function_callback(f"Deleted directory: {dir_entry.path}")
 
-        # 2. Collect directories and map them to their files for hybrid creation
-        # This enables interleaving directory creation with file download submission
+        # 2. Collect directories
         all_files_to_download = regular_files + chunked_files
         sorted_dirs, dir_to_files = _collect_directories_with_files(manifest, all_files_to_download)
 
-        # Get chunk size from manifest for chunked file downloads
         chunk_size_bytes = manifest.fileChunkSizeBytes
 
-        # 3. Create all directories first (fast operation)
-        for dir_path in sorted_dirs:
-            if dir_path:
-                _create_directory_path(dir_path)
-
-        # 4. Download all files using callback-based pipeline (no asyncio overhead)
+        # 3. Download files using callback-based pipeline
+        # Interleave directory creation with file submission so the pipeline
+        # can start processing files while directories are still being created
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            pipeline = _DownloadPipeline(
+            pipeline_class = (
+                S3DownloadPipeline
+                if isinstance(data_cache, S3DataCache)
+                else FileSystemDownloadPipeline
+            )
+            pipeline: DownloadPipelineBase = pipeline_class(
                 executor=executor,
                 data_cache=data_cache,
                 hash_alg=hash_alg,
@@ -2454,16 +465,20 @@ def download_manifest(
                 progress_tracker=progress_tracker,
             )
 
-            # Submit all files to the pipeline
-            for entry in regular_files:
-                pipeline.submit_single_file(entry)
+            # Create each directory and immediately submit its files
+            for dir_path in sorted_dirs:
+                # Create directory (skip empty string which represents root)
+                if dir_path:
+                    _create_directory_path(dir_path)
 
-            for entry in chunked_files:
-                pipeline.submit_chunked_file(entry)
+                # Submit files for this directory immediately
+                if dir_path in dir_to_files:
+                    for entry in dir_to_files[dir_path]:
+                        if entry.chunkhashes is not None:
+                            pipeline.submit_chunked_file(entry)
+                        else:
+                            pipeline.submit_single_file(entry)
 
-            # Wait for all downloads to complete
-            # Check for cancellation periodically
-            # Handle empty case - if nothing was submitted, skip the wait loop
             has_files = len(regular_files) > 0 or len(chunked_files) > 0
             if has_files:
                 while not pipeline._done_event.wait(timeout=0.1):
@@ -2471,7 +486,6 @@ def download_manifest(
                         pipeline.cancel()
                         raise AssetSyncCancelledError("Download cancelled.")
 
-            # Get results
             results = pipeline.wait_for_completion()
 
         # Process results
@@ -2488,7 +502,6 @@ def download_manifest(
                 if result.local_path:
                     root = str(result.local_path.parent)
                     downloaded_files_by_root[root].append(str(result.local_path))
-                # Track the actual mtime from the filesystem
                 if result.actual_mtime_us is not None:
                     updated_mtimes[result.entry.path] = result.actual_mtime_us
                 file_type = "chunked file" if result.entry.chunkhashes else "file"
@@ -2497,8 +510,6 @@ def download_manifest(
             progress_tracker.report_progress()
 
         # 5. Create symlinks (if policy is PRESERVE)
-        # Sort symlinks so targets are created before symlinks that point to them
-        # This handles chained symlinks (A -> B -> C) correctly
         if symlink_policy == SymlinkPolicy.PRESERVE:
             sorted_symlinks = _sort_symlinks_by_dependency(symlinks)
             for entry in sorted_symlinks:
@@ -2507,7 +518,6 @@ def download_manifest(
                 progress_tracker.increase_processed(1, 0)
                 progress_tracker.report_progress()
                 print_function_callback(f"Created symlink: {entry.path}")
-        # If EXCLUDE_ALL, symlinks are skipped (already not in total_files count)
 
     except AssetSyncCancelledError:
         raise AssetSyncCancelledError(
@@ -2518,8 +528,6 @@ def download_manifest(
 
     progress_tracker.total_time = time.perf_counter() - start_time
 
-    # Build the updated manifest with actual filesystem mtimes
     updated_manifest = _build_updated_manifest(manifest, updated_mtimes)
-
     statistics = progress_tracker.get_download_summary_statistics(dict(downloaded_files_by_root))
     return DownloadResult(statistics=statistics, manifest=updated_manifest)

@@ -115,19 +115,19 @@ class TestDownloadManifestHashCacheSkip:
                 hash_cache=hash_cache,
             )
 
-            # Patch the filesystem copy function to track calls
+            # Patch shutil.copy2 in the filesystem pipeline to track calls
             with patch(
-                "deadline.job_attachments._snapshots._operations._download_manifest_file_system.download_file_from_filesystem"
-            ) as mock_download:
-                # Second download - should skip without calling download function
+                "deadline.job_attachments._snapshots._operations._download_manifest_file_system_pipeline.shutil.copy2"
+            ) as mock_copy:
+                # Second download - should skip without calling copy function
                 result = download_manifest(
                     manifest=download_manifest_obj,
                     data_cache=data_cache,
                     hash_cache=hash_cache,
                 )
 
-                # Verify download function was NOT called
-                mock_download.assert_not_called()
+                # Verify copy function was NOT called (file was skipped)
+                mock_copy.assert_not_called()
                 assert result.statistics.skipped_files == 1
                 assert result.statistics.processed_files == 0
 

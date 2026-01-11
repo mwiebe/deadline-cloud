@@ -27,11 +27,12 @@ Usage:
   # Custom file counts
   python snapshots_scale_test.py --local-only --small-files 5000 --medium-files 100
 
-  # Profile with cProfile
-  python -m cProfile -o profile.prof snapshots_scale_test.py --local-only
+  # Profile specific operation with cProfile (saves to <operation>.prof)
+  python snapshots_scale_test.py --local-only --cprofile download
+  python snapshots_scale_test.py --local-only --cprofile upload
 
   # Visualize profile with snakeviz
-  snakeviz profile.prof
+  snakeviz download.prof
 
 Example with all options:
   python snapshots_scale_test.py \\
@@ -47,14 +48,17 @@ Example with all options:
 from __future__ import annotations
 
 import argparse
+import cProfile
 import os
+import pstats
 import shutil
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 # Import snapshots library
 from deadline.job_attachments._snapshots import (
@@ -128,6 +132,53 @@ class TestConfig:
     keep_files: bool
     chunk_size_bytes: int
     use_hash_cache: bool
+    cprofile_operation: Optional[str] = None  # Operation to profile: "upload", "download", etc.
+
+
+# =============================================================================
+# Profiling Support
+# =============================================================================
+
+
+@contextmanager
+def profile_operation(
+    operation: str,
+    enabled_operation: Optional[str],
+    print_fn=print,
+) -> Iterator[None]:
+    """
+    Context manager for profiling a specific operation.
+
+    Args:
+        operation: Name of the current operation (e.g., "download", "upload")
+        enabled_operation: Which operation to profile (from --cprofile arg), or None
+        print_fn: Function for printing status messages
+
+    Usage:
+        with profile_operation("download", config.cprofile_operation):
+            # code to profile
+    """
+    if enabled_operation is None or operation != enabled_operation:
+        yield
+        return
+
+    profiler = cProfile.Profile()
+    output_file = f"{operation}.prof"
+    print_fn(f"  [cProfile] Profiling '{operation}' operation...")
+
+    profiler.enable()
+    try:
+        yield
+    finally:
+        profiler.disable()
+        profiler.dump_stats(output_file)
+        print_fn(f"  [cProfile] Profile saved to: {output_file}")
+
+        # Print top 20 functions by cumulative time
+        print_fn("  [cProfile] Top 20 functions by cumulative time:")
+        stats = pstats.Stats(profiler)
+        stats.sort_stats("cumulative")
+        stats.print_stats(20)
 
 
 @dataclass
@@ -576,12 +627,13 @@ def test_collect(
     print_fn("=" * 60)
 
     start = time.perf_counter()
-    manifest = collect_manifest(
-        directories=[source_root],
-        filenames=[],
-        symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
-        file_chunk_size_bytes=config.chunk_size_bytes,
-    )
+    with profile_operation("collect", config.cprofile_operation, print_fn):
+        manifest = collect_manifest(
+            directories=[source_root],
+            filenames=[],
+            symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+            file_chunk_size_bytes=config.chunk_size_bytes,
+        )
     duration = time.perf_counter() - start
 
     file_count = len(manifest.files)
@@ -698,36 +750,11 @@ def test_hash_upload_filesystem(
     )
     if not config.use_hash_cache:
         print_fn("  (force_rehash=True, so hash cache checking should be skipped)")
-    print_fn("  Note: If this stalls, the issue is in hash_upload_manifest itself, not the test.")
-    import threading
-    import sys
 
-    sys.stdout.flush()  # Ensure output is visible
-
-    # Heartbeat thread to show we're not completely dead
-    stop_heartbeat = threading.Event()
-
-    def heartbeat():
-        count = 0
-        while not stop_heartbeat.is_set():
-            stop_heartbeat.wait(10.0)  # Print every 10 seconds
-            if not stop_heartbeat.is_set():
-                count += 1
-                processed_bytes = (
-                    int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
-                )
-                print_fn(
-                    f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024 * 1024):.1f} MB processed"
-                )
-                sys.stdout.flush()
-
-    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
-    heartbeat_thread.start()
-
-    try:
-        with HashCache(str(hash_cache_dir)) as hash_cache:
-            actual_hash_cache = hash_cache if config.use_hash_cache else None
-            start = time.perf_counter()
+    with HashCache(str(hash_cache_dir)) as hash_cache:
+        actual_hash_cache = hash_cache if config.use_hash_cache else None
+        start = time.perf_counter()
+        with profile_operation("upload", config.cprofile_operation, print_fn):
             hashed_manifest = hash_upload_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
@@ -737,10 +764,7 @@ def test_hash_upload_filesystem(
                 max_workers=config.max_workers,
                 progress_tracker=progress_tracker,
             )
-            duration = time.perf_counter() - start
-    finally:
-        stop_heartbeat.set()
-        heartbeat_thread.join(timeout=1.0)
+        duration = time.perf_counter() - start
 
     file_count = len(hashed_manifest.files)
     total_bytes = hashed_manifest.totalSize
@@ -898,34 +922,10 @@ def test_download_filesystem(
     print_fn(
         f"  Starting download_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
-    import threading
-    import sys
 
-    sys.stdout.flush()
-
-    # Heartbeat thread
-    stop_heartbeat = threading.Event()
-
-    def heartbeat():
-        count = 0
-        while not stop_heartbeat.is_set():
-            stop_heartbeat.wait(10.0)
-            if not stop_heartbeat.is_set():
-                count += 1
-                processed_bytes = (
-                    int(total_bytes * progress_state["pct"] / 100) if total_bytes > 0 else 0
-                )
-                print_fn(
-                    f"    [heartbeat {count}] {progress_state['pct']:.1f}% - {processed_bytes / (1024 * 1024):.1f} MB processed"
-                )
-                sys.stdout.flush()
-
-    heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
-    heartbeat_thread.start()
-
-    try:
-        with HashCache(str(hash_cache_dir)) as hash_cache:
-            start = time.perf_counter()
+    with HashCache(str(hash_cache_dir)) as hash_cache:
+        start = time.perf_counter()
+        with profile_operation("download", config.cprofile_operation, print_fn):
             result = download_manifest(
                 manifest=download_manifest_abs,
                 data_cache=data_cache,
@@ -933,10 +933,7 @@ def test_download_filesystem(
                 max_workers=config.max_workers,
                 progress_tracker=progress_tracker,
             )
-            duration = time.perf_counter() - start
-    finally:
-        stop_heartbeat.set()
-        heartbeat_thread.join(timeout=1.0)
+        duration = time.perf_counter() - start
 
     stats = result.statistics
     total_bytes = stats.processed_bytes
@@ -1077,18 +1074,21 @@ def test_diff(
     manifest1: AbsSnapshot,
     manifest2: AbsSnapshot,
     print_fn=print,
+    config: Optional[TestConfig] = None,
 ) -> TimingResult:
     """Test the DIFF operation between two manifests."""
     print_fn("\n" + "=" * 60)
     print_fn("TEST: DIFF (manifest comparison)")
     print_fn("=" * 60)
 
+    cprofile_op = config.cprofile_operation if config else None
     start = time.perf_counter()
-    diff = compute_diff_manifest(
-        parent=manifest1,
-        current=manifest2,
-        parent_manifest_hash="test_parent_hash",
-    )
+    with profile_operation("diff", cprofile_op, print_fn):
+        diff = compute_diff_manifest(
+            parent=manifest1,
+            current=manifest2,
+            parent_manifest_hash="test_parent_hash",
+        )
     duration = time.perf_counter() - start
 
     # Count changes
@@ -1193,7 +1193,7 @@ def run_high_concurrency_test(
                 )
 
         # Test DIFF (compare manifest with itself - should be empty)
-        diff_result = test_diff(hashed_manifest, hashed_manifest, print_fn)
+        diff_result = test_diff(hashed_manifest, hashed_manifest, print_fn, config)
         results.append(diff_result)
 
     return results, correctness_result
@@ -1505,6 +1505,13 @@ def main() -> int:
         action="store_true",
         help="Disable hash cache (pass None to hash_upload_manifest)",
     )
+    parser.add_argument(
+        "--cprofile",
+        type=str,
+        choices=["collect", "upload", "download", "diff"],
+        default=None,
+        help="Profile a specific operation with cProfile. Saves to <operation>.prof",
+    )
 
     args = parser.parse_args()
 
@@ -1557,6 +1564,7 @@ def main() -> int:
         if args.no_chunking
         else args.chunk_size * 1024 * 1024,
         use_hash_cache=not args.no_hash_cache,
+        cprofile_operation=args.cprofile,
     )
 
     print("=" * 60)
