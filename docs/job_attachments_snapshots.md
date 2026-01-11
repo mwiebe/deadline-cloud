@@ -325,7 +325,6 @@ def collect_manifest(
 | `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
 | `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = use `DEFAULT_FILE_CHUNK_SIZE` (256MB). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
-| `print_function_callback` | Progress callback for status messages |
 
 **Symlink Policy Options (for `collect_manifest`):**
 

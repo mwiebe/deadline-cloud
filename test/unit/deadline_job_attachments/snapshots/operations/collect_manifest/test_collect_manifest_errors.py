@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 import stat
 from pathlib import Path
-from typing import List
 from unittest.mock import patch
 
 import pytest
@@ -162,21 +161,15 @@ class TestBrokenSymlinks:
         link = tmp_path / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         # The broken symlink should be skipped
         paths = {p.path for p in manifest.files}
         assert link.as_posix() not in paths
-
-        # Should have logged a message about skipping
-        assert any("broken" in msg.lower() or "skipping" in msg.lower() for msg in messages)
 
     def test_broken_dir_symlink_skipped_with_collapse(self, tmp_path: Path) -> None:
         """Broken directory symlink is skipped with COLLAPSE_ALL policy."""
@@ -184,13 +177,10 @@ class TestBrokenSymlinks:
         link = tmp_path / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         # The broken symlink should not appear as a directory
@@ -235,7 +225,7 @@ class TestPermissionErrors:
 
     @pytest.mark.skipif(os.name == "nt", reason="Permission tests unreliable on Windows")
     def test_unreadable_file_in_directory_skipped(self, tmp_path: Path) -> None:
-        """Unreadable file in directory is skipped with callback message."""
+        """Unreadable file in directory is skipped."""
         readable = tmp_path / "readable.txt"
         readable.write_text("readable content")
 
@@ -243,13 +233,10 @@ class TestPermissionErrors:
         unreadable.write_text("secret content")
         unreadable.chmod(0o000)
 
-        messages: List[str] = []
-
         try:
             manifest = collect_manifest(
                 [tmp_path],
                 [],
-                print_function_callback=lambda msg: messages.append(str(msg)),
             )
 
             # Readable file should be collected
@@ -292,11 +279,9 @@ class TestOSErrorHandling:
     """Tests for OSError handling during collection."""
 
     def test_stat_failure_on_file_skipped(self, tmp_path: Path) -> None:
-        """File that fails stat() is skipped with callback message."""
+        """File that fails stat() is skipped."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
-
-        messages: List[str] = []
 
         # Mock stat to fail for our specific file
         original_stat = Path.stat
@@ -313,7 +298,6 @@ class TestOSErrorHandling:
                 collect_manifest(
                     [tmp_path],
                     [],
-                    print_function_callback=lambda msg: messages.append(str(msg)),
                 )
             except OSError:
                 # If it propagates, that's also valid behavior
@@ -325,8 +309,6 @@ class TestOSErrorHandling:
         target.write_text("content")
         link = tmp_path / "link.txt"
         link.symlink_to(target)
-
-        messages: List[str] = []
 
         # Mock os.readlink to fail
         original_readlink = os.readlink
@@ -342,7 +324,6 @@ class TestOSErrorHandling:
                     [tmp_path],
                     [],
                     symlink_policy=SymlinkPolicy.PRESERVE,
-                    print_function_callback=lambda msg: messages.append(str(msg)),
                 )
             except OSError:
                 # If it propagates, that's also valid behavior
@@ -401,74 +382,3 @@ class TestWindowsLongPathPrefix:
         normal_path = tmp_path / "file.txt"
         result = _remove_longpath_prefix(normal_path)
         assert result == normal_path
-
-
-class TestPrintFunctionCallback:
-    """Tests for print_function_callback parameter."""
-
-    def test_callback_called_for_collected_files(self, tmp_path: Path) -> None:
-        """Callback is called when files are collected."""
-        (tmp_path / "file.txt").write_text("content")
-
-        messages: List[str] = []
-
-        collect_manifest(
-            [tmp_path],
-            [],
-            print_function_callback=lambda msg: messages.append(str(msg)),
-        )
-
-        assert len(messages) > 0
-        assert any("Collected" in msg for msg in messages)
-
-    def test_callback_called_for_directories(self, tmp_path: Path) -> None:
-        """Callback is called when directories are collected."""
-        subdir = tmp_path / "subdir"
-        subdir.mkdir()
-        (subdir / "file.txt").write_text("content")
-
-        messages: List[str] = []
-
-        collect_manifest(
-            [tmp_path],
-            [],
-            print_function_callback=lambda msg: messages.append(str(msg)),
-        )
-
-        assert any("dir" in msg.lower() for msg in messages)
-
-    def test_callback_called_for_symlinks(self, tmp_path: Path) -> None:
-        """Callback is called when symlinks are collected."""
-        target = tmp_path / "target.txt"
-        target.write_text("content")
-        link = tmp_path / "link.txt"
-        link.symlink_to(target)
-
-        messages: List[str] = []
-
-        collect_manifest(
-            [tmp_path],
-            [],
-            symlink_policy=SymlinkPolicy.PRESERVE,
-            print_function_callback=lambda msg: messages.append(str(msg)),
-        )
-
-        assert any("symlink" in msg.lower() for msg in messages)
-
-    def test_callback_called_for_excluded_symlinks(self, tmp_path: Path) -> None:
-        """Callback is called when symlinks are excluded."""
-        target = tmp_path / "target.txt"
-        target.write_text("content")
-        link = tmp_path / "link.txt"
-        link.symlink_to(target)
-
-        messages: List[str] = []
-
-        collect_manifest(
-            [tmp_path],
-            [],
-            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
-            print_function_callback=lambda msg: messages.append(str(msg)),
-        )
-
-        assert any("excluding" in msg.lower() or "symlink" in msg.lower() for msg in messages)

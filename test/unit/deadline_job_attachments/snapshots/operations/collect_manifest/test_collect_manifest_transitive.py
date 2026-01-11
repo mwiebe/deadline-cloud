@@ -14,7 +14,6 @@ These tests cover:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
 
 from deadline.job_attachments._snapshots import (
     collect_manifest,
@@ -276,20 +275,17 @@ class TestTransitiveBrokenTargets:
     """Tests for broken transitive targets."""
 
     def test_broken_transitive_file_target_skipped(self, tmp_path: Path) -> None:
-        """Broken symlink's target is skipped with callback message."""
+        """Broken symlink's target is skipped."""
         root = tmp_path / "root"
         root.mkdir()
         link = root / "broken_link.txt"
         nonexistent = tmp_path / "nonexistent.txt"
         link.symlink_to(nonexistent)
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         paths = {p.path for p in manifest.files}
@@ -302,9 +298,6 @@ class TestTransitiveBrokenTargets:
         # Nonexistent target should not be in manifest
         assert nonexistent.as_posix() not in paths
 
-        # Should have logged about broken target
-        assert any("broken" in msg.lower() or "skipping" in msg.lower() for msg in messages)
-
     def test_broken_transitive_dir_target_skipped(self, tmp_path: Path) -> None:
         """Broken directory symlink's target is skipped."""
         root = tmp_path / "root"
@@ -313,13 +306,10 @@ class TestTransitiveBrokenTargets:
         nonexistent_dir = tmp_path / "nonexistent_dir"
         link.symlink_to(nonexistent_dir)
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         paths = {p.path for p in manifest.files}

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
 
 import pytest
 
@@ -390,13 +389,10 @@ class TestExcludeEscapingEdgeCases:
         link = root / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         paths = {p.path for p in manifest.files}
@@ -410,13 +406,10 @@ class TestExcludeEscapingEdgeCases:
         link = root / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         dir_paths = {d.path for d in manifest.dirs}

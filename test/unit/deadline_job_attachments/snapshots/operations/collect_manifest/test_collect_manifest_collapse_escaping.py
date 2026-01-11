@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
 
 import pytest
 
@@ -400,21 +399,16 @@ class TestCollapseEscapingEdgeCases:
         link = root / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         paths = {p.path for p in manifest.files}
         # Broken symlink should be skipped when trying to collapse
         # (can't read content from nonexistent target)
-        assert link.as_posix() not in paths or any(
-            "broken" in msg.lower() or "skipping" in msg.lower() for msg in messages
-        )
+        assert link.as_posix() not in paths
 
     def test_broken_escaping_dir_symlink_skipped(self, tmp_path: Path) -> None:
         """Broken escaping directory symlink is skipped."""
@@ -423,13 +417,10 @@ class TestCollapseEscapingEdgeCases:
         link = root / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
 
-        messages: List[str] = []
-
         manifest = collect_manifest(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
-            print_function_callback=lambda msg: messages.append(str(msg)),
         )
 
         dir_paths = {d.path for d in manifest.dirs}

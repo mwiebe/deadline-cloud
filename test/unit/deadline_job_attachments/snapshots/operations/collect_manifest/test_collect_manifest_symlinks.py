@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
 
 import pytest
 
@@ -326,24 +325,6 @@ class TestExcludePolicy:
         # Symlink should be excluded
         assert link.as_posix() not in paths
         assert link.as_posix() not in dir_paths
-
-    def test_exclude_logs_callback(self, tmp_path: Path) -> None:
-        """EXCLUDE_ALL policy logs excluded symlinks via callback."""
-        target = tmp_path / "target.txt"
-        target.write_text("content")
-        link = tmp_path / "link.txt"
-        link.symlink_to(target)
-
-        messages: List[str] = []
-
-        collect_manifest(
-            [tmp_path],
-            [],
-            symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
-            print_function_callback=lambda msg: messages.append(str(msg)),
-        )
-
-        assert any("excluding" in msg.lower() or "symlink" in msg.lower() for msg in messages)
 
 
 class TestTransitiveIncludeTargets:
