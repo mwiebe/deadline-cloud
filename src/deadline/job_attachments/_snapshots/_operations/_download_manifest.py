@@ -33,7 +33,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
+from typing import DefaultDict, Dict, List, Optional, Tuple
 
 from .._manifest import (
     AbsSnapshot,
@@ -326,7 +326,6 @@ def download_manifest(
     apply_deletes: bool = True,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     max_workers: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
 ) -> DownloadResult:
     """
@@ -347,7 +346,6 @@ def download_manifest(
         apply_deletes: If True (default), apply deletions from diff manifests.
         symlink_policy: How to handle symlinks. Default PRESERVE.
         max_workers: Maximum parallel download workers. Default: auto-detect.
-        print_function_callback: Progress callback for status messages
         progress_tracker: Optional progress tracker for download progress and cancellation
 
     Returns:
@@ -431,11 +429,11 @@ def download_manifest(
 
             for entry in sorted_deleted_files:
                 _delete_file(entry.path)
-                print_function_callback(f"Deleted: {entry.path}")
+                logger.debug("Deleted: %s", entry.path)
 
             for dir_entry in sorted_deleted_dirs:
                 _delete_directory(dir_entry.path)
-                print_function_callback(f"Deleted directory: {dir_entry.path}")
+                logger.debug("Deleted directory: %s", dir_entry.path)
 
         # 2. Collect directories
         all_files_to_download = regular_files + chunked_files
@@ -494,7 +492,7 @@ def download_manifest(
                 skipped_files += 1
                 skipped_bytes += result.bytes_downloaded
                 progress_tracker.increase_skipped(1, result.bytes_downloaded)
-                print_function_callback(f"Skipped: {result.entry.path}")
+                logger.debug("Skipped: %s", result.entry.path)
             else:
                 processed_files += 1
                 processed_bytes += result.bytes_downloaded
@@ -505,7 +503,7 @@ def download_manifest(
                 if result.actual_mtime_us is not None:
                     updated_mtimes[result.entry.path] = result.actual_mtime_us
                 file_type = "chunked file" if result.entry.chunkhashes else "file"
-                print_function_callback(f"Downloaded {file_type}: {result.entry.path}")
+                logger.debug("Downloaded %s: %s", file_type, result.entry.path)
 
             progress_tracker.report_progress()
 
@@ -517,7 +515,7 @@ def download_manifest(
                 processed_files += 1
                 progress_tracker.increase_processed(1, 0)
                 progress_tracker.report_progress()
-                print_function_callback(f"Created symlink: {entry.path}")
+                logger.debug("Created symlink: %s", entry.path)
 
     except AssetSyncCancelledError:
         raise AssetSyncCancelledError(

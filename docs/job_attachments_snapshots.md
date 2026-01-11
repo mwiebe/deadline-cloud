@@ -826,7 +826,6 @@ def download_manifest(
     apply_deletes: bool = True,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     max_workers: Optional[int] = None,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
     progress_tracker: Optional[ProgressTracker] = None,
 ) -> DownloadResult:
 ```
@@ -842,7 +841,6 @@ def download_manifest(
 | `apply_deletes` | If `True` (default), apply deletions from diff manifests. If `False`, skip deletions and only download new/modified files. |
 | `symlink_policy` | How to handle symlinks. Default `PRESERVE`. Only `PRESERVE` and `EXCLUDE_ALL` are supported. |
 | `max_workers` | Maximum parallel download workers. Default: auto-detect based on S3 pool connections. |
-| `print_function_callback` | Progress callback for status messages |
 | `progress_tracker` | Optional progress tracker for download progress and cancellation |
 
 **Hash Cache Skip Optimization:**
