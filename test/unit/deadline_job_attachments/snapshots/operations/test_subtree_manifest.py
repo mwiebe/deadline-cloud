@@ -547,17 +547,17 @@ class TestSubtreeManifestSymlinks:
             dirs=[{"path": "assets"}, {"path": "assets/textures"}],
         )
 
-        messages: List[str] = []
         result = subtree_manifest(
             manifest,
             "assets/textures",
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
-            print_function_callback=messages.append,
         )
 
         paths = {p.path for p in result.files}
+        # Symlink to missing target should be excluded
         assert "broken" not in paths
-        assert any("Warning" in msg and "broken" in msg for msg in messages)
+        # Regular file should still be included
+        assert "wood.png" in paths
 
 
 class TestSubtreeManifestValidation:

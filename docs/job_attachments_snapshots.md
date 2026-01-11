@@ -1572,7 +1572,6 @@ def subtree_manifest(
     subtree: str,
     *,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> RelManifest:
 ```
 
@@ -1583,7 +1582,6 @@ def subtree_manifest(
 | `manifest` | The source manifest to extract from |
 | `subtree` | Path to the subtree root, or `"."` or `""` for identity transformation (see below) |
 | `symlink_policy` | How to handle symlinks that escape the new subtree root (see below) |
-| `print_function_callback` | Progress callback for status messages |
 
 **Identity Subtree (`subtree="."` or `subtree=""`):**
 

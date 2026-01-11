@@ -29,9 +29,10 @@ All composable operations use unified manifest classes from manifest.py internal
 
 from __future__ import annotations
 
+import logging
 import os
 import posixpath
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from .._manifest import (
     AbsSnapshot,
@@ -45,13 +46,14 @@ from .._manifest import (
     _is_absolute_path,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def subtree_manifest(
     manifest: AnyManifest,
     subtree: str,
     *,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.COLLAPSE_ESCAPING,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> RelManifest:
     """
     Extract a subtree from a manifest, producing a new manifest rooted at the subdirectory.
@@ -66,7 +68,6 @@ def subtree_manifest(
                        - EXCLUDE_ALL: Exclude every symlink from the result.
                        - EXCLUDE_ESCAPING: Exclude only symlinks whose targets escape the subtree.
                        PRESERVE and TRANSITIVE_INCLUDE_TARGETS are not supported.
-        print_function_callback: Progress callback for status messages
 
     Returns:
         A new manifest with:
@@ -100,7 +101,6 @@ def subtree_manifest(
         return _identity_subtree_manifest(
             manifest=manifest,
             symlink_policy=symlink_policy,
-            print_function_callback=print_function_callback,
         )
 
     # Validate path style consistency
@@ -110,7 +110,6 @@ def subtree_manifest(
         manifest=manifest,
         subtree=subtree,
         symlink_policy=symlink_policy,
-        print_function_callback=print_function_callback,
     )
 
 
@@ -202,7 +201,6 @@ def _subtree_manifest(
     manifest: AnyManifest,
     subtree: str,
     symlink_policy: SymlinkPolicy,
-    print_function_callback: Callable[[Any], None],
 ) -> RelManifest:
     """
     Extract subtree from a manifest using unified manifest classes.
@@ -272,7 +270,6 @@ def _subtree_manifest(
                 symlink_policy=symlink_policy,
                 file_lookup=file_lookup,
                 dir_lookup=dir_lookup,
-                print_function_callback=print_function_callback,
             )
             result_paths.extend(new_entries)
             total_size += new_size
@@ -292,7 +289,7 @@ def _subtree_manifest(
             )
             if not entry.deleted and entry.size is not None:
                 total_size += entry.size
-            print_function_callback(f"Included: {rebased_path}")
+            logger.debug("Included: %s", rebased_path)
 
     # Determine output type: always relative, preserve snapshot/diff
     # Note: parentManifestHash is NOT preserved because the subtree operation
@@ -318,7 +315,6 @@ def _subtree_manifest(
 def _identity_subtree_manifest(
     manifest: AnyManifest,
     symlink_policy: SymlinkPolicy,
-    print_function_callback: Callable[[Any], None],
 ) -> RelManifest:
     """
     Apply symlink_policy to a manifest without rebasing paths.
@@ -388,13 +384,12 @@ def _identity_subtree_manifest(
                     target=symlink_target,
                     file_lookup=file_lookup,
                     dir_lookup=dir_lookup,
-                    print_function_callback=print_function_callback,
                 )
                 result_paths.extend(new_entries)
                 total_size += new_size
             elif symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
                 # Exclude all symlinks
-                print_function_callback(f"Excluded symlink: {entry.path}")
+                logger.debug("Excluded symlink: %s", entry.path)
             else:
                 # COLLAPSE_ESCAPING: For identity subtree, no symlinks "escape"
                 # since there's no subtree boundary. Preserve all symlinks.
@@ -404,7 +399,7 @@ def _identity_subtree_manifest(
                         symlink_target=symlink_target,
                     )
                 )
-                print_function_callback(f"Preserved symlink: {entry.path} -> {symlink_target}")
+                logger.debug("Preserved symlink: %s -> %s", entry.path, symlink_target)
         else:
             # Regular file or deleted marker - copy unchanged
             result_paths.append(
@@ -421,7 +416,7 @@ def _identity_subtree_manifest(
             )
             if not entry.deleted and entry.size is not None:
                 total_size += entry.size
-            print_function_callback(f"Included: {entry.path}")
+            logger.debug("Included: %s", entry.path)
 
     # Determine output type: preserve snapshot/diff
     is_snapshot = isinstance(manifest, (AbsSnapshot, Snapshot))
@@ -454,7 +449,6 @@ def _handle_symlink_in_subtree(
     symlink_policy: SymlinkPolicy,
     file_lookup: Dict[str, ManifestFilePath],
     dir_lookup: Set[str],
-    print_function_callback: Callable[[Any], None],
 ) -> Tuple[List[ManifestFilePath], int]:
     """
     Handle a symlink entry when extracting a subtree.
@@ -480,12 +474,11 @@ def _handle_symlink_in_subtree(
             target=symlink_target,
             file_lookup=file_lookup,
             dir_lookup=dir_lookup,
-            print_function_callback=print_function_callback,
         )
 
     # EXCLUDE_ALL policy: exclude ALL symlinks regardless of whether they escape
     if symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
-        print_function_callback(f"Excluded symlink: {rebased_path}")
+        logger.debug("Excluded symlink: %s", rebased_path)
         return ([], 0)
 
     # For COLLAPSE_ESCAPING and EXCLUDE_ESCAPING, preserve symlinks within subtree
@@ -493,7 +486,7 @@ def _handle_symlink_in_subtree(
         # Target is within subtree - symlink doesn't escape, preserve it
         # Rebase the symlink target relative to the new root
         rebased_target = _rebase_path(symlink_target, subtree)
-        print_function_callback(f"Preserved symlink: {rebased_path} -> {rebased_target}")
+        logger.debug("Preserved symlink: %s -> %s", rebased_path, rebased_target)
         return (
             [
                 ManifestFilePath(
@@ -506,7 +499,7 @@ def _handle_symlink_in_subtree(
 
     # Target escapes the subtree - handle according to policy
     if symlink_policy == SymlinkPolicy.EXCLUDE_ESCAPING:
-        print_function_callback(f"Excluded escaping symlink: {rebased_path}")
+        logger.debug("Excluded escaping symlink: %s", rebased_path)
         return ([], 0)
 
     # COLLAPSE_ESCAPING - collapse the escaping symlink
@@ -515,7 +508,6 @@ def _handle_symlink_in_subtree(
         target=symlink_target,
         file_lookup=file_lookup,
         dir_lookup=dir_lookup,
-        print_function_callback=print_function_callback,
     )
 
 
@@ -524,7 +516,6 @@ def _collapse_symlink(
     target: str,
     file_lookup: Dict[str, ManifestFilePath],
     dir_lookup: Set[str],
-    print_function_callback: Callable[[Any], None],
 ) -> Tuple[List[ManifestFilePath], int]:
     """
     Collapse a symlink by replacing it with its target's content.
@@ -534,7 +525,6 @@ def _collapse_symlink(
         target: The symlink target path (relative to original manifest root)
         file_lookup: Lookup table of file entries by path
         dir_lookup: Set of directory paths
-        print_function_callback: Progress callback
 
     Returns:
         A tuple of (list of entries to add, total size added).
@@ -550,11 +540,10 @@ def _collapse_symlink(
                 target=target_entry.symlink_target,
                 file_lookup=file_lookup,
                 dir_lookup=dir_lookup,
-                print_function_callback=print_function_callback,
             )
 
         # Target is a regular file - copy its content
-        print_function_callback(f"Collapsed symlink to file: {rebased_path}")
+        logger.debug("Collapsed symlink to file: %s", rebased_path)
         size = target_entry.size if target_entry.size is not None else 0
         return (
             [
@@ -593,7 +582,6 @@ def _collapse_symlink(
                         target=entry.symlink_target,
                         file_lookup=file_lookup,
                         dir_lookup=dir_lookup,
-                        print_function_callback=print_function_callback,
                     )
                     result_entries.extend(nested_entries)
                     total_size += nested_size
@@ -613,13 +601,13 @@ def _collapse_symlink(
                     if not entry.deleted and entry.size is not None:
                         total_size += entry.size
 
-        print_function_callback(
-            f"Collapsed symlink to directory: {rebased_path} ({len(result_entries)} entries)"
+        logger.debug(
+            "Collapsed symlink to directory: %s (%d entries)", rebased_path, len(result_entries)
         )
         return (result_entries, total_size)
 
     # Target doesn't exist in manifest - exclude with warning
-    print_function_callback(
-        f"Warning: Excluded symlink '{rebased_path}' - target '{target}' not in manifest"
+    logger.debug(
+        "Warning: Excluded symlink '%s' - target '%s' not in manifest", rebased_path, target
     )
     return ([], 0)

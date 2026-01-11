@@ -167,7 +167,6 @@ def partition_manifest(
                 manifest=manifest,
                 subtree=root,
                 symlink_policy=symlink_policy,
-                print_function_callback=print_function_callback,
             )
             result.append((root, subtree))
             print_function_callback(f"Partitioned root '{root}' with {len(subtree.files)} entries")
