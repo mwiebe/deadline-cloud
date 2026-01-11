@@ -27,7 +27,8 @@ deletions, and other v2025-only features.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Set
+import logging
+from typing import Dict, List, Optional, Set
 
 from .._manifest import (
     AbsSnapshot,
@@ -38,6 +39,8 @@ from .._manifest import (
     ManifestFilePath,
     SnapshotDiff,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _entries_differ(
@@ -110,7 +113,6 @@ def compute_diff_manifest(
     current: AnySnapshot,
     parent_manifest_hash: Optional[str] = None,
     ignore_hashes: bool = False,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
     *,
     preserve_runnable: bool = False,
 ) -> AnyDiff:
@@ -134,7 +136,6 @@ def compute_diff_manifest(
         ignore_hashes: If True, ignore hash/chunkhashes when comparing entries.
                       Useful for fast diff mode where only metadata (mtime, size, runnable)
                       is compared without hashing files.
-        print_function_callback: Progress callback
         preserve_runnable: If True, copy the 'runnable' field from the parent entry
                           when a file is modified. This is useful on Windows where the
                           execute bit is not supported by the filesystem—if the parent
@@ -165,7 +166,6 @@ def compute_diff_manifest(
         current=current,
         parent_manifest_hash=parent_manifest_hash,
         ignore_hashes=ignore_hashes,
-        print_function_callback=print_function_callback,
         preserve_runnable=preserve_runnable,
         is_absolute=parent_is_abs,
     )
@@ -176,7 +176,6 @@ def _compute_diff_manifest(
     current: AnySnapshot,
     parent_manifest_hash: Optional[str],
     ignore_hashes: bool,
-    print_function_callback: Callable[[Any], None],
     *,
     preserve_runnable: bool = False,
     is_absolute: bool = True,
@@ -207,7 +206,6 @@ def _compute_diff_manifest(
         current: The current snapshot manifest
         parent_manifest_hash: Optional hash of the parent manifest
         ignore_hashes: If True, ignore hash/chunkhashes comparison
-        print_function_callback: Progress callback
         preserve_runnable: If True, copy 'runnable' from parent for modified files.
                           This preserves POSIX execute bits when diffing on Windows.
         is_absolute: Whether the manifests use absolute paths
@@ -296,14 +294,14 @@ def _compute_diff_manifest(
             total_size += entry.size
 
         if path in new_files:
-            print_function_callback(f"New: {path}")
+            logger.debug("New: %s", path)
         else:
-            print_function_callback(f"Modified: {path}")
+            logger.debug("Modified: %s", path)
 
     # Add deletion markers for deleted files
     for path in sorted(deleted_files):
         file_entries.append(ManifestFilePath(path=path, deleted=True))
-        print_function_callback(f"Deleted: {path}")
+        logger.debug("Deleted: %s", path)
 
     # Build directory entries
     dir_entries: List[ManifestDirectoryPath] = []
@@ -316,7 +314,7 @@ def _compute_diff_manifest(
     # Sort by path length descending so subdirectories come before parents
     for path in sorted(deleted_dirs, key=lambda p: (-len(p), p)):
         dir_entries.append(ManifestDirectoryPath(path=path, deleted=True))
-        print_function_callback(f"Deleted dir: {path}")
+        logger.debug("Deleted dir: %s", path)
 
     # Return the appropriate diff manifest type
     output_type = AbsSnapshotDiff if is_absolute else SnapshotDiff

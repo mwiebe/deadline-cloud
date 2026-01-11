@@ -1377,7 +1377,6 @@ def compute_diff_manifest(
     current: SnapshotManifest,
     parent_manifest_hash: Optional[str] = None,
     ignore_hashes: bool = False,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
     *,
     preserve_runnable: bool = False,
 ) -> DiffManifest:
@@ -1391,7 +1390,6 @@ def compute_diff_manifest(
 | `current` | The current snapshot manifest (filtered, with hashes) |
 | `parent_manifest_hash` | Optional hash of the parent manifest (for v2025 diff manifests) |
 | `ignore_hashes` | If `True`, compare by metadata only (size, mtime, runnable) without hashes |
-| `print_function_callback` | Progress callback for status messages |
 | `preserve_runnable` | If `True`, copy `runnable` from parent for modified files (see below) |
 
 **Preconditions:**
