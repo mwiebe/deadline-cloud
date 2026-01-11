@@ -14,7 +14,7 @@ be written on the local filesystem.
 Key features:
 - Parallel downloads for improved throughput (both regular and chunked files)
 - Support for chunked large files (>256MB) with parallel chunk downloads
-- Asyncio-based coordination for chunked file finalization
+- Callback-based pipeline for efficient thread pool usage (no asyncio overhead)
 - File conflict resolution (skip, overwrite, create copy)
 - Progress tracking and cancellation support
 - Symlink creation
@@ -29,9 +29,12 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import secrets
+import shutil
+import threading
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
@@ -106,6 +109,674 @@ class DownloadResult:
 
     statistics: DownloadSummaryStatistics
     manifest: AbsManifest
+
+
+# =============================================================================
+# Callback-based Download Pipeline
+# =============================================================================
+
+
+@dataclass
+class _DownloadFileResult:
+    """Result of downloading a single file (regular or chunked)."""
+
+    entry: ManifestFilePath
+    bytes_downloaded: int
+    local_path: Optional[Path]
+    was_skipped: bool
+    actual_mtime_us: Optional[int]
+
+
+@dataclass
+class _ChunkedFileState:
+    """
+    State tracker for a chunked file download.
+
+    Tracks how many chunks remain to be downloaded. When the last chunk completes,
+    it triggers finalization (atomic move + mtime update + hash cache update).
+    """
+
+    entry: ManifestFilePath
+    local_path: Path
+    temp_path: Path
+    file_size: int
+    chunks_remaining: int
+    total_bytes_downloaded: int = 0
+    chunk_errors: List[Exception] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+class _DownloadPipeline:
+    """
+    Callback-based download pipeline using direct thread pool submission.
+
+    This avoids asyncio overhead by using executor.submit() with callbacks
+    instead of run_in_executor() with await.
+
+    For single files: one executor submission handles setup + copy + finalize
+    For chunked files: fan-out to parallel chunk downloads, fan-in via atomic counter
+
+    Flow for single files:
+        submit() → executor runs _download_single_file_sync() → _record_result()
+
+    Flow for chunked files:
+        submit() → executor runs _setup_chunked_file()
+                   → submits N chunk downloads in parallel
+                   → last chunk to complete calls _finalize_chunked_file()
+                   → _record_result()
+    """
+
+    def __init__(
+        self,
+        executor: concurrent.futures.ThreadPoolExecutor,
+        data_cache: ContentAddressedDataCache,
+        hash_alg: str,
+        hash_alg_enum: HashAlgorithm,
+        chunk_size_bytes: int,
+        hash_cache: Optional[HashCache],
+        collision_lock: Lock,
+        collision_file_dict: DefaultDict[str, int],
+        file_conflict_resolution: FileConflictResolution,
+        progress_tracker: Optional[ProgressTracker],
+    ) -> None:
+        self._executor = executor
+        self._data_cache = data_cache
+        self._hash_alg = hash_alg
+        self._hash_alg_enum = hash_alg_enum
+        self._chunk_size_bytes = chunk_size_bytes
+        self._hash_cache = hash_cache
+        self._collision_lock = collision_lock
+        self._collision_file_dict = collision_file_dict
+        self._file_conflict_resolution = file_conflict_resolution
+        self._progress_tracker = progress_tracker
+
+        # Track completion
+        self._pending_count = 0
+        self._submitted_count = 0  # Track total submissions to detect empty case
+        self._lock = threading.Lock()
+        self._done_event = threading.Event()
+
+        # Collect results
+        self._results: List[_DownloadFileResult] = []
+        self._results_lock = threading.Lock()
+
+        # Track errors
+        self._error: Optional[Exception] = None
+        self._error_lock = threading.Lock()
+
+        # Cancellation flag
+        self._cancelled = False
+
+    def submit_single_file(self, entry: ManifestFilePath) -> None:
+        """Submit a single (non-chunked) file for download."""
+        with self._lock:
+            self._pending_count += 1
+            self._submitted_count += 1
+        self._executor.submit(self._download_single_file_sync, entry)
+
+    def submit_chunked_file(self, entry: ManifestFilePath) -> None:
+        """Submit a chunked file for download."""
+        with self._lock:
+            self._pending_count += 1
+            self._submitted_count += 1
+        self._executor.submit(self._setup_and_download_chunked_file, entry)
+
+    def wait_for_completion(self) -> List[_DownloadFileResult]:
+        """Wait for all submitted files to complete and return results."""
+        # Handle empty case - if nothing was ever submitted, we're already done
+        with self._lock:
+            if self._submitted_count == 0:
+                return []
+
+        self._done_event.wait()
+
+        # Check for errors
+        with self._error_lock:
+            if self._error is not None:
+                raise self._error
+
+        with self._results_lock:
+            return list(self._results)
+
+    def cancel(self) -> None:
+        """Signal cancellation to stop processing new work."""
+        self._cancelled = True
+
+    def _decrement_pending(self) -> None:
+        """Decrement pending count and signal completion if done."""
+        with self._lock:
+            self._pending_count -= 1
+            if self._pending_count == 0:
+                self._done_event.set()
+
+    def _record_error(self, error: Exception) -> None:
+        """Record an error (first error wins)."""
+        with self._error_lock:
+            if self._error is None:
+                self._error = error
+                logger.exception(f"Download pipeline error: {error}")
+        # Signal completion so wait doesn't hang
+        self._done_event.set()
+
+    def _record_result(self, result: _DownloadFileResult) -> None:
+        """Record a completed download result."""
+        with self._results_lock:
+            self._results.append(result)
+
+    # =========================================================================
+    # Single File Download (all-in-one)
+    # =========================================================================
+
+    def _download_single_file_sync(self, entry: ManifestFilePath) -> None:
+        """
+        Download a single file synchronously (setup + copy + finalize in one call).
+
+        This eliminates asyncio overhead by doing all work in a single executor task.
+        """
+        try:
+            # Check for cancellation
+            if self._cancelled:
+                self._decrement_pending()
+                return
+
+            if entry.hash is None:
+                raise ValueError(f"File entry '{entry.path}' has no hash")
+
+            local_path = _get_long_path_compatible_path(Path(entry.path))
+            file_size = entry.size or 0
+
+            # Check hash cache first
+            can_skip, cached_mtime_us = _check_hash_cache_for_skip(
+                entry, self._hash_alg_enum, self._hash_cache
+            )
+            if can_skip:
+                # Report progress for skipped file
+                if self._progress_tracker:
+                    self._progress_tracker.track_progress_callback(file_size)
+                self._record_result(
+                    _DownloadFileResult(
+                        entry=entry,
+                        bytes_downloaded=file_size,
+                        local_path=local_path,
+                        was_skipped=True,
+                        actual_mtime_us=cached_mtime_us,
+                    )
+                )
+                self._decrement_pending()
+                return
+
+            # Handle file conflicts
+            if local_path.exists():
+                if self._file_conflict_resolution == FileConflictResolution.SKIP:
+                    self._record_result(
+                        _DownloadFileResult(
+                            entry=entry,
+                            bytes_downloaded=file_size,
+                            local_path=None,
+                            was_skipped=True,
+                            actual_mtime_us=None,
+                        )
+                    )
+                    self._decrement_pending()
+                    return
+                elif self._file_conflict_resolution == FileConflictResolution.OVERWRITE:
+                    pass
+                elif self._file_conflict_resolution == FileConflictResolution.CREATE_COPY:
+                    local_path = _get_new_copy_file_path(
+                        local_path, self._collision_lock, self._collision_file_dict
+                    )
+                    local_path = _get_long_path_compatible_path(local_path)
+                else:
+                    raise ValueError(
+                        f"Unknown file conflict resolution: {self._file_conflict_resolution}"
+                    )
+
+            # Create temp file and copy
+            temp_suffix = secrets.token_hex(5)
+            temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
+
+            try:
+                # Copy based on data cache type
+                if isinstance(self._data_cache, S3DataCache):
+                    bytes_downloaded = self._download_from_s3(
+                        entry.hash, temp_path, file_size
+                    )
+                elif isinstance(self._data_cache, FileSystemDataCache):
+                    bytes_downloaded = self._copy_from_filesystem(entry.hash, temp_path)
+                else:
+                    raise TypeError(f"Unsupported data cache type: {type(self._data_cache)}")
+
+                # Finalize - atomic move and mtime update
+                os.replace(temp_path, local_path)
+
+                if entry.mtime is not None:
+                    mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
+                    os.utime(local_path, ns=(mtime_ns, mtime_ns))
+
+                actual_mtime_ns = local_path.stat().st_mtime_ns
+                actual_mtime_us = actual_mtime_ns // 1_000
+
+                # Update hash cache
+                if self._hash_cache is not None and entry.hash is not None:
+                    resolved_path = str(local_path.resolve())
+                    self._hash_cache.put_entry(
+                        HashCacheEntry(
+                            file_path=resolved_path,
+                            hash_algorithm=self._hash_alg_enum,
+                            file_hash=entry.hash,
+                            last_modified_time=str(actual_mtime_ns),
+                            range_start=0,
+                            range_end=WHOLE_FILE_RANGE_END,
+                        )
+                    )
+
+                logger.debug(f"Downloaded {entry.path} to {local_path}")
+                self._record_result(
+                    _DownloadFileResult(
+                        entry=entry,
+                        bytes_downloaded=bytes_downloaded,
+                        local_path=local_path,
+                        was_skipped=False,
+                        actual_mtime_us=actual_mtime_us,
+                    )
+                )
+
+            finally:
+                # Clean up temp file if it still exists
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+
+            self._decrement_pending()
+
+        except Exception as e:
+            self._record_error(e)
+            self._decrement_pending()
+
+    def _download_from_s3(self, hash_value: str, temp_path: Path, file_size: int) -> int:
+        """Download a file from S3 to temp_path."""
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError("Expected S3DataCache")
+
+        s3_key = self._data_cache.get_object_key(hash_value, self._hash_alg)
+
+        try:
+            # For large files, use multipart download
+            if file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+                # Pre-allocate the file
+                with open(temp_path, "wb") as f:
+                    preallocate_file(f, file_size)
+                # Use synchronous multipart download
+                return self._download_s3_multipart_sync(s3_key, temp_path, file_size)
+            else:
+                # Small file - single request
+                response = self._data_cache.s3_client.get_object(
+                    Bucket=self._data_cache.s3_bucket,
+                    Key=s3_key,
+                )
+                data = response["Body"].read()
+                with open(temp_path, "wb") as f:
+                    f.write(data)
+                if self._progress_tracker:
+                    self._progress_tracker.track_progress_callback(len(data))
+                return len(data)
+
+        except ClientError as exc:
+            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
+            raise JobAttachmentsS3ClientError(
+                action="downloading file",
+                status_code=status_code,
+                bucket_name=self._data_cache.s3_bucket,
+                key_or_prefix=s3_key,
+                message=str(exc),
+            ) from exc
+        except BotoCoreError as bce:
+            raise JobAttachmentS3BotoCoreError(
+                action="downloading file",
+                error_details=str(bce),
+            ) from bce
+
+    def _download_s3_multipart_sync(self, s3_key: str, temp_path: Path, file_size: int) -> int:
+        """Download a large file from S3 using byte-range requests (synchronous)."""
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError("Expected S3DataCache")
+
+        # Import the part size constant from the S3 module
+        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+
+        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        total_downloaded = 0
+
+        with open(temp_path, "r+b") as f:
+            offset = 0
+            while offset < file_size:
+                end = min(offset + part_size - 1, file_size - 1)
+                range_header = f"bytes={offset}-{end}"
+
+                response = self._data_cache.s3_client.get_object(
+                    Bucket=self._data_cache.s3_bucket,
+                    Key=s3_key,
+                    Range=range_header,
+                )
+                data = response["Body"].read()
+
+                f.seek(offset)
+                f.write(data)
+                total_downloaded += len(data)
+
+                if self._progress_tracker:
+                    self._progress_tracker.track_progress_callback(len(data))
+
+                offset += part_size
+
+        return total_downloaded
+
+    def _copy_from_filesystem(self, hash_value: str, temp_path: Path) -> int:
+        """Copy a file from filesystem cache to temp_path."""
+        if not isinstance(self._data_cache, FileSystemDataCache):
+            raise TypeError("Expected FileSystemDataCache")
+
+        source_path = Path(self._data_cache.get_object_key(hash_value, self._hash_alg))
+        shutil.copy2(source_path, temp_path)
+        copied_size = temp_path.stat().st_size
+
+        if self._progress_tracker:
+            self._progress_tracker.track_progress_callback(copied_size)
+
+        return copied_size
+
+    def _download_s3_chunk_multipart_sync(
+        self,
+        chunk_hash: str,
+        chunk_idx: int,
+        temp_path: Path,
+        file_offset: int,
+        chunk_size: int,
+    ) -> int:
+        """
+        Download a large chunk from S3 using byte-range requests (synchronous).
+
+        Writes the chunk data to the specified offset in the temp file.
+        """
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError("Expected S3DataCache")
+
+        # Import the part size constant from the S3 module
+        from ._download_manifest_s3 import DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+
+        s3_key = self._data_cache.get_object_key(chunk_hash, self._hash_alg)
+        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        total_downloaded = 0
+
+        try:
+            with open(temp_path, "r+b") as f:
+                chunk_offset = 0  # Offset within the chunk (for S3 Range header)
+                while chunk_offset < chunk_size:
+                    end = min(chunk_offset + part_size - 1, chunk_size - 1)
+                    range_header = f"bytes={chunk_offset}-{end}"
+
+                    response = self._data_cache.s3_client.get_object(
+                        Bucket=self._data_cache.s3_bucket,
+                        Key=s3_key,
+                        Range=range_header,
+                    )
+                    data = response["Body"].read()
+
+                    # Write to the correct position in the file
+                    f.seek(file_offset + chunk_offset)
+                    f.write(data)
+                    total_downloaded += len(data)
+
+                    if self._progress_tracker:
+                        self._progress_tracker.track_progress_callback(len(data))
+
+                    chunk_offset += part_size
+
+            return total_downloaded
+
+        except ClientError as exc:
+            status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
+            raise JobAttachmentsS3ClientError(
+                action=f"downloading chunk {chunk_idx}",
+                status_code=status_code,
+                bucket_name=self._data_cache.s3_bucket,
+                key_or_prefix=s3_key,
+                message=str(exc),
+            ) from exc
+        except BotoCoreError as bce:
+            raise JobAttachmentS3BotoCoreError(
+                action=f"downloading chunk {chunk_idx}",
+                error_details=str(bce),
+            ) from bce
+
+    # =========================================================================
+    # Chunked File Download (fan-out/fan-in)
+    # =========================================================================
+
+    def _setup_and_download_chunked_file(self, entry: ManifestFilePath) -> None:
+        """
+        Setup a chunked file download and submit all chunk downloads.
+
+        This runs in the executor. After setup, it submits chunk downloads
+        which also run in the executor. The last chunk to complete triggers
+        finalization.
+        """
+        try:
+            # Check for cancellation
+            if self._cancelled:
+                self._decrement_pending()
+                return
+
+            if entry.chunkhashes is None:
+                raise ValueError(f"Chunked file entry '{entry.path}' has no chunkhashes")
+
+            local_path = _get_long_path_compatible_path(Path(entry.path))
+            file_size = entry.size or 0
+
+            # Check hash cache first
+            can_skip, cached_mtime_us = _check_hash_cache_for_chunked_skip(
+                entry, self._hash_alg_enum, self._hash_cache, self._chunk_size_bytes
+            )
+            if can_skip:
+                if self._progress_tracker:
+                    self._progress_tracker.track_progress_callback(file_size)
+                self._record_result(
+                    _DownloadFileResult(
+                        entry=entry,
+                        bytes_downloaded=file_size,
+                        local_path=local_path,
+                        was_skipped=True,
+                        actual_mtime_us=cached_mtime_us,
+                    )
+                )
+                self._decrement_pending()
+                return
+
+            # Handle file conflicts
+            if local_path.exists():
+                if self._file_conflict_resolution == FileConflictResolution.SKIP:
+                    self._record_result(
+                        _DownloadFileResult(
+                            entry=entry,
+                            bytes_downloaded=file_size,
+                            local_path=None,
+                            was_skipped=True,
+                            actual_mtime_us=None,
+                        )
+                    )
+                    self._decrement_pending()
+                    return
+                elif self._file_conflict_resolution == FileConflictResolution.OVERWRITE:
+                    pass
+                elif self._file_conflict_resolution == FileConflictResolution.CREATE_COPY:
+                    local_path = _get_new_copy_file_path(
+                        local_path, self._collision_lock, self._collision_file_dict
+                    )
+                    local_path = _get_long_path_compatible_path(local_path)
+                else:
+                    raise ValueError(
+                        f"Unknown file conflict resolution: {self._file_conflict_resolution}"
+                    )
+
+            # Create and pre-allocate temp file
+            temp_suffix = secrets.token_hex(5)
+            temp_path = local_path.parent / f"{local_path.name}.tmp{temp_suffix}"
+
+            with open(temp_path, "wb") as f:
+                preallocate_file(f, file_size)
+
+            # Create state tracker for this chunked file
+            state = _ChunkedFileState(
+                entry=entry,
+                local_path=local_path,
+                temp_path=temp_path,
+                file_size=file_size,
+                chunks_remaining=len(entry.chunkhashes),
+            )
+
+            # Submit all chunk downloads
+            num_chunks = len(entry.chunkhashes)
+            for chunk_idx, chunk_hash in enumerate(entry.chunkhashes):
+                offset = chunk_idx * self._chunk_size_bytes
+                # Calculate actual chunk size (last chunk may be smaller)
+                if chunk_idx == num_chunks - 1:
+                    actual_chunk_size = file_size - offset
+                else:
+                    actual_chunk_size = self._chunk_size_bytes
+
+                self._executor.submit(
+                    self._download_chunk_with_callback,
+                    state,
+                    chunk_idx,
+                    chunk_hash,
+                    offset,
+                    actual_chunk_size,
+                )
+
+        except Exception as e:
+            self._record_error(e)
+            self._decrement_pending()
+
+    def _download_chunk_with_callback(
+        self,
+        state: _ChunkedFileState,
+        chunk_idx: int,
+        chunk_hash: str,
+        offset: int,
+        chunk_size: int,
+    ) -> None:
+        """
+        Download one chunk and check if file is complete.
+
+        The last chunk to complete triggers finalization.
+        For large chunks (>= MIN_SIZE_FOR_MULTIPART_DOWNLOAD), uses multipart download.
+        """
+        try:
+            # Check for cancellation
+            if self._cancelled:
+                with state.lock:
+                    state.chunks_remaining -= 1
+                    if state.chunks_remaining == 0:
+                        # Clean up temp file
+                        state.temp_path.unlink(missing_ok=True)
+                        self._decrement_pending()
+                return
+
+            # Download chunk to offset - use multipart for large chunks
+            if isinstance(self._data_cache, S3DataCache) and chunk_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+                bytes_written = self._download_s3_chunk_multipart_sync(
+                    chunk_hash,
+                    chunk_idx,
+                    state.temp_path,
+                    offset,
+                    chunk_size,
+                )
+            else:
+                bytes_written = _download_chunk_to_offset(
+                    chunk_hash,
+                    chunk_idx,
+                    state.temp_path,
+                    offset,
+                    self._hash_alg,
+                    self._data_cache,
+                    self._progress_tracker,
+                )
+
+            # Update state and check if all chunks are done
+            with state.lock:
+                state.total_bytes_downloaded += bytes_written
+                state.chunks_remaining -= 1
+                all_done = state.chunks_remaining == 0
+                has_errors = len(state.chunk_errors) > 0
+
+            # If all chunks done, finalize (last chunk to finish does this)
+            if all_done:
+                if has_errors:
+                    # Clean up and report first error
+                    state.temp_path.unlink(missing_ok=True)
+                    self._record_error(state.chunk_errors[0])
+                else:
+                    self._finalize_chunked_file(state)
+                self._decrement_pending()
+
+        except Exception as e:
+            # Record error in state, let last chunk handle cleanup
+            with state.lock:
+                state.chunk_errors.append(e)
+                state.chunks_remaining -= 1
+                all_done = state.chunks_remaining == 0
+
+            if all_done:
+                state.temp_path.unlink(missing_ok=True)
+                self._record_error(e)
+                self._decrement_pending()
+
+    def _finalize_chunked_file(self, state: _ChunkedFileState) -> None:
+        """Finalize a chunked file download (atomic move + mtime + hash cache)."""
+        try:
+            entry = state.entry
+            local_path = state.local_path
+            temp_path = state.temp_path
+
+            # Atomic move
+            os.replace(temp_path, local_path)
+
+            # Restore modification time
+            if entry.mtime is not None:
+                mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
+                os.utime(local_path, ns=(mtime_ns, mtime_ns))
+
+            # Get actual filesystem mtime
+            actual_mtime_ns = local_path.stat().st_mtime_ns
+            actual_mtime_us = actual_mtime_ns // 1_000
+
+            # Update hash cache with all chunk hashes
+            if self._hash_cache is not None:
+                _update_hash_cache_for_chunked_file(
+                    entry,
+                    local_path,
+                    self._hash_alg_enum,
+                    self._hash_cache,
+                    self._chunk_size_bytes,
+                    actual_mtime_ns,
+                )
+
+            logger.debug(
+                f"Downloaded chunked file {entry.path} ({len(entry.chunkhashes)} chunks)"  # type: ignore
+            )
+            self._record_result(
+                _DownloadFileResult(
+                    entry=entry,
+                    bytes_downloaded=state.total_bytes_downloaded,
+                    local_path=local_path,
+                    was_skipped=False,
+                    actual_mtime_us=actual_mtime_us,
+                )
+            )
+
+        except Exception as e:
+            # Clean up temp file on error
+            state.temp_path.unlink(missing_ok=True)
+            self._record_error(e)
 
 
 def _validate_absolute_paths(manifest: AbsManifest) -> None:
@@ -518,8 +1189,8 @@ async def _download_single_file_async(
 
             # Restore modification time if available
             if entry.mtime is not None:
-                mtime_seconds = entry.mtime / 1_000_000
-                os.utime(local_path, (mtime_seconds, mtime_seconds))
+                mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
+                os.utime(local_path, ns=(mtime_ns, mtime_ns))
 
             # Get actual filesystem mtime
             actual_mtime_ns = local_path.stat().st_mtime_ns
@@ -850,8 +1521,8 @@ async def _download_chunked_file_async(
 
                 # Restore modification time if available
                 if entry.mtime is not None:
-                    mtime_seconds = entry.mtime / 1_000_000  # Convert from microseconds
-                    os.utime(final_local_path, (mtime_seconds, mtime_seconds))
+                    mtime_ns = entry.mtime * 1_000  # Convert microseconds to nanoseconds
+                    os.utime(final_local_path, ns=(mtime_ns, mtime_ns))
 
                 # Get the actual filesystem mtime (may differ from requested due to OS precision)
                 actual_mtime_ns = final_local_path.stat().st_mtime_ns
@@ -1352,7 +2023,6 @@ def download_manifest(
 
     # Track updated mtimes for each file path (path -> actual_mtime_us)
     updated_mtimes: Dict[str, int] = {}
-    updated_mtimes_lock = Lock()
 
     processed_files = 0
     processed_bytes = 0
@@ -1386,126 +2056,67 @@ def download_manifest(
         # Get chunk size from manifest for chunked file downloads
         chunk_size_bytes = manifest.fileChunkSizeBytes
 
-        # 3. Download all files (regular and chunked) in parallel using asyncio
-        # Directory creation is interleaved with download submission for better parallelism:
-        # - Create directory (synchronous, on main thread)
-        # - Spawn download tasks for files in that directory (they run in executor)
-        # - Loop to next directory while downloads run concurrently
-        # - After all directories done, gather all download results
-        async def download_all_files(executor: concurrent.futures.ThreadPoolExecutor) -> None:
-            """Download all regular and chunked files with interleaved directory creation."""
-            nonlocal processed_files, processed_bytes, skipped_files, skipped_bytes
+        # 3. Create all directories first (fast operation)
+        for dir_path in sorted_dirs:
+            if dir_path:
+                _create_directory_path(dir_path)
 
-            # Type alias for download result
-            DownloadResultTuple = Tuple[int, Optional[Path], bool, Optional[int]]
-
-            # Helper to wrap an awaitable with its entry for tracking
-            async def download_with_entry(
-                entry: ManifestFilePath,
-                awaitable: Any,
-            ) -> Tuple[ManifestFilePath, DownloadResultTuple]:
-                """Wrap a download awaitable to return the entry alongside the result."""
-                result: DownloadResultTuple = await awaitable
-                return (entry, result)
-
-            # Helper to create download task for a file entry
-            def create_download_task(
-                entry: ManifestFilePath,
-            ) -> asyncio.Task[Tuple[ManifestFilePath, DownloadResultTuple]]:
-                """Create an async download task for a file entry."""
-                if entry.chunkhashes is not None:
-                    coro = _download_chunked_file_async(
-                        entry,
-                        hash_alg,
-                        hash_alg_enum,
-                        data_cache,
-                        chunk_size_bytes,
-                        hash_cache,
-                        executor,
-                        collision_lock,
-                        collision_file_dict,
-                        file_conflict_resolution,
-                        progress_tracker,
-                    )
-                else:
-                    coro = _download_single_file_async(
-                        entry,
-                        hash_alg,
-                        hash_alg_enum,
-                        data_cache,
-                        hash_cache,
-                        executor,
-                        collision_lock,
-                        collision_file_dict,
-                        file_conflict_resolution,
-                        progress_tracker,
-                    )
-                return asyncio.create_task(download_with_entry(entry, coro))
-
-            # Track all download tasks
-            all_tasks: List[asyncio.Task[Tuple[ManifestFilePath, DownloadResultTuple]]] = []
-
-            # Hybrid approach: create each directory synchronously on main thread,
-            # then immediately spawn download tasks for files in that directory.
-            # Downloads run concurrently in the executor while we continue creating
-            # more directories.
-            for dir_path in sorted_dirs:
-                # Create directory synchronously (fast operation, ~0.3ms each)
-                # Skip for "" which represents root-level files
-                if dir_path:
-                    _create_directory_path(dir_path)
-
-                # Immediately spawn download tasks for files in this directory
-                # These tasks start running in the executor right away
-                for entry in dir_to_files.get(dir_path, []):
-                    task = create_download_task(entry)
-                    all_tasks.append(task)
-
-            # Process results as they complete
-            for completed_coro in asyncio.as_completed(all_tasks):
-                # Check for cancellation
-                if progress_tracker and not progress_tracker.continue_reporting:
-                    # Cancel remaining tasks
-                    for task in all_tasks:
-                        if not task.done():
-                            task.cancel()
-                    raise AssetSyncCancelledError("Download cancelled.")
-
-                try:
-                    entry, result = await completed_coro
-                    bytes_downloaded, local_path, was_skipped, actual_mtime_us = result
-
-                    if was_skipped:
-                        skipped_files += 1
-                        skipped_bytes += bytes_downloaded
-                        progress_tracker.increase_skipped(1, bytes_downloaded)
-                        print_function_callback(f"Skipped: {entry.path}")
-                    else:
-                        processed_files += 1
-                        processed_bytes += bytes_downloaded
-                        progress_tracker.increase_processed(1, 0)
-                        if local_path:
-                            root = str(local_path.parent)
-                            downloaded_files_by_root[root].append(str(local_path))
-                        # Track the actual mtime from the filesystem
-                        if actual_mtime_us is not None:
-                            with updated_mtimes_lock:
-                                updated_mtimes[entry.path] = actual_mtime_us
-                        file_type = "chunked file" if entry.chunkhashes else "file"
-                        print_function_callback(f"Downloaded {file_type}: {entry.path}")
-
-                    progress_tracker.report_progress()
-
-                except asyncio.CancelledError:
-                    raise AssetSyncCancelledError("Download cancelled.")
-                except Exception:
-                    if progress_tracker and not progress_tracker.continue_reporting:
-                        raise AssetSyncCancelledError("Download cancelled.")
-                    raise
-
-        # Run the async download coordinator with a shared thread pool
+        # 4. Download all files using callback-based pipeline (no asyncio overhead)
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            asyncio.run(download_all_files(executor))
+            pipeline = _DownloadPipeline(
+                executor=executor,
+                data_cache=data_cache,
+                hash_alg=hash_alg,
+                hash_alg_enum=hash_alg_enum,
+                chunk_size_bytes=chunk_size_bytes,
+                hash_cache=hash_cache,
+                collision_lock=collision_lock,
+                collision_file_dict=collision_file_dict,
+                file_conflict_resolution=file_conflict_resolution,
+                progress_tracker=progress_tracker,
+            )
+
+            # Submit all files to the pipeline
+            for entry in regular_files:
+                pipeline.submit_single_file(entry)
+
+            for entry in chunked_files:
+                pipeline.submit_chunked_file(entry)
+
+            # Wait for all downloads to complete
+            # Check for cancellation periodically
+            # Handle empty case - if nothing was submitted, skip the wait loop
+            has_files = len(regular_files) > 0 or len(chunked_files) > 0
+            if has_files:
+                while not pipeline._done_event.wait(timeout=0.1):
+                    if progress_tracker and not progress_tracker.continue_reporting:
+                        pipeline.cancel()
+                        raise AssetSyncCancelledError("Download cancelled.")
+
+            # Get results
+            results = pipeline.wait_for_completion()
+
+        # Process results
+        for result in results:
+            if result.was_skipped:
+                skipped_files += 1
+                skipped_bytes += result.bytes_downloaded
+                progress_tracker.increase_skipped(1, result.bytes_downloaded)
+                print_function_callback(f"Skipped: {result.entry.path}")
+            else:
+                processed_files += 1
+                processed_bytes += result.bytes_downloaded
+                progress_tracker.increase_processed(1, 0)
+                if result.local_path:
+                    root = str(result.local_path.parent)
+                    downloaded_files_by_root[root].append(str(result.local_path))
+                # Track the actual mtime from the filesystem
+                if result.actual_mtime_us is not None:
+                    updated_mtimes[result.entry.path] = result.actual_mtime_us
+                file_type = "chunked file" if result.entry.chunkhashes else "file"
+                print_function_callback(f"Downloaded {file_type}: {result.entry.path}")
+
+            progress_tracker.report_progress()
 
         # 5. Create symlinks (if policy is PRESERVE)
         # Sort symlinks so targets are created before symlinks that point to them
