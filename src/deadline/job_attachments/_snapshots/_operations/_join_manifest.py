@@ -22,9 +22,10 @@ deletions, and other v2025-only features.
 
 from __future__ import annotations
 
+import logging
 import os
 import posixpath
-from typing import Any, Callable, List
+from typing import List
 
 from .._manifest import (
     AbsSnapshot,
@@ -38,12 +39,12 @@ from .._manifest import (
     _is_absolute_path,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def join_manifest(
     manifest: RelManifest,
     prefix: str,
-    *,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> AnyManifest:
     """
     Join a prefix to all paths in a manifest.
@@ -51,7 +52,6 @@ def join_manifest(
     Args:
         manifest: The source manifest to transform (must be Snapshot or SnapshotDiff)
         prefix: Path prefix to join to all paths (relative or absolute)
-        print_function_callback: Progress callback for status messages
 
     Returns:
         A new manifest with all paths prefixed:
@@ -102,11 +102,11 @@ def join_manifest(
             )
         )
         if entry.symlink_target is not None:
-            print_function_callback(
-                f"Joined symlink: {entry.path} -> {joined_path} (target: {joined_target})"
+            logger.debug(
+                "Joined symlink: %s -> %s (target: %s)", entry.path, joined_path, joined_target
             )
         else:
-            print_function_callback(f"Joined: {entry.path} -> {joined_path}")
+            logger.debug("Joined: %s -> %s", entry.path, joined_path)
 
     # Determine output type based on prefix (absolute vs relative) and input type (snapshot vs diff)
     output_type = _get_output_manifest_type(manifest, prefix)

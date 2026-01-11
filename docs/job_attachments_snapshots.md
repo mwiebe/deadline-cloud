@@ -1946,8 +1946,6 @@ Joins a prefix to all paths in a manifest, producing a new manifest with prefixe
 def join_manifest(
     manifest: Manifest,
     prefix: str,
-    *,
-    print_function_callback: Callable[[Any], None] = lambda msg: None,
 ) -> Manifest:
 ```
 
@@ -1957,7 +1955,6 @@ def join_manifest(
 |-----------|-------------|
 | `manifest` | The source manifest to transform |
 | `prefix` | Path prefix to join to all paths (relative or absolute) |
-| `print_function_callback` | Progress callback for status messages |
 
 **Conceptual Model:**
 
