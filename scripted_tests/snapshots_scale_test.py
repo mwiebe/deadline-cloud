@@ -1459,6 +1459,210 @@ def run_s3_test(
 # =============================================================================
 
 
+def run_local_upload_passes(
+    manifest: AbsSnapshot,
+    temp_path: Path,
+    config: TestConfig,
+    print_fn=print,
+    label_suffix: str = "",
+) -> Tuple[AbsSnapshot, List[TimingResult], Path]:
+    """
+    Run upload passes (cold, warm) for local filesystem and return results.
+
+    Args:
+        label_suffix: Optional suffix for operation labels (e.g., " (w=8)")
+
+    Returns (hashed_manifest, list of TimingResults, data_cache_root).
+    """
+    results: List[TimingResult] = []
+
+    hash_cache_dir = temp_path / "hash_cache"
+    data_cache_root = temp_path / "data_cache"
+
+    # UPLOAD PASS 1: Cold
+    print_fn(f"\n  [Upload Pass 1: COLD - fresh data cache]")
+    hashed_manifest, result = test_hash_upload_filesystem(
+        manifest=manifest,
+        data_cache_root=data_cache_root,
+        hash_cache_dir=hash_cache_dir,
+        config=config,
+        print_fn=print_fn,
+    )
+    results.append(TimingResult(
+        operation=f"UPLOAD cold{label_suffix}",
+        duration_seconds=result.duration_seconds,
+        files_processed=result.files_processed,
+        bytes_processed=result.bytes_processed,
+        throughput_mb_s=result.throughput_mb_s,
+    ))
+
+    # UPLOAD PASS 2: Warm (all caches populated)
+    print_fn(f"\n  [Upload Pass 2: WARM - all caches]")
+    _, result = test_hash_upload_filesystem(
+        manifest=manifest,
+        data_cache_root=data_cache_root,
+        hash_cache_dir=hash_cache_dir,
+        config=config,
+        print_fn=print_fn,
+    )
+    results.append(TimingResult(
+        operation=f"UPLOAD warm{label_suffix}",
+        duration_seconds=result.duration_seconds,
+        files_processed=result.files_processed,
+        bytes_processed=result.bytes_processed,
+        throughput_mb_s=result.throughput_mb_s,
+    ))
+
+    return hashed_manifest, results, data_cache_root
+
+
+def run_local_download_passes(
+    hashed_manifest: AbsSnapshot,
+    source_root: Path,
+    data_cache_root: Path,
+    temp_path: Path,
+    config: TestConfig,
+    print_fn=print,
+    label_suffix: str = "",
+) -> Tuple[List[TimingResult], Path]:
+    """
+    Run download passes (cold, warm) for local filesystem and return results.
+
+    Args:
+        label_suffix: Optional suffix for operation labels (e.g., " (w=8)")
+
+    Returns (list of TimingResults, download_root path).
+    """
+    results: List[TimingResult] = []
+
+    download_root = temp_path / "download"
+    download_hash_cache_dir = temp_path / "download_hash_cache"
+
+    # DOWNLOAD PASS 1: Cold
+    print_fn(f"\n  [Download Pass 1: COLD - fresh download dir]")
+    result = test_download_filesystem(
+        manifest=hashed_manifest,
+        source_root=source_root,
+        download_root=download_root,
+        data_cache_root=data_cache_root,
+        hash_cache_dir=download_hash_cache_dir,
+        config=config,
+        print_fn=print_fn,
+    )
+    results.append(TimingResult(
+        operation=f"DOWNLOAD cold{label_suffix}",
+        duration_seconds=result.duration_seconds,
+        files_processed=result.files_processed,
+        bytes_processed=result.bytes_processed,
+        throughput_mb_s=result.throughput_mb_s,
+    ))
+
+    # DOWNLOAD PASS 2: Warm
+    print_fn(f"\n  [Download Pass 2: WARM - files exist]")
+    result = test_download_filesystem(
+        manifest=hashed_manifest,
+        source_root=source_root,
+        download_root=download_root,
+        data_cache_root=data_cache_root,
+        hash_cache_dir=download_hash_cache_dir,
+        config=config,
+        print_fn=print_fn,
+    )
+    results.append(TimingResult(
+        operation=f"DOWNLOAD warm{label_suffix}",
+        duration_seconds=result.duration_seconds,
+        files_processed=result.files_processed,
+        bytes_processed=result.bytes_processed,
+        throughput_mb_s=result.throughput_mb_s,
+    ))
+
+    return results, download_root
+
+
+def run_local_scaling_test(
+    source_root: Path,
+    base_config: TestConfig,
+    worker_counts: List[int],
+    expected_checksums: Optional[Dict[str, str]] = None,
+    print_fn=print,
+) -> List[Tuple[int, List[TimingResult]]]:
+    """
+    Run scaling test with multiple worker counts using local filesystem.
+
+    Creates test data once, then runs tests with each worker count using fresh caches.
+    Returns list of (worker_count, results) tuples.
+    """
+    all_scaling_results: List[Tuple[int, List[TimingResult]]] = []
+
+    print_fn("\n" + "=" * 60)
+    print_fn("LOCAL FILESYSTEM SCALING TEST")
+    print_fn(f"  worker_counts: {worker_counts}")
+    print_fn("=" * 60)
+
+    # First, collect the manifest once (doesn't depend on worker count)
+    manifest, _ = test_collect(source_root, base_config, print_fn)
+
+    for worker_count in worker_counts:
+        print_fn("\n" + "#" * 60)
+        print_fn(f"# SCALING TEST: max_workers = {worker_count}")
+        print_fn("#" * 60)
+
+        # Create config with this worker count
+        config = TestConfig(
+            small_files=base_config.small_files,
+            medium_files=base_config.medium_files,
+            large_files=base_config.large_files,
+            large_file_size=base_config.large_file_size,
+            subdirectories=base_config.subdirectories,
+            max_nesting_depth=base_config.max_nesting_depth,
+            max_workers=worker_count,
+            max_memory_mb=base_config.max_memory_mb,
+            verify_correctness=False,  # Skip verification for scaling tests
+            local_only=base_config.local_only,
+            s3_bucket=base_config.s3_bucket,
+            s3_prefix=base_config.s3_prefix,
+            skip_download=base_config.skip_download,
+            setup_only=base_config.setup_only,
+            keep_files=base_config.keep_files,
+            chunk_size_bytes=base_config.chunk_size_bytes,
+            use_hash_cache=base_config.use_hash_cache,
+            cprofile_operation=base_config.cprofile_operation,
+        )
+
+        label_suffix = f" (w={worker_count})"
+
+        with tempfile.TemporaryDirectory(prefix=f"snapshots_scaling_{worker_count}_") as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Run upload passes
+            hashed_manifest, upload_results, data_cache_root = run_local_upload_passes(
+                manifest=manifest,
+                temp_path=temp_path,
+                config=config,
+                print_fn=print_fn,
+                label_suffix=label_suffix,
+            )
+
+            results = list(upload_results)
+
+            if not config.skip_download:
+                # Run download passes
+                download_results, _ = run_local_download_passes(
+                    hashed_manifest=hashed_manifest,
+                    source_root=source_root,
+                    data_cache_root=data_cache_root,
+                    temp_path=temp_path,
+                    config=config,
+                    print_fn=print_fn,
+                    label_suffix=label_suffix,
+                )
+                results.extend(download_results)
+
+        all_scaling_results.append((worker_count, results))
+
+    return all_scaling_results
+
+
 def run_s3_scaling_test(
     source_root: Path,
     s3_bucket: str,
@@ -1580,11 +1784,12 @@ def print_scaling_summary(
     # Extract short operation names (remove " (w=N)" suffix)
     op_names = [r.operation.split(" (w=")[0] for r in first_results]
 
-    # Map to design doc column names
+    # Map to design doc column names (handles both S3 and local filesystem)
     col_map = {
         "UPLOAD cold": "UPLOAD cold",
         "UPLOAD warm-head": "UPLOAD warm-head",
         "UPLOAD warm-all": "UPLOAD warm-all",
+        "UPLOAD warm": "UPLOAD warm",
         "DOWNLOAD cold": "DOWNLOAD cold",
         "DOWNLOAD warm": "DOWNLOAD warm",
     }
@@ -1953,11 +2158,28 @@ def main() -> int:
     try:
         # Run tests
         if is_scaling_test and not config.local_only:
-            # Run scaling test with multiple worker counts
+            # Run scaling test with multiple worker counts (S3)
             scaling_results = run_s3_scaling_test(
                 source_root=source_root,
                 s3_bucket=config.s3_bucket,  # type: ignore
                 s3_prefix=config.s3_prefix,  # type: ignore
+                base_config=config,
+                worker_counts=worker_counts,
+                expected_checksums=expected_checksums,
+            )
+
+            total_time = time.perf_counter() - start_time
+
+            # Print scaling summary
+            print_scaling_summary(scaling_results, total_bytes)
+            print(f"\n  Total test time: {total_time:.2f} seconds")
+            print("\n✓ SCALING TEST COMPLETE")
+            return 0
+
+        elif is_scaling_test and config.local_only:
+            # Run scaling test with multiple worker counts (local filesystem)
+            scaling_results = run_local_scaling_test(
+                source_root=source_root,
                 base_config=config,
                 worker_counts=worker_counts,
                 expected_checksums=expected_checksums,
