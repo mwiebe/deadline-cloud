@@ -81,7 +81,7 @@ class TestHashUploadWithHashCacheFileSystem:
             cache_key = str(test_file.resolve())
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
-            assert cached_entry.file_hash == result.files[0].hash
+            assert cached_entry.file_hash == result.manifest.files[0].hash
 
 
 class TestHashUploadWithHashCacheS3:
@@ -138,7 +138,7 @@ class TestHashUploadWithHashCacheS3:
             cache_key = str(test_file.resolve())
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
-            assert cached_entry.file_hash == result.files[0].hash
+            assert cached_entry.file_hash == result.manifest.files[0].hash
 
     def test_hash_upload_with_s3_check_cache(self, tmp_path: Path) -> None:
         """Test that S3 check cache prevents re-uploading existing files."""
@@ -180,7 +180,7 @@ class TestHashUploadWithHashCacheS3:
                 data_cache=data_cache,
             )
 
-        assert result1.files[0].hash == result2.files[0].hash
+        assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
 
 
 class TestContentAddressableStorageFileSystem:
@@ -232,7 +232,7 @@ class TestContentAddressableStorageFileSystem:
             data_cache=data_cache,
         )
 
-        file_entries = [p for p in result.files if p.symlink_target is None]
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None]
         assert len(file_entries) == 2
 
         assert file_entries[0].hash == file_entries[1].hash
@@ -270,7 +270,7 @@ class TestContentAddressableStorageFileSystem:
             data_cache=data_cache,
         )
 
-        cached_filename = f"{result1.files[0].hash}.xxh128"
+        cached_filename = f"{result1.manifest.files[0].hash}.xxh128"
         cached_file = cache_root / cached_filename
         original_mtime = cached_file.stat().st_mtime
 
@@ -280,7 +280,7 @@ class TestContentAddressableStorageFileSystem:
             data_cache=data_cache,
         )
 
-        assert result1.files[0].hash == result2.files[0].hash
+        assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
         assert cached_file.stat().st_mtime == original_mtime
 
 
@@ -326,7 +326,7 @@ class TestContentAddressableStorageS3:
             data_cache=data_cache,
         )
 
-        file_entries = [p for p in result.files if p.symlink_target is None]
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None]
         assert len(file_entries) == 2
 
         assert file_entries[0].hash == file_entries[1].hash
@@ -384,8 +384,8 @@ class TestHashCacheWithChunkedFiles:
             )
 
             # Verify chunkhashes were produced
-            assert result.files[0].chunkhashes is not None
-            assert len(result.files[0].chunkhashes) == 4
+            assert result.manifest.files[0].chunkhashes is not None
+            assert len(result.manifest.files[0].chunkhashes) == 4
 
             # Verify cache entries for each chunk range
             cache_key = str(test_file.resolve())
@@ -396,7 +396,7 @@ class TestHashCacheWithChunkedFiles:
                     cache_key, HashAlgorithm.XXH128, chunk_start, chunk_end
                 )
                 assert cached_entry is not None, f"Chunk {i} not found in cache"
-                assert cached_entry.file_hash == result.files[0].chunkhashes[i]
+                assert cached_entry.file_hash == result.manifest.files[0].chunkhashes[i]
 
     def test_hash_cache_hit_for_chunked_file(self, tmp_path: Path) -> None:
         """Test that cached chunk hashes are used on second run."""
@@ -444,7 +444,7 @@ class TestHashCacheWithChunkedFiles:
                 max_memory_bytes=64,
             )
 
-            assert result1.files[0].chunkhashes == result2.files[0].chunkhashes
+            assert result1.manifest.files[0].chunkhashes == result2.manifest.files[0].chunkhashes
 
 
 class TestS3CheckCacheUpdates:
@@ -497,7 +497,7 @@ class TestS3CheckCacheUpdates:
             )
 
             # Verify S3 check cache entry was written
-            file_hash = result.files[0].hash
+            file_hash = result.manifest.files[0].hash
             s3_key = f"{TEST_KEY_PREFIX}/{file_hash}.xxh128"
             cache_key = f"{TEST_BUCKET}/{s3_key}"
 
@@ -610,7 +610,7 @@ class TestPartialCacheHits:
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
-            file1_hash = result1.files[0].hash
+            file1_hash = result1.manifest.files[0].hash
 
             # Second manifest with both files
             manifest2 = AbsSnapshot(
@@ -640,8 +640,8 @@ class TestPartialCacheHits:
             )
 
             # Both files should have hashes
-            assert len(result2.files) == 2
-            hashes = {f.hash for f in result2.files}
+            assert len(result2.manifest.files) == 2
+            hashes = {f.hash for f in result2.manifest.files}
             assert file1_hash in hashes
             assert all(h is not None for h in hashes)
 
@@ -694,7 +694,7 @@ class TestPartialCacheHits:
                 max_memory_bytes=64,
             )
 
-            assert result1.files[0].chunkhashes == result2.files[0].chunkhashes
+            assert result1.manifest.files[0].chunkhashes == result2.manifest.files[0].chunkhashes
 
     def test_cache_miss_due_to_mtime_change(self, tmp_path: Path) -> None:
         """Test that cache is invalidated when file mtime changes."""
@@ -767,7 +767,7 @@ class TestPartialCacheHits:
             )
 
             # Hashes should be different due to content change
-            assert result1.files[0].hash != result2.files[0].hash
+            assert result1.manifest.files[0].hash != result2.manifest.files[0].hash
 
 
 class TestStreamingFilesCacheIntegration:
@@ -815,7 +815,7 @@ class TestStreamingFilesCacheIntegration:
             max_memory_bytes=32,  # Force streaming mode
         )
 
-        cached_file = cache_root / f"{result1.files[0].hash}.xxh128"
+        cached_file = cache_root / f"{result1.manifest.files[0].hash}.xxh128"
         original_mtime = cached_file.stat().st_mtime
 
         # Second run - should skip since file exists in data cache
@@ -825,7 +825,7 @@ class TestStreamingFilesCacheIntegration:
             max_memory_bytes=32,
         )
 
-        assert result1.files[0].hash == result2.files[0].hash
+        assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
         # File should not have been rewritten
         assert cached_file.stat().st_mtime == original_mtime
 
@@ -870,7 +870,7 @@ class TestStreamingFilesCacheIntegration:
             cache_key = str(test_file.resolve())
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
-            assert cached_entry.file_hash == result1.files[0].hash
+            assert cached_entry.file_hash == result1.manifest.files[0].hash
 
             # Second run - should use hash cache
             result2 = hash_upload_manifest(
@@ -880,4 +880,4 @@ class TestStreamingFilesCacheIntegration:
                 max_memory_bytes=32,
             )
 
-            assert result1.files[0].hash == result2.files[0].hash
+            assert result1.manifest.files[0].hash == result2.manifest.files[0].hash

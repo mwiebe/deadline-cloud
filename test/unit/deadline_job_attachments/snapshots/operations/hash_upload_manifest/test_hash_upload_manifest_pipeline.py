@@ -245,13 +245,13 @@ class TestChunkedFileProcessingFileSystem:
             max_memory_bytes=64,  # Small memory limit
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].hash is None  # No single hash
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 4  # 64 / 16 = 4 chunks
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].hash is None  # No single hash
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 4  # 64 / 16 = 4 chunks
 
         # Each chunk should have a unique hash (different content)
-        assert len(set(result.files[0].chunkhashes)) == 4
+        assert len(set(result.manifest.files[0].chunkhashes)) == 4
 
         # 4 chunk files should be in cache
         cache_files = self._get_cache_files(cache_root)
@@ -297,8 +297,8 @@ class TestChunkedFileProcessingFileSystem:
             max_memory_bytes=64,
         )
 
-        assert len(result.files) == 2
-        for entry in result.files:
+        assert len(result.manifest.files) == 2
+        for entry in result.manifest.files:
             assert entry.hash is None
             assert entry.chunkhashes is not None
             assert len(entry.chunkhashes) == 3
@@ -350,11 +350,11 @@ class TestChunkedFileProcessingFileSystem:
             max_memory_bytes=64,
         )
 
-        assert len(result.files) == 2
+        assert len(result.manifest.files) == 2
 
         # Find entries by path
-        small_entry = next(e for e in result.files if "small" in e.path)
-        large_entry = next(e for e in result.files if "large" in e.path)
+        small_entry = next(e for e in result.manifest.files if "small" in e.path)
+        large_entry = next(e for e in result.manifest.files if "large" in e.path)
 
         # Small file has single hash
         assert small_entry.hash is not None
@@ -396,8 +396,8 @@ class TestChunkedFileProcessingFileSystem:
         )
 
         # File at exactly chunk size is NOT chunked (size must be > chunk_size)
-        assert result.files[0].hash is not None
-        assert result.files[0].chunkhashes is None
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
 
     def test_file_one_byte_over_chunk_size(self, tmp_path: Path) -> None:
         """File one byte over chunk size produces chunkhashes."""
@@ -429,9 +429,9 @@ class TestChunkedFileProcessingFileSystem:
             max_memory_bytes=64,
         )
 
-        assert result.files[0].hash is None
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 2  # 16 + 1 = 2 chunks
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 2  # 16 + 1 = 2 chunks
 
 
 class TestStreamingFileProcessingFileSystem:
@@ -477,16 +477,16 @@ class TestStreamingFileProcessingFileSystem:
             max_memory_bytes=32,  # Smaller than file size
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].hash is not None
-        assert result.files[0].chunkhashes is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
 
         # File should be in cache
         cache_files = self._get_cache_files(cache_root)
         assert len(cache_files) == 1
 
         # Verify content was correctly copied
-        cached_file = cache_root / f"{result.files[0].hash}.xxh128"
+        cached_file = cache_root / f"{result.manifest.files[0].hash}.xxh128"
         assert cached_file.read_bytes() == test_file.read_bytes()
 
     def test_multiple_streaming_files(self, tmp_path: Path) -> None:
@@ -529,8 +529,8 @@ class TestStreamingFileProcessingFileSystem:
             max_memory_bytes=32,
         )
 
-        assert len(result.files) == 2
-        for entry in result.files:
+        assert len(result.manifest.files) == 2
+        for entry in result.manifest.files:
             assert entry.hash is not None
             assert entry.chunkhashes is None
 
@@ -580,8 +580,8 @@ class TestStreamingFileProcessingFileSystem:
             max_memory_bytes=32,
         )
 
-        assert len(result.files) == 2
-        for entry in result.files:
+        assert len(result.manifest.files) == 2
+        for entry in result.manifest.files:
             assert entry.hash is not None
             assert entry.chunkhashes is None
 
@@ -641,10 +641,10 @@ class TestChunkedFileProcessingS3:
             max_memory_bytes=64,
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].hash is None
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 4
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 4
 
         # 4 chunk objects should be in S3
         s3_objects = self._get_s3_objects()
@@ -678,11 +678,11 @@ class TestChunkedFileProcessingS3:
             max_memory_bytes=64,
         )
 
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 4
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 4
 
         # All chunks have same hash
-        assert len(set(result.files[0].chunkhashes)) == 1
+        assert len(set(result.manifest.files[0].chunkhashes)) == 1
 
         # Only 1 object in S3 (content-addressable)
         s3_objects = self._get_s3_objects()
@@ -745,16 +745,16 @@ class TestStreamingFileProcessingS3:
             max_memory_bytes=32,
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].hash is not None
-        assert result.files[0].chunkhashes is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
 
         # File should be in S3
         s3_objects = self._get_s3_objects()
         assert len(s3_objects) == 1
 
         # Verify content
-        s3_key = f"{TEST_KEY_PREFIX}/{result.files[0].hash}.xxh128"
+        s3_key = f"{TEST_KEY_PREFIX}/{result.manifest.files[0].hash}.xxh128"
         uploaded_content = self._get_s3_object_content(s3_key)
         assert uploaded_content == test_file.read_bytes()
 
@@ -824,4 +824,4 @@ class TestMemoryLimitValidation:
             data_cache=data_cache,
             max_memory_bytes=32,  # Equal to chunk size
         )
-        assert result.files[0].hash is not None
+        assert result.manifest.files[0].hash is not None

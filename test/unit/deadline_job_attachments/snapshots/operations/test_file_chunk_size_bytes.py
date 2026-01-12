@@ -169,8 +169,8 @@ class TestHashManifestFileChunkSizeBytes:
         # Output should preserve WHOLE_FILE_CHUNK_SIZE
         assert result.fileChunkSizeBytes == WHOLE_FILE_CHUNK_SIZE
         # File should have hash (not chunkhashes)
-        assert result.files[0].hash is not None
-        assert result.files[0].chunkhashes is None
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
 
     def test_hash_computed_correctly_with_custom_chunk_size(self, tmp_path: Path) -> None:
         """Hash is computed correctly regardless of chunk size parameter."""
@@ -199,8 +199,8 @@ class TestHashManifestFileChunkSizeBytes:
         )
 
         # Hash should be computed
-        assert result.files[0].hash is not None
-        assert len(result.files[0].hash) == 32  # XXH128 produces 32 hex chars
+        assert result.manifest.files[0].hash is not None
+        assert len(result.manifest.files[0].hash) == 32  # XXH128 produces 32 hex chars
         # Output chunk size should be set
         assert result.fileChunkSizeBytes == 1024 * 1024
 
@@ -307,12 +307,12 @@ class TestHashUploadManifestFileChunkSizeBytes:
         )
 
         # Hash should be computed
-        assert result.files[0].hash is not None
-        assert len(result.files[0].hash) == 32  # XXH128 produces 32 hex chars
+        assert result.manifest.files[0].hash is not None
+        assert len(result.manifest.files[0].hash) == 32  # XXH128 produces 32 hex chars
         # Output chunk size should be set
         assert result.fileChunkSizeBytes == 2 * 1024 * 1024
         # File should be uploaded to cache
-        assert data_cache.object_exists(result.files[0].hash, "xxh128")
+        assert data_cache.object_exists(result.manifest.files[0].hash, "xxh128")
 
     def test_whole_file_chunk_size_disables_chunking(self, tmp_path: Path) -> None:
         """When file_chunk_size_bytes is WHOLE_FILE_CHUNK_SIZE, no chunking occurs."""
@@ -346,10 +346,10 @@ class TestHashUploadManifestFileChunkSizeBytes:
         # Output should preserve WHOLE_FILE_CHUNK_SIZE
         assert result.fileChunkSizeBytes == WHOLE_FILE_CHUNK_SIZE
         # File should have hash (not chunkhashes)
-        assert result.files[0].hash is not None
-        assert result.files[0].chunkhashes is None
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
         # File should be uploaded to cache
-        assert data_cache.object_exists(result.files[0].hash, "xxh128")
+        assert data_cache.object_exists(result.manifest.files[0].hash, "xxh128")
 
 
 class TestEndToEndFileChunkSizeBytes:
@@ -468,9 +468,9 @@ class TestEndToEndFileChunkSizeBytes:
 
         # File (64 bytes) is larger than chunk size (16 bytes), so it SHOULD have chunkhashes
         # Expected: 64 / 16 = 4 chunks
-        assert result.files[0].hash is None, "File should have chunkhashes, not hash"
-        assert result.files[0].chunkhashes is not None, "File should have chunkhashes"
-        assert len(result.files[0].chunkhashes) == 4, "File should have 4 chunks (64/16)"
+        assert result.manifest.files[0].hash is None, "File should have chunkhashes, not hash"
+        assert result.manifest.files[0].chunkhashes is not None, "File should have chunkhashes"
+        assert len(result.manifest.files[0].chunkhashes) == 4, "File should have 4 chunks (64/16)"
 
     def test_override_chunk_size_affects_chunking_decision_hash_upload(
         self, tmp_path: Path
@@ -517,9 +517,9 @@ class TestEndToEndFileChunkSizeBytes:
 
         # File (64 bytes) is larger than chunk size (16 bytes), so it SHOULD have chunkhashes
         # Expected: 64 / 16 = 4 chunks
-        assert result.files[0].hash is None, "File should have chunkhashes, not hash"
-        assert result.files[0].chunkhashes is not None, "File should have chunkhashes"
-        assert len(result.files[0].chunkhashes) == 4, "File should have 4 chunks (64/16)"
+        assert result.manifest.files[0].hash is None, "File should have chunkhashes, not hash"
+        assert result.manifest.files[0].chunkhashes is not None, "File should have chunkhashes"
+        assert len(result.manifest.files[0].chunkhashes) == 4, "File should have 4 chunks (64/16)"
 
 
 class TestHashManifestSmallFiles:
@@ -561,12 +561,12 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # File should have chunkhashes, not hash
-        assert result.files[0].hash is None
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 64  # 1024 / 16 = 64 chunks
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 64  # 1024 / 16 = 64 chunks
 
         # Verify each chunk hash is correct
-        for i, chunk_hash in enumerate(result.files[0].chunkhashes):
+        for i, chunk_hash in enumerate(result.manifest.files[0].chunkhashes):
             chunk_start = i * chunk_size
             chunk_end = min(chunk_start + chunk_size, file_size)
             expected_hash = hash_data(content[chunk_start:chunk_end], HashAlgorithm.XXH128)
@@ -602,12 +602,12 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # File should have hash, not chunkhashes
-        assert result.files[0].hash is not None
-        assert result.files[0].chunkhashes is None
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
 
         # Verify hash is correct
         expected_hash = hash_data(content, HashAlgorithm.XXH128)
-        assert result.files[0].hash == expected_hash
+        assert result.manifest.files[0].hash == expected_hash
 
     def test_hash_manifest_multiple_small_files_with_small_chunks(self, tmp_path: Path) -> None:
         """Test hashing multiple small files with small chunk sizes."""
@@ -647,8 +647,8 @@ class TestHashManifestSmallFiles:
         # All files should have chunkhashes since they're all > chunk_size
         for i, (filename, size) in enumerate(files_data):
             expected_chunks = size // chunk_size
-            assert result.files[i].hash is None, f"File {filename} should not have hash"
-            chunkhashes = result.files[i].chunkhashes
+            assert result.manifest.files[i].hash is None, f"File {filename} should not have hash"
+            chunkhashes = result.manifest.files[i].chunkhashes
             assert chunkhashes is not None, f"File {filename} should have chunkhashes"
             assert len(chunkhashes) == expected_chunks, (
                 f"File {filename} should have {expected_chunks} chunks"
@@ -688,7 +688,7 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # Both files should have the same hash
-        assert result.files[0].hash == result.files[1].hash
+        assert result.manifest.files[0].hash == result.manifest.files[1].hash
 
     def test_hash_manifest_different_files_different_hash(self, tmp_path: Path) -> None:
         """Test that different files produce different hashes."""
@@ -722,7 +722,7 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # Files should have different hashes
-        assert result.files[0].hash != result.files[1].hash
+        assert result.manifest.files[0].hash != result.manifest.files[1].hash
 
 
 class TestHashUploadManifestFilesystem:
@@ -773,12 +773,12 @@ class TestHashUploadManifestFilesystem:
         )
 
         # File should have chunkhashes, not hash
-        assert result.files[0].hash is None
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 16  # 1024 / 64 = 16 chunks
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 16  # 1024 / 64 = 16 chunks
 
         # Verify each chunk was uploaded to cache
-        for chunk_hash in result.files[0].chunkhashes:
+        for chunk_hash in result.manifest.files[0].chunkhashes:
             assert data_cache.object_exists(chunk_hash, "xxh128")
 
     def test_hash_upload_multiple_files_with_chunks_filesystem(self, tmp_path: Path) -> None:
@@ -825,8 +825,8 @@ class TestHashUploadManifestFilesystem:
         # Verify each file has chunkhashes and chunks were uploaded
         for i, (filename, size) in enumerate(files_data):
             expected_chunks = size // chunk_size
-            assert result.files[i].hash is None
-            chunkhashes = result.files[i].chunkhashes
+            assert result.manifest.files[i].hash is None
+            chunkhashes = result.manifest.files[i].chunkhashes
             assert chunkhashes is not None
             assert len(chunkhashes) == expected_chunks
 
@@ -882,7 +882,7 @@ class TestHashUploadManifestFilesystem:
         cache_files_after_second = list(cache_root.glob("*.xxh128"))
 
         # Should have same chunkhashes
-        assert result1.files[0].chunkhashes == result2.files[0].chunkhashes
+        assert result1.manifest.files[0].chunkhashes == result2.manifest.files[0].chunkhashes
 
         # Should have same number of files (no duplicates)
         assert len(cache_files_after_first) == len(cache_files_after_second)
@@ -932,7 +932,7 @@ class TestHashUploadManifestFilesystem:
         )
 
         # Both files should have the same chunkhashes
-        assert result.files[0].chunkhashes == result.files[1].chunkhashes
+        assert result.manifest.files[0].chunkhashes == result.manifest.files[1].chunkhashes
 
         # Only 4 unique chunks should be in cache (not 8)
         cache_files = list(cache_root.glob("*.xxh128"))
@@ -957,17 +957,6 @@ class TestHashUploadManifestS3:
             key = kwargs["Key"]
             body = kwargs["Body"]
             full_key = f"{bucket}/{key}"
-
-            # Check IfNoneMatch for conditional write
-            if kwargs.get("IfNoneMatch") == "*" and full_key in uploaded_objects:
-                # Simulate PreconditionFailed
-                from botocore.exceptions import ClientError
-
-                error_response = {
-                    "Error": {"Code": "PreconditionFailed", "Message": "Object already exists"},
-                    "ResponseMetadata": {"HTTPStatusCode": 412},
-                }
-                raise ClientError(error_response, "PutObject")
 
             uploaded_objects[full_key] = body
             return {"ETag": f'"{hash_data(body, HashAlgorithm.XXH128)}"'}
@@ -1039,13 +1028,13 @@ class TestHashUploadManifestS3:
         )
 
         # File should have chunkhashes, not hash
-        assert result.files[0].hash is None
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 16  # 1024 / 64 = 16 chunks
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 16  # 1024 / 64 = 16 chunks
 
         # Verify each chunk was uploaded to S3
         uploaded = mock_client._uploaded_objects
-        for chunk_hash in result.files[0].chunkhashes:
+        for chunk_hash in result.manifest.files[0].chunkhashes:
             s3_key = f"test-bucket/Data/{chunk_hash}.xxh128"
             assert s3_key in uploaded
 
@@ -1095,8 +1084,8 @@ class TestHashUploadManifestS3:
         uploaded = mock_client._uploaded_objects
         for i, (filename, size) in enumerate(files_data):
             expected_chunks = size // chunk_size
-            assert result.files[i].hash is None
-            chunkhashes = result.files[i].chunkhashes
+            assert result.manifest.files[i].hash is None
+            chunkhashes = result.manifest.files[i].chunkhashes
             assert chunkhashes is not None
             assert len(chunkhashes) == expected_chunks
 
@@ -1150,12 +1139,12 @@ class TestHashUploadManifestS3:
         )
 
         # Should have same chunkhashes
-        assert result1.files[0].chunkhashes == result2.files[0].chunkhashes
+        assert result1.manifest.files[0].chunkhashes == result2.manifest.files[0].chunkhashes
 
-        # Second upload should also call put_object (with IfNoneMatch),
-        # but the mock will raise PreconditionFailed for existing objects
+        # Second upload should call head_object for each chunk (which finds them),
+        # so no put_object calls should be made
         second_upload_calls = mock_client.put_object.call_count - first_upload_calls
-        assert second_upload_calls == 4  # Still attempts 4 uploads (one per chunk)
+        assert second_upload_calls == 0  # No uploads since HeadObject finds existing chunks
 
     def test_hash_upload_deduplication_s3(self, tmp_path: Path) -> None:
         """Test that identical chunks are deduplicated in S3."""
@@ -1201,7 +1190,7 @@ class TestHashUploadManifestS3:
         )
 
         # Both files should have the same chunkhashes
-        assert result.files[0].chunkhashes == result.files[1].chunkhashes
+        assert result.manifest.files[0].chunkhashes == result.manifest.files[1].chunkhashes
 
         # Only 4 unique chunks should be in S3 (not 8)
         uploaded = mock_client._uploaded_objects

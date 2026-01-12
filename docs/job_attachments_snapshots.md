@@ -1289,18 +1289,18 @@ DOWNLOAD is the inverse of HASH_UPLOAD:
 
 | Operation | Direction | Input | Output |
 |-----------|-----------|-------|--------|
-| HASH_UPLOAD | Local → Cache | AbsManifest (no hashes) | AbsManifest (with hashes) + data in cache |
-| DOWNLOAD | Cache → Local | AbsManifest (with hashes) | Files on local filesystem |
+| HASH_UPLOAD | Local → Cache | AbsManifest (no hashes) | UploadResult (manifest with hashes + statistics) |
+| DOWNLOAD | Cache → Local | AbsManifest (with hashes) | DownloadResult (files on filesystem + statistics) |
 
 ```python
 # Round-trip example:
 # 1. Collect and upload
 abs_manifest = collect_manifest(["/projects/scene"], [])
-hashed = hash_upload_manifest(abs_manifest, s3_cache)
+upload_result = hash_upload_manifest(abs_manifest, s3_cache)
 
 # 2. Save manifest
 with open("scene.manifest", "w") as f:
-    f.write(encode_manifest(hashed))
+    f.write(encode_manifest(upload_result.manifest))
 
 # 3. Later, download to different location
 loaded = decode_manifest(open("scene.manifest").read())

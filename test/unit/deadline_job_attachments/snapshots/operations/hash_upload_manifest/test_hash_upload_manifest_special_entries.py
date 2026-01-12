@@ -76,8 +76,8 @@ class TestSymlinkPassthroughFileSystem:
             data_cache=data_cache,
         )
 
-        symlink_entries = [p for p in result.files if p.symlink_target is not None]
-        file_entries = [p for p in result.files if p.symlink_target is None]
+        symlink_entries = [p for p in result.manifest.files if p.symlink_target is not None]
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None]
 
         assert len(symlink_entries) == 1
         assert len(file_entries) == 1
@@ -133,8 +133,8 @@ class TestSymlinkPassthroughS3:
             data_cache=data_cache,
         )
 
-        symlink_entries = [p for p in result.files if p.symlink_target is not None]
-        file_entries = [p for p in result.files if p.symlink_target is None]
+        symlink_entries = [p for p in result.manifest.files if p.symlink_target is not None]
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None]
 
         assert len(symlink_entries) == 1
         assert len(file_entries) == 1
@@ -181,9 +181,9 @@ class TestDeletedEntryPassthroughFileSystem:
             data_cache=data_cache,
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].deleted is True
-        assert result.files[0].hash is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].deleted is True
+        assert result.manifest.files[0].hash is None
 
         cache_files = self._get_cache_files(cache_root)
         assert len(cache_files) == 0
@@ -232,9 +232,9 @@ class TestDeletedEntryPassthroughS3:
             data_cache=data_cache,
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].deleted is True
-        assert result.files[0].hash is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].deleted is True
+        assert result.manifest.files[0].hash is None
 
         s3_objects = self._get_s3_objects()
         assert len(s3_objects) == 0
@@ -281,7 +281,7 @@ class TestDirectoryEntryHandlingS3:
             data_cache=data_cache,
         )
 
-        assert len(result.dirs) >= 1
+        assert len(result.manifest.dirs) >= 1
 
         s3_objects = self._get_s3_objects()
         assert len(s3_objects) == 1

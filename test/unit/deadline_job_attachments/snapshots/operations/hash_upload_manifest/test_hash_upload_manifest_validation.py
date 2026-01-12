@@ -92,8 +92,8 @@ class TestInputValidationFileSystem:
             manifest=manifest,
             data_cache=data_cache,
         )
-        assert result.files[0].hash is not None
-        assert result.files[0].hash != ""
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].hash != ""
 
 
 class TestInputValidationS3:
@@ -162,8 +162,8 @@ class TestInputValidationS3:
             manifest=manifest,
             data_cache=data_cache,
         )
-        assert result.files[0].hash is not None
-        assert result.files[0].hash != ""
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].hash != ""
 
 
 class TestFileSystemDataCacheValidation:

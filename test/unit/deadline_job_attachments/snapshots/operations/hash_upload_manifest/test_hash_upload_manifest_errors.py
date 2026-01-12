@@ -132,7 +132,7 @@ class TestRelativePathValidation:
             manifest=manifest,
             data_cache=data_cache,
         )
-        assert result.files[0].hash is not None
+        assert result.manifest.files[0].hash is not None
 
 
 class TestFileReadErrors:
@@ -256,7 +256,7 @@ class TestForceRehash:
             )
 
             # Modify file content but keep same mtime (simulating cache staleness)
-            original_hash = result1.files[0].hash
+            original_hash = result1.manifest.files[0].hash
 
             # Second run with force_rehash=True should still process the file
             # We can verify by checking that the pipeline runs (no exception)
@@ -268,7 +268,7 @@ class TestForceRehash:
             )
 
             # Hash should be the same since content didn't change
-            assert result2.files[0].hash == original_hash
+            assert result2.manifest.files[0].hash == original_hash
 
     def test_force_rehash_false_uses_cache(self, tmp_path: Path) -> None:
         """Test that force_rehash=False (default) uses the hash cache."""
@@ -309,7 +309,7 @@ class TestForceRehash:
             cache_key = str(test_file.resolve())
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
-            assert cached_entry.file_hash == result1.files[0].hash
+            assert cached_entry.file_hash == result1.manifest.files[0].hash
 
 
 class TestS3ClientErrors:
@@ -446,8 +446,8 @@ class TestS3ClientErrors:
                     data_cache=data_cache,
                 )
 
-    def test_s3_precondition_failed_skips_upload(self, tmp_path: Path) -> None:
-        """Test that PreconditionFailed (object exists) skips upload gracefully."""
+    def test_s3_head_object_finds_existing_skips_upload(self, tmp_path: Path) -> None:
+        """Test that HeadObject finding existing object skips upload gracefully."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("Test content")
         file_stat = test_file.stat()
@@ -469,22 +469,20 @@ class TestS3ClientErrors:
 
         data_cache = self._create_s3_data_cache()
 
-        # Mock put_object to raise PreconditionFailed (object already exists)
-        error_response = {
-            "Error": {"Code": "PreconditionFailed", "Message": "At least one precondition failed"},
-            "ResponseMetadata": {"HTTPStatusCode": 412},
-        }
-        with patch.object(
-            data_cache.s3_client,
-            "put_object",
-            side_effect=ClientError(error_response, "PutObject"),
-        ):
-            # Should not raise - PreconditionFailed means object exists, which is fine
-            result = hash_upload_manifest(
-                manifest=manifest,
-                data_cache=data_cache,
-            )
-            assert result.files[0].hash is not None
+        # First upload to populate the bucket
+        result1 = hash_upload_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+        )
+        assert result1.manifest.files[0].hash is not None
+
+        # Second upload should skip since object exists (HeadObject will find it)
+        result2 = hash_upload_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+        )
+        assert result2.manifest.files[0].hash is not None
+        assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
 
 
 class TestStreamingUploadErrors:

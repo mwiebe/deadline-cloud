@@ -69,9 +69,9 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
-        assert len(result.files) == 0
-        assert result.totalSize == 0
+        assert isinstance(result.manifest, AbsSnapshot)
+        assert len(result.manifest.files) == 0
+        assert result.manifest.totalSize == 0
         assert len(self._get_cache_files(cache_root)) == 0
 
     def test_hash_upload_single_file(self, tmp_path: Path) -> None:
@@ -103,16 +103,16 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
-        assert len(result.files) == 1
-        assert result.files[0].hash is not None
-        assert result.files[0].hash != ""
-        assert result.files[0].path == abs_path
+        assert isinstance(result.manifest, AbsSnapshot)
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].hash != ""
+        assert result.manifest.files[0].path == abs_path
 
         cache_files = self._get_cache_files(cache_root)
         assert len(cache_files) == 1
 
-        expected_filename = f"{result.files[0].hash}.xxh128"
+        expected_filename = f"{result.manifest.files[0].hash}.xxh128"
         assert expected_filename in cache_files
 
         cached_content = self._get_cache_file_content(cache_root, expected_filename)
@@ -152,8 +152,8 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
-        file_entries = [p for p in result.files if p.symlink_target is None and not p.deleted]
+        assert isinstance(result.manifest, AbsSnapshot)
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None and not p.deleted]
         assert len(file_entries) == 3
 
         for entry in file_entries:
@@ -194,7 +194,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
-        assert result.files[0].hash == expected_hash
+        assert result.manifest.files[0].hash == expected_hash
 
     def test_preserves_metadata(self, tmp_path: Path) -> None:
         """Test that file metadata is preserved in the result manifest."""
@@ -227,9 +227,9 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert result.files[0].size == original_size
-        assert result.files[0].mtime == original_mtime
-        assert result.files[0].path == abs_path
+        assert result.manifest.files[0].size == original_size
+        assert result.manifest.files[0].mtime == original_mtime
+        assert result.manifest.files[0].path == abs_path
 
     @pytest.mark.parametrize("runnable", [True, False])
     def test_preserves_runnable_flag(self, tmp_path: Path, runnable: bool) -> None:
@@ -263,9 +263,9 @@ class TestHashUploadManifestBasicFileSystem:
             data_cache=data_cache,
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].runnable is runnable
-        assert result.files[0].hash is not None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].runnable is runnable
+        assert result.manifest.files[0].hash is not None
 
 
 class TestHashUploadManifestBasicS3:
@@ -311,9 +311,9 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
-        assert len(result.files) == 0
-        assert result.totalSize == 0
+        assert isinstance(result.manifest, AbsSnapshot)
+        assert len(result.manifest.files) == 0
+        assert result.manifest.totalSize == 0
         assert len(self._get_s3_objects()) == 0
 
     def test_hash_upload_single_file(self, tmp_path: Path) -> None:
@@ -343,16 +343,16 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
-        assert len(result.files) == 1
-        assert result.files[0].hash is not None
-        assert result.files[0].hash != ""
-        assert result.files[0].path == abs_path
+        assert isinstance(result.manifest, AbsSnapshot)
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].hash != ""
+        assert result.manifest.files[0].path == abs_path
 
         s3_objects = self._get_s3_objects()
         assert len(s3_objects) == 1
 
-        expected_key = f"{TEST_KEY_PREFIX}/{result.files[0].hash}.xxh128"
+        expected_key = f"{TEST_KEY_PREFIX}/{result.manifest.files[0].hash}.xxh128"
         assert expected_key in s3_objects
 
         uploaded_content = self._get_s3_object_content(expected_key)
@@ -380,8 +380,8 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
-        file_entries = [p for p in result.files if p.symlink_target is None and not p.deleted]
+        assert isinstance(result.manifest, AbsSnapshot)
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None and not p.deleted]
         assert len(file_entries) == 3
 
         for entry in file_entries:
@@ -420,7 +420,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
-        assert result.files[0].hash == expected_hash
+        assert result.manifest.files[0].hash == expected_hash
 
     def test_preserves_metadata(self, tmp_path: Path) -> None:
         """Test that file metadata is preserved in the result manifest."""
@@ -451,9 +451,9 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert result.files[0].size == original_size
-        assert result.files[0].mtime == original_mtime
-        assert result.files[0].path == abs_path
+        assert result.manifest.files[0].size == original_size
+        assert result.manifest.files[0].mtime == original_mtime
+        assert result.manifest.files[0].path == abs_path
 
     def test_preserves_runnable_flag_from_filesystem(self, tmp_path: Path) -> None:
         """Test that runnable flag from filesystem is preserved (POSIX only)."""
@@ -474,7 +474,7 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        file_entries = [p for p in result.files if p.symlink_target is None]
+        file_entries = [p for p in result.manifest.files if p.symlink_target is None]
         assert len(file_entries) == 1
         collected_file = [p for p in collected.files if p.symlink_target is None][0]
         assert file_entries[0].runnable == collected_file.runnable
@@ -509,9 +509,9 @@ class TestHashUploadManifestBasicS3:
             data_cache=data_cache,
         )
 
-        assert len(result.files) == 1
-        assert result.files[0].runnable is runnable
-        assert result.files[0].hash is not None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].runnable is runnable
+        assert result.manifest.files[0].hash is not None
 
 
 class TestManifestTypePreservation:
@@ -553,7 +553,7 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
+        assert isinstance(result.manifest, AbsSnapshot)
 
     def test_returns_abs_diff_manifest_s3(self, tmp_path: Path) -> None:
         """Test that AbsSnapshotDiff input returns AbsSnapshotDiff (S3)."""
@@ -584,8 +584,8 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotDiff)
-        assert result.parentManifestHash == "abc123"
+        assert isinstance(result.manifest, AbsSnapshotDiff)
+        assert result.manifest.parentManifestHash == "abc123"
 
     def test_returns_abs_snapshot_manifest_filesystem(self, tmp_path: Path) -> None:
         """Test that AbsSnapshot input returns AbsSnapshot (filesystem)."""
@@ -614,7 +614,7 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshot)
+        assert isinstance(result.manifest, AbsSnapshot)
 
     def test_returns_abs_diff_manifest_filesystem(self, tmp_path: Path) -> None:
         """Test that AbsSnapshotDiff input returns AbsSnapshotDiff (filesystem)."""
@@ -647,5 +647,5 @@ class TestManifestTypePreservation:
             data_cache=data_cache,
         )
 
-        assert isinstance(result, AbsSnapshotDiff)
-        assert result.parentManifestHash == "abc123"
+        assert isinstance(result.manifest, AbsSnapshotDiff)
+        assert result.manifest.parentManifestHash == "abc123"

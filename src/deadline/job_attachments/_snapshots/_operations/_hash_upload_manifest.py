@@ -558,8 +558,9 @@ class _TaskBasedPipeline:
         """
         Upload data to S3 only if the object doesn't already exist.
 
-        Uses S3 conditional write (IfNoneMatch='*') to atomically check and upload
-        in a single API call, reducing total S3 requests.
+        Uses HeadObject to check existence, then unconditional PutObject if needed.
+        This is more efficient than IfNoneMatch='*' because HeadObject provides
+        early rejection without requiring the request body to be sent.
 
         Returns:
             True if the object was uploaded, False if it already existed
@@ -567,12 +568,49 @@ class _TaskBasedPipeline:
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
 
+        # Check if object exists with HeadObject
+        try:
+            head_kwargs: Dict[str, Any] = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+            }
+            if self._account_id is not None:
+                head_kwargs["ExpectedBucketOwner"] = self._account_id
+
+            self._data_cache.s3_client.head_object(**head_kwargs)
+            # Object exists, skip upload
+            return False
+        except ClientError as exc:
+            error_code = exc.response["Error"]["Code"]
+            if error_code != "404":
+                status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
+                status_code_guidance = {
+                    **COMMON_ERROR_GUIDANCE_FOR_S3,
+                    403: (
+                        "Forbidden or Access denied. Please check your AWS credentials, and ensure "
+                        "that your AWS IAM Role or User has the 's3:HeadObject' permission."
+                    ),
+                }
+                raise JobAttachmentsS3ClientError(
+                    action="checking chunk existence",
+                    status_code=status_code,
+                    bucket_name=self._data_cache.s3_bucket,
+                    key_or_prefix=s3_key,
+                    message=f"{status_code_guidance.get(status_code, '')} {str(exc)}",
+                ) from exc
+            # 404 means object doesn't exist, proceed with upload
+        except BotoCoreError as bce:
+            raise JobAttachmentS3BotoCoreError(
+                action="checking chunk existence",
+                error_details=str(bce),
+            ) from bce
+
+        # Upload unconditionally since object doesn't exist
         try:
             put_kwargs: Dict[str, Any] = {
                 "Bucket": self._data_cache.s3_bucket,
                 "Key": s3_key,
                 "Body": data,
-                "IfNoneMatch": "*",
             }
             if self._account_id is not None:
                 put_kwargs["ExpectedBucketOwner"] = self._account_id
@@ -580,10 +618,6 @@ class _TaskBasedPipeline:
             self._data_cache.s3_client.put_object(**put_kwargs)
             return True
         except ClientError as exc:
-            error_code = exc.response["Error"]["Code"]
-            # PreconditionFailed means the object already exists
-            if error_code == "PreconditionFailed":
-                return False
             status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
             status_code_guidance = {
                 **COMMON_ERROR_GUIDANCE_FOR_S3,
