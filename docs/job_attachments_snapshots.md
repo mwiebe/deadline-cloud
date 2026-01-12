@@ -619,35 +619,70 @@ Files are skipped when:
 
 **Pipelined Architecture:**
 
-The operation uses a multi-threaded pipeline with two stages:
+The operation uses a multi-threaded pipeline with two stages and parallel multipart uploads:
 
 ```
-┌─────────────────┐     ┌─────────┐
-│  READ + HASH    │────►│ UPLOAD  │
-│     Thread      │     │ Thread  │
-└─────────────────┘     └─────────┘
-         │                   │
-         └───────────────────┘
+┌─────────────────┐     ┌─────────────────────────────┐
+│  READ + HASH    │────►│        UPLOAD POOL          │
+│     Thread      │     │  ┌─────────┐ ┌─────────┐    │
+│                 │     │  │ Part 1  │ │ Part 2  │    │
+│                 │     │  │ Upload  │ │ Upload  │    │
+│                 │     │  └─────────┘ └─────────┘    │
+│                 │     │  ┌─────────┐ ┌─────────┐    │
+│                 │     │  │ Part N  │ │Complete │    │
+│                 │     │  │ Upload  │ │Multipart│    │
+│                 │     │  └─────────┘ └─────────┘    │
+└─────────────────┘     └─────────────────────────────┘
+         │                           │
+         └───────────────────────────┘
               Memory Pool
          (bounded by max_memory_bytes)
 ```
 
-1. **READ+HASH stage:** Reads file chunks from disk and computes XXH128 hash while bytes are streaming into the memory buffer
-2. **UPLOAD stage:** Uploads the chunk to the data cache using the hash as the object key
+**Key Changes for Parallel Multipart Upload:**
 
-The combined READ+HASH stage improves performance by computing the hash as data streams in,
-rather than re-processing the memory buffer in a separate stage.
+1. **READ+HASH stage:** Reads file parts sequentially and computes XXH128 hash incrementally across parts
+2. **UPLOAD stage:** Each part is submitted independently to the thread pool for parallel upload
+3. **Multipart Coordination:** Tracks completion of all parts and calls S3 CompleteMultipartUpload when done
+4. **Memory Management:** Allocates part buffers individually, blocking if allocation would exceed memory threshold
 
-**Chunking Behavior (controlled by `manifest.fileChunkSizeBytes`):**
+**Multipart Upload Conditions:**
 
-| `fileChunkSizeBytes` | File Size | Processing |
-|---------------------|-----------|------------|
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | Single chunk: read+hash → upload (default) |
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Multiple chunks through pipeline |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | Single pass: read+hash → upload |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Two-pass: (1) stream read+hash, (2) stream read+upload |
-| Positive int (e.g., 64MB) | ≤ chunk size | Single chunk: read+hash → upload |
-| Positive int (e.g., 64MB) | > chunk size | Multiple chunks through pipeline |
+Multipart upload is used when:
+- Uploading to S3DataCache (not FileSystemDataCache)  
+- File size > `2 * multipart_part_size` (default threshold: 64MB with 32MB parts)
+- Applies to both chunked files and whole files
+
+**Part Scheduling:**
+
+- **Chunked files:** Each chunk becomes a multipart part if it meets the size threshold
+- **Whole files ≤ max_memory_bytes:** File is divided into parts, each part gets its own upload task
+- **Whole files > max_memory_bytes:** Parts are submitted one-by-one with memory throttling
+
+**Chunking and Multipart Upload Behavior:**
+
+The multipart threshold is `2 * S3DataCache.multipart_part_size` (default: 64MB with 32MB parts).
+
+| `fileChunkSizeBytes` | File Size | vs Multipart Threshold | Processing |
+|---------------------|-----------|------------------------|------------|
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | ≤ threshold | Single chunk: read+hash → single PUT upload |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | > threshold | Single chunk: read+hash → multipart upload |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Any | Multiple chunks, each > threshold uses multipart |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | ≤ threshold | Single pass: read+hash → single PUT upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | > threshold | Single pass: read+hash → parallel multipart upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Any | Two-pass: hash first (discard data), then parallel multipart with memory throttling |
+| Positive int (e.g., 64MB) | ≤ chunk size | ≤ threshold | Single chunk: read+hash → single PUT upload |
+| Positive int (e.g., 64MB) | ≤ chunk size | > threshold | Single chunk: read+hash → multipart upload |
+| Positive int (e.g., 64MB) | > chunk size | Any | Multiple chunks, each > threshold uses multipart |
+
+**Multipart Upload Coordination:**
+
+For files using multipart upload, the system:
+1. Creates S3 multipart upload session
+2. Submits each part as independent upload task to thread pool
+3. Tracks completion using atomic counters (similar to download pipeline)
+4. Last completing part calls `CompleteMultipartUpload` 
+5. On any error, calls `AbortMultipartUpload` for cleanup
 
 When chunking is disabled (`WHOLE_FILE_CHUNK_SIZE`) and a file is larger than `max_memory_bytes`:
 - **Pass 1:** Stream through file computing hash as bytes are read (discard data to avoid OOM)
@@ -798,11 +833,82 @@ This handles the scenario:
 | Entry Type | Action |
 |------------|--------|
 | Regular file (fits in memory or no chunking) | Read+Hash → Upload (single pass) |
-| Large file (> memory, no chunking) | Stream read+hash → Stream upload (two-pass) |
+| Large file (> memory, no chunking, S3) | Two-pass streaming with parallel multipart (see below) |
+| Large file (> memory, no chunking, filesystem) | Stream read+hash → Stream upload (two-pass) |
 | Large file (chunking enabled) | Read+Hash → Upload (per chunk) |
 | Symlink | Pass through unchanged (no upload) |
 | Deleted marker | Pass through unchanged (no upload) |
 | Directory | Pass through unchanged (no upload) |
+
+**Streaming Files Larger Than Memory Buffer (S3):**
+
+When uploading to S3 with `WHOLE_FILE_CHUNK_SIZE` (-1) and a file exceeds `max_memory_bytes`, the system uses a two-pass approach with parallel multipart upload:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    READ+HASH Thread Pool                         │
+├─────────────────────────────────────────────────────────────────┤
+│  Pass 1: Compute Hash (discard data)                            │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Read part 1 → hash → discard                           │    │
+│  │  Read part 2 → hash → discard                           │    │
+│  │  ...                                                     │    │
+│  │  Read part N → hash → discard → final_hash              │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Check if object exists in S3 (HeadObject with final_hash)      │
+│  └─► If exists, skip upload (done)                              │
+│                                                                  │
+│  Pass 2: Read and Submit Parts (with memory throttling)         │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Create S3 multipart upload session                      │    │
+│  │  For each part:                                          │    │
+│  │    1. Allocate memory (blocks if pool exhausted)         │    │
+│  │    2. Read part data into buffer                         │    │
+│  │    3. Submit part to UPLOAD pool                         │    │
+│  │    4. Continue to next part (don't wait for upload)      │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      UPLOAD Thread Pool                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Parts upload in parallel:                                       │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐                            │
+│  │ Part 1  │ │ Part 2  │ │ Part 3  │  ...                       │
+│  │ Upload  │ │ Upload  │ │ Upload  │                            │
+│  │ (free   │ │ (free   │ │ (free   │                            │
+│  │ memory) │ │ memory) │ │ memory) │                            │
+│  └─────────┘ └─────────┘ └─────────┘                            │
+│                                                                  │
+│  Last part to complete → CompleteMultipartUpload                │
+│  On any error → AbortMultipartUpload                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why Two Passes?**
+
+1. **Hash-before-upload:** S3 object keys are based on content hash, so we must know the hash before creating the multipart upload session
+2. **Memory efficiency:** By discarding data in pass 1, we avoid buffering the entire file
+3. **Skip optimization:** If the object already exists (HeadObject hit), we skip pass 2 entirely
+
+**Memory Throttling in Pass 2:**
+
+- Each part allocates from the memory pool before reading
+- If the pool is exhausted, the READ+HASH thread blocks until UPLOAD threads free memory
+- This creates backpressure: parts are submitted at the rate they can be uploaded
+- Maximum memory usage is bounded by `max_memory_bytes`
+
+**Example: 1GB file with 128MB max_memory and 32MB parts (default):**
+
+1. Pass 1: Stream through 1GB computing hash (no memory allocation)
+2. HeadObject check with computed hash
+3. Pass 2: Submit 32 parts (1GB / 32MB)
+   - At any time, at most 4 parts buffered (128MB / 32MB)
+   - As uploads complete, memory is freed for new parts
+
+The part size is determined by `S3DataCache.multipart_part_size` (default: 32MB).
 
 **Manifest type handling:**
 
@@ -913,12 +1019,15 @@ print(f"Uploaded: {result.statistics.processed_bytes} bytes, Skipped: {result.st
 
 **Performance Comparison:**
 
-| Approach | Disk Reads | Network Uploads | Memory Peak |
-|----------|------------|-----------------|-------------|
-| HASH then upload | 2× (hash + upload) | 1× | Low |
-| HASH_UPLOAD | 1× | 1× | Bounded by `max_memory_bytes` |
+| Approach | Disk Reads | Network Uploads | Memory Peak | S3 Upload Parallelism |
+|----------|------------|-----------------|-------------|---------------------|
+| HASH then upload | 2× (hash + upload) | 1× | Low | Serial multipart |
+| HASH_UPLOAD (new) | 1× | 1× | Bounded by `max_memory_bytes` | Parallel multipart |
 
-For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
+For large datasets, HASH_UPLOAD provides:
+- Up to 2× faster I/O due to single-pass disk reads
+- Significantly faster S3 uploads due to parallel multipart upload of large files
+- Better network utilization through concurrent part uploads
 
 **When to Use HASH vs HASH_UPLOAD:**
 

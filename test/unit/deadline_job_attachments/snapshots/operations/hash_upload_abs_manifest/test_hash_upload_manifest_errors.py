@@ -605,30 +605,30 @@ class TestStreamingUploadErrorsS3:
     def test_multipart_upload_error_aborts(self, tmp_path: Path) -> None:
         """Test that multipart upload is aborted on error."""
         # Create a file large enough to trigger multipart (> 2 * multipart_part_size threshold)
+        # With part_size=1KB and threshold=2KB, we need a file > 2KB
         test_file = tmp_path / "large.bin"
-        # We'll mock the size to avoid creating a huge file
-        test_file.write_bytes(b"x" * 100)
+        file_content = b"x" * 4096  # 4KB file
+        test_file.write_bytes(file_content)
         file_stat = test_file.stat()
 
         abs_path = str(test_file).replace("\\", "/")
 
-        # Pretend the file is large enough for multipart
         manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[
                 ManifestFilePath(
                     path=abs_path,
                     hash=None,
-                    size=10 * 1024 * 1024,  # 10MB - triggers multipart when part_size=4MB
+                    size=len(file_content),
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
             ],
-            total_size=10 * 1024 * 1024,
+            total_size=len(file_content),
             file_chunk_size_bytes=-1,  # No chunking
         )
 
-        # Use small multipart_part_size so 10MB triggers multipart (threshold = 2 * 4MB = 8MB)
-        data_cache = self._create_s3_data_cache(multipart_part_size=4 * 1024 * 1024)
+        # Use small multipart_part_size so 4KB triggers multipart (threshold = 2 * 1KB = 2KB)
+        data_cache = self._create_s3_data_cache(multipart_part_size=1024)
 
         # Track if abort was called
         abort_called = []
@@ -655,7 +655,7 @@ class TestStreamingUploadErrorsS3:
                     hash_upload_abs_manifest(
                         manifest=manifest,
                         data_cache=data_cache,
-                        max_memory_bytes=1024,  # Force streaming mode
+                        max_memory_bytes=1024,  # Must be >= part_size for multipart
                     )
 
         # Verify abort was called

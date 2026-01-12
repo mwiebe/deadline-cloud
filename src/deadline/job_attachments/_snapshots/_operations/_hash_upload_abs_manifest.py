@@ -33,7 +33,7 @@ from __future__ import annotations
 import concurrent.futures
 import time
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import logging
@@ -194,8 +194,50 @@ class _StreamingWorkItem:
     skipped: bool = False  # True if already in data cache
 
 
-# Union type for work items
-WorkItem = Union[_ChunkWorkItem, _StreamingWorkItem]
+@dataclass
+class _MultipartUploadState:
+    """
+    State tracker for parallel multipart uploads to S3.
+
+    Tracks completion of all parts for a single file and triggers
+    CompleteMultipartUpload when all parts are done.
+    """
+
+    file_hash: str  # Final hash of the complete file
+    s3_key: str  # S3 object key
+    upload_id: str  # S3 multipart upload ID
+    parts_remaining: int  # Number of parts still being uploaded
+    completed_parts: List[Dict[str, Any]]  # List of {"PartNumber": int, "ETag": str}
+    total_bytes_uploaded: int = 0
+    part_errors: List[Exception] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+@dataclass
+class _MultipartPartWorkItem:
+    """
+    Work item for a single part of a multipart upload.
+
+    Each part is uploaded independently in the thread pool.
+    """
+
+    # Multipart coordination
+    multipart_state: _MultipartUploadState
+    part_number: int  # 1-based part number for S3
+
+    # Part data
+    data: bytes  # Part content to upload
+
+    # Upload status
+    uploaded: bool = False
+    etag: Optional[str] = None
+
+
+# Union type for work items that go through the full pipeline
+PipelineWorkItem = Union[_ChunkWorkItem, _StreamingWorkItem]
+
+# Union type for all work items (including internal multipart parts)
+WorkItem = Union[_ChunkWorkItem, _StreamingWorkItem, _MultipartPartWorkItem]
 
 
 @dataclass
@@ -297,7 +339,7 @@ class _TaskBasedPipeline:
         self._done_event = threading.Event()
 
         # Collect results
-        self._results: List[WorkItem] = []
+        self._results: List[PipelineWorkItem] = []
         self._results_lock = threading.Lock()
 
         # Track errors
@@ -309,14 +351,14 @@ class _TaskBasedPipeline:
         self._fs_write_locks: Dict[str, threading.Lock] = {}
         self._fs_write_locks_lock = threading.Lock()
 
-    def submit(self, item: WorkItem) -> None:
+    def submit(self, item: PipelineWorkItem) -> None:
         """Submit a work item to start processing through the pipeline."""
         with self._lock:
             self._pending_count += 1
         # Start with combined READ+HASH stage in the read_hash pool
         self._read_hash_executor.submit(self._do_read_and_hash, item)
 
-    def wait_for_completion(self) -> List[WorkItem]:
+    def wait_for_completion(self) -> List[PipelineWorkItem]:
         """Wait for all submitted items to complete and return results."""
         self._done_event.wait()
 
@@ -335,6 +377,13 @@ class _TaskBasedPipeline:
             if self._pending_count == 0:
                 self._done_event.set()
 
+    def _increment_pending(self) -> None:
+        """Increment pending count for additional work items (e.g., multipart parts)."""
+        with self._lock:
+            self._pending_count += 1
+            # Clear done event in case it was set
+            self._done_event.clear()
+
     def _record_error(self, error: Exception) -> None:
         """Record an error (first error wins)."""
         with self._error_lock:
@@ -344,7 +393,7 @@ class _TaskBasedPipeline:
         # Signal completion so wait doesn't hang
         self._done_event.set()
 
-    def _record_result(self, item: WorkItem) -> None:
+    def _record_result(self, item: PipelineWorkItem) -> None:
         """Record a completed work item."""
         with self._results_lock:
             self._results.append(item)
@@ -360,7 +409,7 @@ class _TaskBasedPipeline:
     # READ+HASH Stage (Combined for CPU cache efficiency)
     # =========================================================================
 
-    def _check_cache_and_skip(self, item: WorkItem) -> tuple[Optional[str], bool]:
+    def _check_cache_and_skip(self, item: PipelineWorkItem) -> tuple[Optional[str], bool]:
         """
         Check hash cache and data cache to see if this item can be skipped.
 
@@ -414,7 +463,7 @@ class _TaskBasedPipeline:
 
         return cached_hash, False  # Have cached hash but need to verify
 
-    def _do_read_and_hash(self, item: WorkItem) -> None:
+    def _do_read_and_hash(self, item: PipelineWorkItem) -> None:
         """
         Combined READ+HASH stage: Read file data and compute hash while bytes stream into buffer.
 
@@ -460,7 +509,15 @@ class _TaskBasedPipeline:
                 return
 
             if isinstance(item, _StreamingWorkItem):
-                # Streaming items compute hash while reading (already combined)
+                # For S3 with large files, use multipart upload with parallel parts
+                if isinstance(self._data_cache, S3DataCache):
+                    multipart_threshold = 2 * self._data_cache.multipart_part_size
+                    if item.file_size > multipart_threshold:
+                        # Large file: stream, hash, and submit parts from READ+HASH stage
+                        self._stream_hash_and_submit_multipart(item)
+                        return
+
+                # Small file or non-S3: hash first, then upload in UPLOAD stage
                 item.file_hash = self._stream_hash_file(item.file_path)
 
                 # If hash changed from cached, check if new hash exists in S3
@@ -482,43 +539,286 @@ class _TaskBasedPipeline:
             # _ChunkWorkItem: read chunk data and hash immediately
             chunk_size = item.chunk_end - item.chunk_start
 
-            # Block until we have memory available (backpressure)
-            self._memory_pool.allocate(chunk_size)
+            # Check if we should use multipart upload for this chunk (S3 only)
+            use_multipart = (
+                isinstance(self._data_cache, S3DataCache)
+                and chunk_size >= 2 * self._data_cache.multipart_part_size
+            )
 
-            try:
-                with open(item.file_path, "rb") as f:
-                    f.seek(item.chunk_start)
-                    item.data = f.read(chunk_size)
+            if use_multipart:
+                # Read part-by-part into separate buffers for parallel upload
+                self._read_hash_and_submit_multipart(item, chunk_size)
+            else:
+                # Single buffer for small chunks - block until we have memory available
+                self._memory_pool.allocate(chunk_size)
 
-                # Hash while data is fresh in memory
-                if item.data is not None:
-                    item.chunk_hash = hash_data(item.data, self._hash_alg)
+                try:
+                    with open(item.file_path, "rb") as f:
+                        f.seek(item.chunk_start)
+                        item.data = f.read(chunk_size)
 
-                    # If hash changed from cached, check if new hash exists in S3
-                    if cached_hash is not None and item.chunk_hash != cached_hash:
-                        if self._data_cache.object_exists(item.chunk_hash, self._hash_alg.value):
-                            # Release memory - we're not uploading
-                            self._memory_pool.release(chunk_size)
-                            item.data = None
-                            item.skipped = True
-                            item.uploaded = False
-                            if self._progress_tracker is not None:
-                                self._progress_tracker.track_progress_callback(chunk_size)
-                            self._record_result(item)
-                            self._decrement_pending()
-                            logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
-                            return
-            except Exception:
-                # Release memory on error
-                self._memory_pool.release(chunk_size)
-                raise
+                    # Hash while data is fresh in memory
+                    if item.data is not None:
+                        item.chunk_hash = hash_data(item.data, self._hash_alg)
 
-            # Submit to UPLOAD stage in the upload pool
-            self._upload_executor.submit(self._do_upload, item)
+                        # If hash changed from cached, check if new hash exists in S3
+                        if cached_hash is not None and item.chunk_hash != cached_hash:
+                            if self._data_cache.object_exists(
+                                item.chunk_hash, self._hash_alg.value
+                            ):
+                                # Release memory - we're not uploading
+                                self._memory_pool.release(chunk_size)
+                                item.data = None
+                                item.skipped = True
+                                item.uploaded = False
+                                if self._progress_tracker is not None:
+                                    self._progress_tracker.track_progress_callback(chunk_size)
+                                self._record_result(item)
+                                self._decrement_pending()
+                                logger.debug(
+                                    f"Skipped (hash changed, but exists): {item.file_path}"
+                                )
+                                return
+                except Exception:
+                    # Release memory on error
+                    self._memory_pool.release(chunk_size)
+                    raise
+
+                # Submit to UPLOAD stage in the upload pool (single PUT)
+                self._upload_executor.submit(self._do_upload, item)
 
         except Exception as e:
             self._record_error(e)
             self._decrement_pending()
+
+    def _read_hash_and_submit_multipart(self, item: _ChunkWorkItem, chunk_size: int) -> None:
+        """
+        Read a chunk part-by-part, hash incrementally, then submit parts for parallel upload.
+
+        This method:
+        1. Reserves full chunk memory upfront to prevent deadlock
+        2. Reads the chunk part-by-part, hashing incrementally
+        3. Once fully read, creates the multipart upload session using the hash-based S3 key
+        4. Submits all part work items to the upload pool
+
+        Memory is reserved upfront for the entire chunk to prevent deadlock where multiple
+        chunks each partially allocate memory and then block waiting for more.
+        """
+        import xxhash
+
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+        if self._hash_alg != HashAlgorithm.XXH128:
+            raise ValueError(f"Unsupported hash algorithm for multipart: {self._hash_alg}")
+
+        part_size = self._data_cache.multipart_part_size
+        part_buffers: List[bytes] = []
+        hasher = xxhash.xxh128()
+
+        # Reserve full chunk memory upfront to prevent deadlock
+        self._memory_pool.allocate(chunk_size)
+
+        try:
+            with open(item.file_path, "rb") as f:
+                f.seek(item.chunk_start)
+                bytes_remaining = chunk_size
+
+                while bytes_remaining > 0:
+                    this_part_size = min(part_size, bytes_remaining)
+                    part_data = f.read(this_part_size)
+                    if len(part_data) != this_part_size:
+                        raise IOError(
+                            f"Short read: expected {this_part_size} bytes, got {len(part_data)}"
+                        )
+                    hasher.update(part_data)
+                    part_buffers.append(part_data)
+                    bytes_remaining -= this_part_size
+
+            # Now we have the final hash
+            item.chunk_hash = hasher.hexdigest()
+
+            # Check if object already exists in S3
+            if self._data_cache.object_exists(item.chunk_hash, self._hash_alg.value):
+                # Release memory - we're not uploading
+                self._memory_pool.release(chunk_size)
+                item.skipped = True
+                item.uploaded = False
+                if self._progress_tracker is not None:
+                    self._progress_tracker.track_progress_callback(chunk_size)
+                self._record_result(item)
+                self._decrement_pending()
+                logger.debug(f"Skipped multipart (exists): {item.file_path}")
+                return
+
+            # Create multipart upload session
+            s3_key = self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value)
+            upload_id = self._create_multipart_upload(s3_key)
+
+            # Create multipart state tracker
+            state = _MultipartUploadState(
+                file_hash=item.chunk_hash,
+                s3_key=s3_key,
+                upload_id=upload_id,
+                parts_remaining=len(part_buffers),
+                completed_parts=[],
+            )
+
+            # Track that we need to wait for all parts to complete
+            # We already have pending=1 for this item from submit(), now we need
+            # to increment for each additional part (N-1 increments for N parts)
+            for _ in range(len(part_buffers) - 1):
+                self._increment_pending()
+
+            # Record result BEFORE submitting parts to avoid race condition where
+            # parts complete and decrement pending to 0 before result is recorded
+            item.uploaded = True
+            item.skipped = False
+            self._record_result(item)
+
+            # Submit each part to the upload pool
+            # Each part will release its portion of memory when upload completes
+            for part_idx, part_data in enumerate(part_buffers):
+                part_item = _MultipartPartWorkItem(
+                    multipart_state=state,
+                    part_number=part_idx + 1,  # S3 part numbers are 1-based
+                    data=part_data,
+                )
+                self._upload_executor.submit(self._do_upload, part_item)
+
+        except Exception:
+            # Release full chunk memory on error
+            self._memory_pool.release(chunk_size)
+            raise
+
+    def _stream_hash_and_submit_multipart(self, item: _StreamingWorkItem) -> None:
+        """
+        Stream a large file, hash it, then submit parts for parallel upload.
+
+        This runs in the READ+HASH stage and submits parts to the UPLOAD stage.
+
+        For memory efficiency, we:
+        1. First pass: stream through file to compute hash (discarding data)
+        2. Check if object exists in S3
+        3. Second pass: read parts one at a time, submit each to upload pool
+
+        Each part is buffered with memory pool allocation for backpressure.
+        """
+        import xxhash
+
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+        if self._hash_alg != HashAlgorithm.XXH128:
+            raise ValueError(f"Unsupported hash algorithm for streaming: {self._hash_alg}")
+
+        part_size = self._data_cache.multipart_part_size
+
+        # First pass: compute hash by streaming (discard data)
+        hasher = xxhash.xxh128()
+        with open(item.file_path, "rb") as f:
+            while True:
+                chunk = f.read(part_size)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+
+        item.file_hash = hasher.hexdigest()
+
+        # Check if object already exists in S3
+        if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
+            item.skipped = True
+            item.uploaded = False
+            if self._progress_tracker is not None:
+                self._progress_tracker.track_progress_callback(item.file_size)
+            self._record_result(item)
+            self._decrement_pending()
+            logger.debug(f"Skipped multipart streaming (exists): {item.file_path}")
+            return
+
+        # Create multipart upload session
+        s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
+        upload_id = self._create_multipart_upload(s3_key)
+
+        # Calculate number of parts
+        num_parts = (item.file_size + part_size - 1) // part_size
+
+        # Create multipart state tracker
+        state = _MultipartUploadState(
+            file_hash=item.file_hash,
+            s3_key=s3_key,
+            upload_id=upload_id,
+            parts_remaining=num_parts,
+            completed_parts=[],
+        )
+
+        # Increment pending for additional parts (we already have 1 for this item)
+        for _ in range(num_parts - 1):
+            self._increment_pending()
+
+        # Record result BEFORE submitting parts to avoid race condition where
+        # parts complete and decrement pending to 0 before result is recorded
+        item.uploaded = True
+        item.skipped = False
+        self._record_result(item)
+
+        # Second pass: read and submit parts one at a time
+        parts_submitted = 0
+        try:
+            with open(item.file_path, "rb") as f:
+                part_number = 1
+                bytes_remaining = item.file_size
+
+                while bytes_remaining > 0:
+                    # Check for prior error
+                    with self._error_lock:
+                        if self._error is not None:
+                            # Decrement pending for parts we won't submit
+                            for _ in range(num_parts - parts_submitted):
+                                self._decrement_pending()
+                            return
+
+                    this_part_size = min(part_size, bytes_remaining)
+
+                    # Allocate memory (blocks if pool exhausted)
+                    self._memory_pool.allocate(this_part_size)
+
+                    try:
+                        part_data = f.read(this_part_size)
+                        if len(part_data) != this_part_size:
+                            self._memory_pool.release(this_part_size)
+                            raise IOError(
+                                f"Short read: expected {this_part_size} bytes, got {len(part_data)}"
+                            )
+
+                        # Submit part to upload pool
+                        part_item = _MultipartPartWorkItem(
+                            multipart_state=state,
+                            part_number=part_number,
+                            data=part_data,
+                        )
+                        try:
+                            self._upload_executor.submit(self._do_upload, part_item)
+                        except RuntimeError:
+                            # Executor was shut down (error occurred in another thread)
+                            self._memory_pool.release(this_part_size)
+                            for _ in range(num_parts - parts_submitted):
+                                self._decrement_pending()
+                            return
+                        parts_submitted += 1
+
+                        part_number += 1
+                        bytes_remaining -= this_part_size
+
+                    except Exception:
+                        self._memory_pool.release(this_part_size)
+                        raise
+
+        except Exception as e:
+            # Record error and decrement pending for unsubmitted parts
+            with state.lock:
+                state.part_errors.append(e)
+            for _ in range(num_parts - parts_submitted):
+                self._decrement_pending()
+            raise
 
     def _stream_hash_file(self, file_path: Path) -> str:
         """
@@ -558,33 +858,50 @@ class _TaskBasedPipeline:
 
         For _ChunkWorkItem: upload from memory, release memory, record result.
         For _StreamingWorkItem: stream file to data cache, record result.
+        For _MultipartPartWorkItem: upload single part, check for completion.
         """
+        # Track whether we should decrement pending at the end
+        # For async multipart uploads, the parts handle their own pending counts
+        should_decrement_pending = True
+
         try:
             # Check for prior error
             with self._error_lock:
                 if self._error is not None:
                     if isinstance(item, _ChunkWorkItem) and item.data is not None:
                         self._memory_pool.release(len(item.data))
-                    self._decrement_pending()
+                    elif isinstance(item, _MultipartPartWorkItem):
+                        self._memory_pool.release(len(item.data))
                     return
 
             if isinstance(item, _StreamingWorkItem):
-                self._upload_streaming(item)
+                sync_complete = self._upload_streaming(item)
+                if sync_complete:
+                    self._record_result(item)
+                else:
+                    # Async multipart - parts handle their own pending counts
+                    should_decrement_pending = False
+            elif isinstance(item, _MultipartPartWorkItem):
+                # Multipart parts handle everything internally including pending counts
+                self._upload_multipart_part(item)
+                # Don't decrement pending - _upload_multipart_part does it
+                should_decrement_pending = False
+                return
             else:
                 self._upload_chunk(item)
-
-            # Record successful result
-            self._record_result(item)
+                self._record_result(item)
 
         except Exception as e:
             # Release memory on error
             if isinstance(item, _ChunkWorkItem) and item.data is not None:
                 self._memory_pool.release(len(item.data))
                 item.data = None
+            # Note: _MultipartPartWorkItem handles its own memory release
             self._record_error(e)
 
         finally:
-            self._decrement_pending()
+            if should_decrement_pending:
+                self._decrement_pending()
 
     def _upload_chunk(self, item: _ChunkWorkItem) -> None:
         """Upload chunk data from memory."""
@@ -610,10 +927,15 @@ class _TaskBasedPipeline:
             self._memory_pool.release(chunk_size)
             item.data = None  # Free the data
 
-    def _upload_streaming(self, item: _StreamingWorkItem) -> None:
-        """Stream file to data cache."""
+    def _upload_streaming(self, item: _StreamingWorkItem) -> bool:
+        """
+        Stream file to data cache.
+
+        Returns:
+            True if upload was handled synchronously (or skipped), False if async multipart.
+        """
         if item.file_hash is None:
-            return
+            return True
 
         # Check if already in data cache
         if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
@@ -623,13 +945,16 @@ class _TaskBasedPipeline:
             # Still report progress for skipped files
             if self._progress_tracker is not None:
                 self._progress_tracker.track_progress_callback(item.file_size)
-            return
+            return True
 
         # Stream upload
         if isinstance(self._data_cache, S3DataCache):
-            self._stream_upload_to_s3(item)
+            return self._stream_upload_to_s3(item)
         elif isinstance(self._data_cache, FileSystemDataCache):
             self._stream_upload_to_filesystem(item)
+            item.uploaded = True
+            item.skipped = False
+            return True
         else:
             raise ValueError(f"Unsupported data cache type: {type(self._data_cache)}")
 
@@ -762,11 +1087,17 @@ class _TaskBasedPipeline:
                 error_details=str(bce),
             ) from bce
 
-    def _stream_upload_to_s3(self, item: _StreamingWorkItem) -> None:
+    def _stream_upload_to_s3(self, item: _StreamingWorkItem) -> bool:
         """
-        Upload a large file to S3 using streaming/multipart upload.
+        Upload a streaming file to S3 using single PUT.
+
+        This is only called for files below the multipart threshold.
+        Large files are handled by _stream_hash_and_submit_multipart in READ+HASH stage.
 
         Computes the hash while streaming and verifies it matches the pre-computed hash.
+
+        Returns:
+            True (always synchronous for single PUT).
         """
         import xxhash
 
@@ -779,48 +1110,47 @@ class _TaskBasedPipeline:
 
         s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
 
-        hasher = xxhash.xxh128()
-        multipart_threshold = 2 * self._data_cache.multipart_part_size
-
         try:
             extra_args: Dict[str, Any] = {}
             if self._account_id is not None:
                 extra_args["ExpectedBucketOwner"] = self._account_id
 
-            if item.file_size <= multipart_threshold:
-                # Small enough for single PUT - read entire file
-                with open(item.file_path, "rb") as f:
-                    data = f.read()
-                hasher.update(data)
-                upload_hash = hasher.hexdigest()
+            # Read entire file and verify hash
+            with open(item.file_path, "rb") as f:
+                data = f.read()
 
-                # Verify hash before uploading
-                if upload_hash != item.file_hash:
-                    raise ValueError(
-                        f"Hash mismatch during streaming upload of '{item.file_path}': "
-                        f"expected {item.file_hash}, got {upload_hash}. "
-                        f"File may have been modified during processing."
-                    )
+            hasher = xxhash.xxh128()
+            hasher.update(data)
+            upload_hash = hasher.hexdigest()
 
-                put_kwargs: Dict[str, Any] = {
-                    "Bucket": self._data_cache.s3_bucket,
-                    "Key": s3_key,
-                    "Body": data,
-                }
-                put_kwargs.update(extra_args)
-                self._data_cache.s3_client.put_object(**put_kwargs)
+            # Verify hash before uploading
+            if upload_hash != item.file_hash:
+                raise ValueError(
+                    f"Hash mismatch during streaming upload of '{item.file_path}': "
+                    f"expected {item.file_hash}, got {upload_hash}. "
+                    f"File may have been modified during processing."
+                )
 
-                if self._progress_tracker is not None:
-                    self._progress_tracker.track_progress_callback(len(data))
-            else:
-                # Use multipart upload for large files
-                self._stream_multipart_upload_to_s3(item, s3_key, hasher, extra_args)
+            put_kwargs: Dict[str, Any] = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+                "Body": data,
+            }
+            put_kwargs.update(extra_args)
+            self._data_cache.s3_client.put_object(**put_kwargs)
 
+            if self._progress_tracker is not None:
+                self._progress_tracker.track_progress_callback(len(data))
+
+            item.uploaded = True
+            item.skipped = False
             logger.debug(f"Streamed upload (verified): {s3_key}")
+            return True
+
         except ClientError as exc:
             status_code = int(exc.response["ResponseMetadata"]["HTTPStatusCode"])
             raise JobAttachmentsS3ClientError(
-                action="uploading large file",
+                action="uploading file",
                 status_code=status_code,
                 bucket_name=self._data_cache.s3_bucket,
                 key_or_prefix=s3_key,
@@ -828,88 +1158,169 @@ class _TaskBasedPipeline:
             ) from exc
         except BotoCoreError as bce:
             raise JobAttachmentS3BotoCoreError(
-                action="uploading large file",
+                action="uploading file",
                 error_details=str(bce),
             ) from bce
 
-    def _stream_multipart_upload_to_s3(
-        self,
-        item: _StreamingWorkItem,
-        s3_key: str,
-        hasher: Any,
-        extra_args: Dict[str, Any],
-    ) -> None:
-        """Handle multipart upload for large streaming files."""
+    def _upload_multipart_part(self, item: _MultipartPartWorkItem) -> None:
+        """
+        Upload a single part of a multipart upload.
+
+        The last part to complete triggers CompleteMultipartUpload.
+        On error, triggers AbortMultipartUpload.
+
+        This method handles its own pending count management.
+        """
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
 
-        multipart = self._data_cache.s3_client.create_multipart_upload(
+        state = item.multipart_state
+        part_size = len(item.data)
+
+        try:
+            extra_args: Dict[str, Any] = {}
+            if self._account_id is not None:
+                extra_args["ExpectedBucketOwner"] = self._account_id
+
+            response = self._data_cache.s3_client.upload_part(
+                Bucket=self._data_cache.s3_bucket,
+                Key=state.s3_key,
+                UploadId=state.upload_id,
+                PartNumber=item.part_number,
+                Body=item.data,
+                **extra_args,
+            )
+            item.etag = response["ETag"]
+            item.uploaded = True
+
+            # Update progress
+            if self._progress_tracker is not None:
+                self._progress_tracker.track_progress_callback(part_size)
+
+            # Track completion
+            with state.lock:
+                state.completed_parts.append(
+                    {
+                        "PartNumber": item.part_number,
+                        "ETag": item.etag,
+                    }
+                )
+                state.total_bytes_uploaded += part_size
+                state.parts_remaining -= 1
+                all_done = state.parts_remaining == 0
+                has_errors = len(state.part_errors) > 0
+
+            if all_done:
+                if has_errors:
+                    self._abort_multipart_upload(state)
+                    # Record the first error
+                    self._record_error(state.part_errors[0])
+                else:
+                    self._complete_multipart_upload(state)
+
+        except (ClientError, BotoCoreError) as e:
+            # Wrap the error for better error messages
+            wrapped_error: Exception
+            if isinstance(e, ClientError):
+                status_code = int(e.response["ResponseMetadata"]["HTTPStatusCode"])
+                wrapped_error = JobAttachmentsS3ClientError(
+                    action="uploading multipart part",
+                    status_code=status_code,
+                    bucket_name=self._data_cache.s3_bucket,
+                    key_or_prefix=state.s3_key,
+                    message=str(e),
+                )
+            else:
+                wrapped_error = JobAttachmentS3BotoCoreError(
+                    action="uploading multipart part",
+                    error_details=str(e),
+                )
+
+            with state.lock:
+                state.part_errors.append(wrapped_error)
+                state.parts_remaining -= 1
+                # Record error and abort immediately on first failure
+                first_error = len(state.part_errors) == 1
+
+            if first_error:
+                self._abort_multipart_upload(state)
+                self._record_error(wrapped_error)
+
+        finally:
+            # Release memory after upload completes
+            self._memory_pool.release(part_size)
+            # Decrement pending count
+            self._decrement_pending()
+
+    def _complete_multipart_upload(self, state: _MultipartUploadState) -> None:
+        """Complete a multipart upload after all parts are uploaded."""
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+
+        # Sort parts by part number (required by S3)
+        sorted_parts = sorted(state.completed_parts, key=lambda p: p["PartNumber"])
+
+        try:
+            extra_args: Dict[str, Any] = {}
+            if self._account_id is not None:
+                extra_args["ExpectedBucketOwner"] = self._account_id
+
+            self._data_cache.s3_client.complete_multipart_upload(
+                Bucket=self._data_cache.s3_bucket,
+                Key=state.s3_key,
+                UploadId=state.upload_id,
+                MultipartUpload={"Parts": sorted_parts},
+                **extra_args,
+            )
+            logger.debug(f"Completed multipart upload: {state.s3_key}")
+
+            # Update S3 check cache
+            if self._data_cache.s3_check_cache is not None:
+                cache_key = f"{self._data_cache.s3_bucket}/{state.s3_key}"
+                self._data_cache.s3_check_cache.put_entry(
+                    S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
+                )
+
+        except (ClientError, BotoCoreError) as e:
+            logger.error(f"Failed to complete multipart upload: {e}")
+            self._abort_multipart_upload(state)
+            raise
+
+    def _abort_multipart_upload(self, state: _MultipartUploadState) -> None:
+        """Abort a multipart upload on error."""
+        if not isinstance(self._data_cache, S3DataCache):
+            return
+
+        try:
+            extra_args: Dict[str, Any] = {}
+            if self._account_id is not None:
+                extra_args["ExpectedBucketOwner"] = self._account_id
+
+            self._data_cache.s3_client.abort_multipart_upload(
+                Bucket=self._data_cache.s3_bucket,
+                Key=state.s3_key,
+                UploadId=state.upload_id,
+                **extra_args,
+            )
+            logger.debug(f"Aborted multipart upload: {state.s3_key}")
+        except Exception:
+            pass  # Best effort cleanup
+
+    def _create_multipart_upload(self, s3_key: str) -> str:
+        """Create a new multipart upload and return the upload ID."""
+        if not isinstance(self._data_cache, S3DataCache):
+            raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
+
+        extra_args: Dict[str, Any] = {}
+        if self._account_id is not None:
+            extra_args["ExpectedBucketOwner"] = self._account_id
+
+        response = self._data_cache.s3_client.create_multipart_upload(
             Bucket=self._data_cache.s3_bucket,
             Key=s3_key,
             **extra_args,
         )
-        upload_id = multipart["UploadId"]
-
-        try:
-            parts: List[Dict[str, Any]] = []
-            part_number = 1
-            part_size = self._data_cache.multipart_part_size
-
-            with open(item.file_path, "rb") as f:
-                while True:
-                    chunk = f.read(part_size)
-                    if not chunk:
-                        break
-
-                    hasher.update(chunk)
-
-                    response = self._data_cache.s3_client.upload_part(
-                        Bucket=self._data_cache.s3_bucket,
-                        Key=s3_key,
-                        UploadId=upload_id,
-                        PartNumber=part_number,
-                        Body=chunk,
-                    )
-                    parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
-                    part_number += 1
-
-                    if self._progress_tracker is not None:
-                        self._progress_tracker.track_progress_callback(len(chunk))
-
-            upload_hash = hasher.hexdigest()
-
-            # Verify hash before completing upload
-            if upload_hash != item.file_hash:
-                # Abort the multipart upload
-                self._data_cache.s3_client.abort_multipart_upload(
-                    Bucket=self._data_cache.s3_bucket,
-                    Key=s3_key,
-                    UploadId=upload_id,
-                )
-                raise ValueError(
-                    f"Hash mismatch during streaming upload of '{item.file_path}': "
-                    f"expected {item.file_hash}, got {upload_hash}. "
-                    f"File may have been modified during processing."
-                )
-
-            # Complete the multipart upload
-            self._data_cache.s3_client.complete_multipart_upload(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-                UploadId=upload_id,
-                MultipartUpload={"Parts": parts},
-            )
-        except Exception:
-            # Abort multipart upload on any error
-            try:
-                self._data_cache.s3_client.abort_multipart_upload(
-                    Bucket=self._data_cache.s3_bucket,
-                    Key=s3_key,
-                    UploadId=upload_id,
-                )
-            except Exception:
-                pass  # Best effort cleanup
-            raise
+        return response["UploadId"]
 
     # =========================================================================
     # Filesystem Upload Methods
@@ -1038,7 +1449,7 @@ class _TaskBasedPipeline:
 
 
 def _run_pipeline(
-    work_items: List[WorkItem],
+    work_items: List[PipelineWorkItem],
     hash_alg: HashAlgorithm,
     data_cache: ContentAddressedDataCache,
     account_id: Optional[str],
@@ -1047,7 +1458,7 @@ def _run_pipeline(
     progress_tracker: Optional[ProgressTracker],
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
-) -> List[WorkItem]:
+) -> List[PipelineWorkItem]:
     """
     Run the pipeline on work items using separate thread pools for each stage.
 
@@ -1220,7 +1631,7 @@ def hash_upload_abs_manifest(
             file_entries_to_process.append((idx, entry))
 
     # Build all work items for a single unified pipeline
-    all_work_items: List[WorkItem] = []
+    all_work_items: List[PipelineWorkItem] = []
     entry_map: Dict[str, Tuple[int, ManifestFilePath]] = {}
     file_chunk_counts: Dict[str, int] = {}  # cache_key -> expected chunk count
 
@@ -1301,7 +1712,7 @@ def hash_upload_abs_manifest(
     ] = {}  # cache_key -> hash or {chunk_idx -> hash}
 
     # Run the unified pipeline (cache checks are parallelized in worker threads)
-    pipeline_results: List[WorkItem] = []
+    pipeline_results: List[PipelineWorkItem] = []
     if all_work_items:
         pipeline_results = _run_pipeline(
             work_items=all_work_items,
