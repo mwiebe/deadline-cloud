@@ -279,7 +279,9 @@ class TestDownloadManifestFileSystem:
         subdir2.mkdir()
         (subdir2 / "deep.txt").write_text("Deep content")
 
-        collected = collect_abs_snapshot([source_dir], [], symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+        collected = collect_abs_snapshot(
+            [source_dir], [], symlink_policy=SymlinkPolicy.COLLAPSE_ALL
+        )
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -344,7 +346,9 @@ class TestDownloadManifestS3:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("Nested content")
 
-        collected = collect_abs_snapshot([source_dir], [], symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+        collected = collect_abs_snapshot(
+            [source_dir], [], symlink_policy=SymlinkPolicy.COLLAPSE_ALL
+        )
         data_cache = self._create_s3_data_cache()
         upload_result = hash_upload_manifest(collected, data_cache)
 

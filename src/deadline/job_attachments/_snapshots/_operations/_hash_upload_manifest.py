@@ -368,11 +368,11 @@ class _TaskBasedPipeline:
         - (hash, True): Hash found and object exists in data cache - skip entirely
         - (hash, False): Hash found but object not in data cache - need to verify
         - (None, False): No cached hash - need to read and hash
-        
+
         When can_skip is False but cached_hash is not None, the caller should
         compare the computed hash with cached_hash. If they match, no need to
         re-check HeadObject. If they differ, should check HeadObject with new hash.
-        
+
         This is called from worker threads to parallelize cache checks.
         """
         if self._hash_cache is None or self._force_rehash:
@@ -451,7 +451,9 @@ class _TaskBasedPipeline:
                     if isinstance(item, _StreamingWorkItem):
                         self._progress_tracker.track_progress_callback(item.file_size)
                     else:
-                        self._progress_tracker.track_progress_callback(item.chunk_end - item.chunk_start)
+                        self._progress_tracker.track_progress_callback(
+                            item.chunk_end - item.chunk_start
+                        )
                 self._record_result(item)
                 self._decrement_pending()
                 logger.debug(f"Skipped (cache hit): {item.file_path}")
@@ -460,7 +462,7 @@ class _TaskBasedPipeline:
             if isinstance(item, _StreamingWorkItem):
                 # Streaming items compute hash while reading (already combined)
                 item.file_hash = self._stream_hash_file(item.file_path)
-                
+
                 # If hash changed from cached, check if new hash exists in S3
                 if cached_hash is not None and item.file_hash != cached_hash:
                     if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
@@ -472,7 +474,7 @@ class _TaskBasedPipeline:
                         self._decrement_pending()
                         logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
                         return
-                
+
                 # Submit to UPLOAD stage in the upload pool
                 self._upload_executor.submit(self._do_upload, item)
                 return
@@ -491,7 +493,7 @@ class _TaskBasedPipeline:
                 # Hash while data is fresh in memory
                 if item.data is not None:
                     item.chunk_hash = hash_data(item.data, self._hash_alg)
-                    
+
                     # If hash changed from cached, check if new hash exists in S3
                     if cached_hash is not None and item.chunk_hash != cached_hash:
                         if self._data_cache.object_exists(item.chunk_hash, self._hash_alg.value):
@@ -1357,7 +1359,11 @@ def hash_upload_manifest(
                     )
 
         # Track statistics
-        chunk_size = item.chunk_end - item.chunk_start if isinstance(item, _ChunkWorkItem) else item.file_size
+        chunk_size = (
+            item.chunk_end - item.chunk_start
+            if isinstance(item, _ChunkWorkItem)
+            else item.file_size
+        )
         if item.skipped:
             skipped_bytes += chunk_size
             skipped_files_set.add(item.cache_key)
@@ -1370,7 +1376,9 @@ def hash_upload_manifest(
     for cache_key in entry_map:
         if cache_key in skipped_files_set:
             # Check if ALL chunks of this file were skipped
-            all_skipped = all(item.skipped for item in pipeline_results if item.cache_key == cache_key)
+            all_skipped = all(
+                item.skipped for item in pipeline_results if item.cache_key == cache_key
+            )
             if all_skipped:
                 skipped_files += 1
             else:

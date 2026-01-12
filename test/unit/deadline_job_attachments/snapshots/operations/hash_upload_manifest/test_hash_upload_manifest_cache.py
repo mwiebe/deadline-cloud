@@ -903,12 +903,12 @@ class TestHashCacheHitButObjectMissingFromS3:
 
     def test_hash_cache_hit_but_s3_miss_uploads_correctly(self, tmp_path: Path) -> None:
         """Test that file is uploaded when hash cache hits but object is not on S3.
-        
+
         This tests the scenario where:
         1. Hash cache has the hash from a previous run
         2. S3 check cache is empty (or cleared)
         3. Object was deleted from S3
-        
+
         The implementation must re-read and re-hash the file before uploading,
         even though the hash cache has an entry. This is because we can't trust
         the hash cache alone for uploads - we need to verify the hash by reading
@@ -986,10 +986,9 @@ class TestHashCacheHitButObjectMissingFromS3:
             uploaded_content = obj["Body"].read().decode("utf-8")
             assert uploaded_content == test_content, "Uploaded content should match original file"
 
-
     def test_hash_changed_but_new_hash_exists_skips_upload(self, tmp_path: Path) -> None:
         """Test that upload is skipped when hash changed but new hash already exists in S3.
-        
+
         This tests the scenario where:
         1. Hash cache has stale hash (hash_A) from previous run
         2. HeadObject(hash_A) returns 404
@@ -1034,6 +1033,7 @@ class TestHashCacheHitButObjectMissingFromS3:
             # Now upload different content to S3 (simulating another client)
             new_content = "New content that already exists"
             from deadline.job_attachments.asset_manifests.hash_algorithms import hash_data
+
             new_hash = hash_data(new_content.encode(), HashAlgorithm.XXH128)
             new_s3_key = f"{TEST_KEY_PREFIX}/{new_hash}.xxh128"
             self.s3_client.put_object(
@@ -1048,6 +1048,7 @@ class TestHashCacheHitButObjectMissingFromS3:
 
             # Modify the local file to have the new content
             import time
+
             time.sleep(0.01)  # Ensure mtime changes
             test_file.write_text(new_content)
             new_stat = test_file.stat()
@@ -1071,9 +1072,11 @@ class TestHashCacheHitButObjectMissingFromS3:
             # Track put_object calls
             put_calls = []
             original_put = self.s3_client.put_object
+
             def tracking_put(*args, **kwargs):
                 put_calls.append(kwargs.get("Key"))
                 return original_put(*args, **kwargs)
+
             self.s3_client.put_object = tracking_put
 
             # Second upload - hash cache hits (mtime matches), HeadObject(original_hash) misses

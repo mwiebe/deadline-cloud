@@ -153,7 +153,9 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         assert isinstance(result.manifest, AbsSnapshot)
-        file_entries = [p for p in result.manifest.files if p.symlink_target is None and not p.deleted]
+        file_entries = [
+            p for p in result.manifest.files if p.symlink_target is None and not p.deleted
+        ]
         assert len(file_entries) == 3
 
         for entry in file_entries:
@@ -381,7 +383,9 @@ class TestHashUploadManifestBasicS3:
         )
 
         assert isinstance(result.manifest, AbsSnapshot)
-        file_entries = [p for p in result.manifest.files if p.symlink_target is None and not p.deleted]
+        file_entries = [
+            p for p in result.manifest.files if p.symlink_target is None and not p.deleted
+        ]
         assert len(file_entries) == 3
 
         for entry in file_entries:
