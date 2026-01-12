@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest diff manifest support.
+Tests for download_abs_manifest diff manifest support.
 
 These tests cover:
 - File deletions from diff manifests
@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     FileSystemDataCache,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -26,7 +26,7 @@ from deadline.job_attachments._snapshots import (
 )
 
 
-class TestDownloadManifestDiff:
+class TestDownloadAbsManifestDiff:
     """Tests for diff manifest download (deletions)."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -54,7 +54,7 @@ class TestDownloadManifestDiff:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
+        download_abs_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
 
         assert not file_to_delete.exists()
         assert file_to_keep.exists()
@@ -78,7 +78,7 @@ class TestDownloadManifestDiff:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=False)
+        download_abs_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=False)
 
         assert file_to_delete.exists()
 
@@ -101,7 +101,7 @@ class TestDownloadManifestDiff:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
+        download_abs_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
 
         assert not dir_to_delete.exists()
 
@@ -125,7 +125,7 @@ class TestDownloadManifestDiff:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
+        download_abs_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
 
         assert dir_to_delete.exists()
         assert (dir_to_delete / "file.txt").exists()
@@ -155,14 +155,14 @@ class TestDownloadManifestDiff:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
+        download_abs_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
 
         assert not file_in_child.exists()
         assert not child_dir.exists()
         assert not parent_dir.exists()
 
 
-class TestDownloadManifestDiffSymlinks:
+class TestDownloadAbsManifestDiffSymlinks:
     """Tests for diff manifest symlink deletions."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -191,7 +191,7 @@ class TestDownloadManifestDiffSymlinks:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
+        download_abs_manifest(manifest=diff_manifest, data_cache=data_cache, apply_deletes=True)
 
         # Symlink should be deleted, but target should remain
         assert not symlink_to_delete.exists()

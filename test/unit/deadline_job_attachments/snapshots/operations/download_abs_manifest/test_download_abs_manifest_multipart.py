@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 from unittest.mock import MagicMock
 
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     AbsSnapshot,
 )
 from deadline.job_attachments._snapshots._manifest import ManifestFilePath
@@ -79,7 +79,7 @@ class TestMultipartDownloadRegularFiles:
             total_size=len(file_content),
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -132,7 +132,7 @@ class TestMultipartDownloadRegularFiles:
             total_size=len(file_content),
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -204,7 +204,7 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=256,  # Chunk size in manifest
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -251,7 +251,7 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=256,
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -308,7 +308,7 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=chunk_size,
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -398,7 +398,7 @@ class TestMultipartDownloadMixedFiles:
             total_size=len(small_content) + len(large_content),
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify both files downloaded correctly
         assert small_path.exists()

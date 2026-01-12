@@ -59,9 +59,9 @@ from ..._utils import _get_long_path_compatible_path
 from ...caches.hash_cache import HashCache
 
 # Import pipeline classes
-from ._download_manifest_pipeline import DownloadPipelineBase
-from ._download_manifest_s3_pipeline import S3DownloadPipeline
-from ._download_manifest_file_system_pipeline import FileSystemDownloadPipeline
+from ._download_abs_manifest_pipeline import DownloadPipelineBase
+from ._download_abs_manifest_s3_pipeline import S3DownloadPipeline
+from ._download_abs_manifest_file_system_pipeline import FileSystemDownloadPipeline
 
 logger = logging.getLogger("deadline.job_attachments.download")
 
@@ -72,7 +72,7 @@ DEFAULT_MAX_WORKERS = 10
 @dataclass
 class DownloadResult:
     """
-    Result of a download_manifest operation.
+    Result of a download_abs_manifest operation.
 
     Attributes:
         statistics: Summary statistics about the download operation.
@@ -317,7 +317,7 @@ def _build_updated_manifest(
 # =============================================================================
 
 
-def download_manifest(
+def download_abs_manifest(
     manifest: AbsManifest,
     data_cache: ContentAddressedDataCache,
     *,

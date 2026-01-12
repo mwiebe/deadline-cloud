@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Base download pipeline for download_manifest operation.
+Base download pipeline for download_abs_manifest operation.
 
 This module implements the base class for callback-based download pipelines.
 Subclasses implement cache-specific download logic (S3 or filesystem).

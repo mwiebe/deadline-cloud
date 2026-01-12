@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest symlink handling.
+Tests for download_abs_manifest symlink handling.
 
 These tests cover:
 - PRESERVE: Create symlinks as specified in the manifest
@@ -19,7 +19,7 @@ import pytest
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_upload_abs_manifest,
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     subtree_manifest,
     FileSystemDataCache,
@@ -34,7 +34,7 @@ def _to_abs_snapshot(manifest: object) -> AbsSnapshot:
     return cast(AbsSnapshot, manifest)
 
 
-class TestDownloadManifestSymlinks:
+class TestDownloadAbsManifestSymlinks:
     """Tests for symlink handling during download."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -59,10 +59,10 @@ class TestDownloadManifestSymlinks:
         upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        download_manifest(
-            manifest=download_manifest_obj,
+        download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
@@ -88,10 +88,10 @@ class TestDownloadManifestSymlinks:
         upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        download_manifest(
-            manifest=download_manifest_obj,
+        download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
         )
@@ -114,7 +114,7 @@ class TestDownloadManifestSymlinks:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         with pytest.raises(ValueError, match="PRESERVE or EXCLUDE"):
-            download_manifest(
+            download_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 symlink_policy=SymlinkPolicy.COLLAPSE_ALL,

@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-FileSystem-specific download pipeline for download_manifest operation.
+FileSystem-specific download pipeline for download_abs_manifest operation.
 
 This module implements the filesystem cache download pipeline, which copies
 files from a local filesystem cache to the target locations.
@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from .._manifest import ManifestFilePath
 from .._content_addressed_data_cache import FileSystemDataCache
-from ._download_manifest_pipeline import DownloadPipelineBase, DownloadFileResult
+from ._download_abs_manifest_pipeline import DownloadPipelineBase, DownloadFileResult
 
 logger = logging.getLogger("deadline.job_attachments.download")
 

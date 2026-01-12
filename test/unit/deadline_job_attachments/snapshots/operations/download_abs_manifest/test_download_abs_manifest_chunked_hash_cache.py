@@ -18,8 +18,8 @@ from deadline.job_attachments._snapshots._manifest import (
 from deadline.job_attachments._snapshots._content_addressed_data_cache import (
     FileSystemDataCache,
 )
-from deadline.job_attachments._snapshots._operations._download_manifest import (
-    download_manifest,
+from deadline.job_attachments._snapshots._operations._download_abs_manifest import (
+    download_abs_manifest,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.caches.hash_cache import HashCache, HashCacheEntry
@@ -30,8 +30,8 @@ from deadline.job_attachments.models import FileConflictResolution
 TEST_CHUNK_SIZE = 1024
 
 
-class TestDownloadManifestChunkedHashCacheIntegration:
-    """Integration tests for chunked file hash cache with download_manifest."""
+class TestDownloadAbsManifestChunkedHashCacheIntegration:
+    """Integration tests for chunked file hash cache with download_abs_manifest."""
 
     @pytest.fixture
     def setup_data_cache(self, tmp_path):
@@ -110,7 +110,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
             )
 
             # Download should skip the file
-            result = download_manifest(
+            result = download_abs_manifest(
                 manifest,
                 data_cache,
                 hash_cache=hash_cache,
@@ -167,7 +167,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
             )
 
             # Download should re-download the file
-            result = download_manifest(
+            result = download_abs_manifest(
                 manifest,
                 data_cache,
                 hash_cache=hash_cache,
@@ -209,7 +209,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
 
         # Download with empty hash cache
         with HashCache(cache_dir=str(tmp_path / "hash_cache")) as hash_cache:
-            result = download_manifest(
+            result = download_abs_manifest(
                 manifest,
                 data_cache,
                 hash_cache=hash_cache,
@@ -274,7 +274,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
 
         with HashCache(cache_dir=str(tmp_path / "hash_cache")) as hash_cache:
             # First download
-            result1 = download_manifest(
+            result1 = download_abs_manifest(
                 manifest,
                 data_cache,
                 hash_cache=hash_cache,
@@ -284,7 +284,7 @@ class TestDownloadManifestChunkedHashCacheIntegration:
             assert result1.statistics.skipped_files == 0
 
             # Second download should skip
-            result2 = download_manifest(
+            result2 = download_abs_manifest(
                 manifest,
                 data_cache,
                 hash_cache=hash_cache,

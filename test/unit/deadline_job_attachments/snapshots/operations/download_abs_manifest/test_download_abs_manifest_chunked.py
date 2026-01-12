@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     AbsSnapshot,
     FileSystemDataCache,
 )
@@ -69,7 +69,7 @@ class TestDownloadChunkedFileFileSystem:
             file_chunk_size_bytes=256,
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         assert target_path.exists()
         assert target_path.read_bytes() == chunk_content
@@ -123,7 +123,7 @@ class TestDownloadChunkedFileFileSystem:
             file_chunk_size_bytes=chunk_size,
         )
 
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         assert regular_path.exists()
         assert regular_path.read_bytes() == regular_content
@@ -162,7 +162,7 @@ class TestDownloadChunkedFileFileSystem:
             file_chunk_size_bytes=256,
         )
 
-        result = download_manifest(
+        result = download_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.SKIP,
@@ -202,7 +202,7 @@ class TestDownloadChunkedFileFileSystem:
             file_chunk_size_bytes=256,
         )
 
-        result = download_manifest(
+        result = download_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.OVERWRITE,
@@ -242,7 +242,7 @@ class TestDownloadChunkedFileFileSystem:
             file_chunk_size_bytes=256,
         )
 
-        download_manifest(manifest=manifest, data_cache=data_cache)
+        download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Check mtime was set (allow some tolerance for filesystem precision)
         actual_mtime_us = target_path.stat().st_mtime_ns // 1000
@@ -295,7 +295,7 @@ class TestDownloadChunkedFileAtomicity:
             file_chunk_size_bytes=chunk_size,
         )
 
-        download_manifest(manifest=manifest, data_cache=data_cache)
+        download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Check no temp files remain
         all_files = list(download_dir.iterdir())
@@ -336,7 +336,7 @@ class TestDownloadChunkedFileAtomicity:
         )
 
         with pytest.raises(FileNotFoundError):
-            download_manifest(manifest=manifest, data_cache=data_cache)
+            download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         # Target file should not exist
         assert not target_path.exists()

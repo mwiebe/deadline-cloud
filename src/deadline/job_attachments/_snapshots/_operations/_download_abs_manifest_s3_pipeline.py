@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-S3-specific download pipeline for download_manifest operation.
+S3-specific download pipeline for download_abs_manifest operation.
 
 This module implements the S3 cache download pipeline, which downloads
 files from S3 using parallel byte-range requests for large files.
@@ -20,7 +20,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from .._manifest import ManifestFilePath
 from .._content_addressed_data_cache import S3DataCache
-from ._download_manifest_pipeline import DownloadPipelineBase, DownloadFileResult
+from ._download_abs_manifest_pipeline import DownloadPipelineBase, DownloadFileResult
 from ._sparse_file import preallocate_file
 from ...exceptions import (
     JobAttachmentsS3ClientError,

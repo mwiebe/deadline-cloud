@@ -116,9 +116,7 @@ can fully eliminate S3 access, all the timings are sub-second.
 
 #### S3 Transfer time for 25 GB, 1905 files
 
-====================================================================================================
 SCALING TEST SUMMARY (Duration as M:SS)
-====================================================================================================
 |  Workers |      UPLOAD cold | UPLOAD warm-head |  UPLOAD warm-all |    DOWNLOAD cold |    DOWNLOAD warm |
 |---------:|-----------------:|-----------------:|-----------------:|-----------------:|-----------------:|
 |        1 |             5:44 |             0:25 |           0:00.2 |            11:08 |           0:00.3 |
@@ -220,7 +218,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_collect_abs_snapshot.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
 | `_hash_abs_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_abs_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
-| `_download_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
+| `_download_abs_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
@@ -932,14 +930,14 @@ For large datasets, HASH_UPLOAD can be up to 2× faster due to single-pass I/O.
 | Output sync from worker | HASH_UPLOAD |
 | Testing/debugging | HASH (simpler) |
 
-### 4. DOWNLOAD: `download_manifest()`
+### 4. DOWNLOAD: `download_abs_manifest()`
 
-**Location:** `_download_manifest.py`
+**Location:** `_download_abs_manifest.py`
 
 Downloads files from a data cache (S3 or filesystem) to the local filesystem. For snapshot manifests (`AbsSnapshot`), recreates the directory structure specified in the manifest. For diff manifests (`AbsSnapshotDiff`), applies changes by downloading new/modified files and deleting removed files. The manifest must have absolute paths.
 
 ```python
-def download_manifest(
+def download_abs_manifest(
     manifest: AbsManifest,
     data_cache: DataCache,
     *,
@@ -1012,7 +1010,7 @@ The `manifest` field in the return value contains a copy of the input manifest w
 
 ```python
 # Download files from a manifest created on a different OS
-result = download_manifest(manifest=cloud_manifest, data_cache=s3_cache)
+result = download_abs_manifest(manifest=cloud_manifest, data_cache=s3_cache)
 
 # Use the updated manifest (with local filesystem mtimes) as the baseline
 local_baseline = result.manifest
@@ -1033,7 +1031,7 @@ from deadline.job_attachments.caches.hash_cache import HashCache
 # Use a hash cache to skip files that already have correct content
 with HashCache() as hash_cache:
     # First download - all files are downloaded
-    result1 = download_manifest(
+    result1 = download_abs_manifest(
         manifest=manifest,
         data_cache=s3_cache,
         hash_cache=hash_cache,
@@ -1041,7 +1039,7 @@ with HashCache() as hash_cache:
     print(f"Downloaded {result1.statistics.processed_files} files")
 
     # Second download of same manifest - all files skipped
-    result2 = download_manifest(
+    result2 = download_abs_manifest(
         manifest=manifest,
         data_cache=s3_cache,
         hash_cache=hash_cache,
@@ -1268,7 +1266,7 @@ Downloaded files have their modification time (`mtime`) set to the value stored 
 ```python
 import boto3
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     S3DataCache,
 )
@@ -1290,7 +1288,7 @@ data_cache = S3DataCache(
 )
 
 # Download all files to local filesystem
-stats = download_manifest(
+stats = download_abs_manifest(
     manifest=abs_manifest,
     data_cache=data_cache,
     file_conflict_resolution=FileConflictResolution.OVERWRITE,
@@ -1313,7 +1311,7 @@ Total time: 12.34s
 ```python
 from pathlib import Path
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     FileSystemDataCache,
 )
@@ -1332,7 +1330,7 @@ data_cache = FileSystemDataCache(
 )
 
 # Download (copy) files from cache to target directory
-stats = download_manifest(
+stats = download_abs_manifest(
     manifest=abs_manifest,
     data_cache=data_cache,
 )
@@ -1344,7 +1342,7 @@ print(f"Restored {stats.processed_files} files to /home/user/restored_scene")
 
 ```python
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     S3DataCache,
 )
@@ -1364,7 +1362,7 @@ data_cache = S3DataCache(
     s3_client=boto3.client("s3"),
 )
 
-stats = download_manifest(
+stats = download_abs_manifest(
     manifest=abs_diff,
     data_cache=data_cache,
 )
@@ -1407,7 +1405,7 @@ abs_for_download = join_manifest(
     subtree_manifest(loaded, "/projects/scene"),
     "/home/other_user/scene"
 )
-download_manifest(abs_for_download, s3_cache)
+download_abs_manifest(abs_for_download, s3_cache)
 ```
 
 ### 5. FILTER: `filter_manifest()`

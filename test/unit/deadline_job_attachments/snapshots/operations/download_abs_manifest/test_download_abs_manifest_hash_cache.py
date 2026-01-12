@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest hash cache skip functionality.
+Tests for download_abs_manifest hash cache skip functionality.
 
 These tests verify that:
 - Files are skipped when hash cache indicates they already have correct content
@@ -18,7 +18,7 @@ from unittest.mock import patch
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_upload_abs_manifest,
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     subtree_manifest,
     FileSystemDataCache,
@@ -32,7 +32,7 @@ def _to_abs_snapshot(manifest: object) -> AbsSnapshot:
     return cast(AbsSnapshot, manifest)
 
 
-class TestDownloadManifestHashCacheSkip:
+class TestDownloadAbsManifestHashCacheSkip:
     """Tests for hash cache skip optimization."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -59,12 +59,12 @@ class TestDownloadManifestHashCacheSkip:
 
         # Create download manifest
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             # First download - should download all files
-            result1 = download_manifest(
-                manifest=download_manifest_obj,
+            result1 = download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
@@ -77,8 +77,8 @@ class TestDownloadManifestHashCacheSkip:
             assert (download_dir / "file2.txt").read_text() == "Content 2"
 
             # Second download - should skip all files (hash cache hit)
-            result2 = download_manifest(
-                manifest=download_manifest_obj,
+            result2 = download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
@@ -105,23 +105,23 @@ class TestDownloadManifestHashCacheSkip:
 
         # Create download manifest
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             # First download
-            download_manifest(
-                manifest=download_manifest_obj,
+            download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
 
             # Patch shutil.copy2 in the filesystem pipeline to track calls
             with patch(
-                "deadline.job_attachments._snapshots._operations._download_manifest_file_system_pipeline.shutil.copy2"
+                "deadline.job_attachments._snapshots._operations._download_abs_manifest_file_system_pipeline.shutil.copy2"
             ) as mock_copy:
                 # Second download - should skip without calling copy function
-                result = download_manifest(
-                    manifest=download_manifest_obj,
+                result = download_abs_manifest(
+                    manifest=download_abs_manifest_obj,
                     data_cache=data_cache,
                     hash_cache=hash_cache,
                 )
@@ -150,12 +150,12 @@ class TestDownloadManifestHashCacheSkip:
 
         # Create download manifest
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             # First download
-            result1 = download_manifest(
-                manifest=download_manifest_obj,
+            result1 = download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
@@ -166,8 +166,8 @@ class TestDownloadManifestHashCacheSkip:
             downloaded_file.write_text("Modified content")
 
             # Second download - should re-download because mtime changed
-            result2 = download_manifest(
-                manifest=download_manifest_obj,
+            result2 = download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
@@ -198,12 +198,12 @@ class TestDownloadManifestHashCacheSkip:
 
         # Create download manifest
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             # First download
-            result1 = download_manifest(
-                manifest=download_manifest_obj,
+            result1 = download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
@@ -215,8 +215,8 @@ class TestDownloadManifestHashCacheSkip:
             assert not downloaded_file.exists()
 
             # Second download - should re-download because file doesn't exist
-            result2 = download_manifest(
-                manifest=download_manifest_obj,
+            result2 = download_abs_manifest(
+                manifest=download_abs_manifest_obj,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
@@ -244,19 +244,19 @@ class TestDownloadManifestHashCacheSkip:
 
         # Create download manifest
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         # First download without hash cache
-        result1 = download_manifest(
-            manifest=download_manifest_obj,
+        result1 = download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             # No hash_cache provided
         )
         assert result1.statistics.processed_files == 1
 
         # Second download without hash cache - still downloads
-        result2 = download_manifest(
-            manifest=download_manifest_obj,
+        result2 = download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             # No hash_cache provided
         )

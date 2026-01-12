@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest input validation.
+Tests for download_abs_manifest input validation.
 
 These tests cover:
 - Relative path validation (must be absolute)
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    download_manifest,
+    download_abs_manifest,
     FileSystemDataCache,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -25,7 +25,7 @@ from deadline.job_attachments._snapshots import (
 )
 
 
-class TestDownloadManifestValidation:
+class TestDownloadAbsManifestValidation:
     """Tests for input validation."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -50,7 +50,7 @@ class TestDownloadManifestValidation:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         with pytest.raises(ValueError, match="absolute paths"):
-            download_manifest(manifest=manifest, data_cache=data_cache)
+            download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
     def test_snapshot_manifest_ignores_apply_deletes(self, tmp_path: Path) -> None:
         """Test that apply_deletes has no effect on snapshot manifests."""
@@ -69,6 +69,6 @@ class TestDownloadManifestValidation:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        download_manifest(manifest=manifest, data_cache=data_cache, apply_deletes=True)
+        download_abs_manifest(manifest=manifest, data_cache=data_cache, apply_deletes=True)
 
         assert existing_file.exists()

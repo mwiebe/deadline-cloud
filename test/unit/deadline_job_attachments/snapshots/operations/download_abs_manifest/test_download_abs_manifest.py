@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest basic functionality.
+Tests for download_abs_manifest basic functionality.
 
 These tests cover:
 - Basic file downloading from FileSystemDataCache and S3DataCache
@@ -22,7 +22,7 @@ import pytest
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_upload_abs_manifest,
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     subtree_manifest,
     FileSystemDataCache,
@@ -160,8 +160,8 @@ def _compare_directory_trees(
     return differences
 
 
-class TestDownloadManifestFileSystem:
-    """Tests for download_manifest with FileSystemDataCache."""
+class TestDownloadAbsManifestFileSystem:
+    """Tests for download_abs_manifest with FileSystemDataCache."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
         cache_root.mkdir(parents=True, exist_ok=True)
@@ -181,7 +181,7 @@ class TestDownloadManifestFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
         assert result.statistics.processed_files == 0
         assert result.statistics.total_bytes == 0
@@ -204,7 +204,7 @@ class TestDownloadManifestFileSystem:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        result = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        result = download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         assert result.statistics.processed_files == 1
         differences = _compare_directory_trees(source_dir, download_dir)
@@ -231,7 +231,7 @@ class TestDownloadManifestFileSystem:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        result = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        result = download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         assert result.statistics.processed_files == 3
         differences = _compare_directory_trees(source_dir, download_dir)
@@ -257,7 +257,7 @@ class TestDownloadManifestFileSystem:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
@@ -288,14 +288,14 @@ class TestDownloadManifestFileSystem:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 
 
-class TestDownloadManifestS3:
-    """Tests for download_manifest with S3DataCache."""
+class TestDownloadAbsManifestS3:
+    """Tests for download_abs_manifest with S3DataCache."""
 
     @pytest.fixture(autouse=True)
     def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
@@ -327,7 +327,7 @@ class TestDownloadManifestS3:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        result = download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        result = download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         assert result.statistics.processed_files == 1
         differences = _compare_directory_trees(source_dir, download_dir)
@@ -355,7 +355,7 @@ class TestDownloadManifestS3:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"

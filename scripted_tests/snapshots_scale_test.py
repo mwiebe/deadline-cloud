@@ -65,7 +65,7 @@ from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_abs_manifest,
     hash_upload_abs_manifest,
-    download_manifest,
+    download_abs_manifest,
     compute_diff_manifest,
     subtree_manifest,
     join_manifest,
@@ -945,13 +945,13 @@ def test_download_filesystem(
     )
 
     print_fn(
-        f"  Starting download_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
+        f"  Starting download_abs_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
 
     with HashCache(str(hash_cache_dir)) as hash_cache:
         start = time.perf_counter()
         with profile_operation("download", config.cprofile_operation, print_fn):
-            result = download_manifest(
+            result = download_abs_manifest(
                 manifest=download_manifest_abs,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -1034,7 +1034,7 @@ def test_download_s3(
     )
 
     print_fn(
-        f"  Starting download_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
+        f"  Starting download_abs_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
     import threading
     import sys
@@ -1064,7 +1064,7 @@ def test_download_s3(
     try:
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
-            result = download_manifest(
+            result = download_abs_manifest(
                 manifest=download_manifest_abs,
                 data_cache=data_cache,
                 hash_cache=hash_cache,

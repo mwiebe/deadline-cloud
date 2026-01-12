@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest file conflict resolution options.
+Tests for download_abs_manifest file conflict resolution options.
 
 These tests cover:
 - SKIP: Skip download if file already exists
@@ -17,7 +17,7 @@ from typing import cast
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_upload_abs_manifest,
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     subtree_manifest,
     FileSystemDataCache,
@@ -31,7 +31,7 @@ def _to_abs_snapshot(manifest: object) -> AbsSnapshot:
     return cast(AbsSnapshot, manifest)
 
 
-class TestDownloadManifestFileConflictResolution:
+class TestDownloadAbsManifestFileConflictResolution:
     """Tests for file conflict resolution options."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -57,10 +57,10 @@ class TestDownloadManifestFileConflictResolution:
         upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        result = download_manifest(
-            manifest=download_manifest_obj,
+        result = download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.SKIP,
         )
@@ -87,10 +87,10 @@ class TestDownloadManifestFileConflictResolution:
         upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        result = download_manifest(
-            manifest=download_manifest_obj,
+        result = download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.OVERWRITE,
         )
@@ -117,10 +117,10 @@ class TestDownloadManifestFileConflictResolution:
         upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
-        download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
+        download_abs_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        result = download_manifest(
-            manifest=download_manifest_obj,
+        result = download_abs_manifest(
+            manifest=download_abs_manifest_obj,
             data_cache=data_cache,
             file_conflict_resolution=FileConflictResolution.CREATE_COPY,
         )

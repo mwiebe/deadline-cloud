@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for download_manifest atomic file write behavior.
+Tests for download_abs_manifest atomic file write behavior.
 
 These tests cover:
 - No temporary files left after successful download
@@ -20,7 +20,7 @@ import pytest
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_upload_abs_manifest,
-    download_manifest,
+    download_abs_manifest,
     join_manifest,
     subtree_manifest,
     FileSystemDataCache,
@@ -33,7 +33,7 @@ def _to_abs_snapshot(manifest: object) -> AbsSnapshot:
     return cast(AbsSnapshot, manifest)
 
 
-class TestDownloadManifestAtomicWrites:
+class TestDownloadAbsManifestAtomicWrites:
     """Tests for atomic file write behavior."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
@@ -58,7 +58,7 @@ class TestDownloadManifestAtomicWrites:
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
-        download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+        download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         temp_files = list(download_dir.rglob("*.tmp*"))
         assert temp_files == [], f"Temp files left behind: {temp_files}"
@@ -87,11 +87,11 @@ class TestDownloadManifestAtomicWrites:
         original_replace = os.replace
 
         with patch(
-            "deadline.job_attachments._snapshots._operations._download_manifest.os.replace"
+            "deadline.job_attachments._snapshots._operations._download_abs_manifest.os.replace"
         ) as mock_replace:
             mock_replace.side_effect = original_replace
 
-            download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+            download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
             # Verify os.replace was called exactly once for our single file
             assert mock_replace.call_count == 1
@@ -120,12 +120,12 @@ class TestDownloadManifestAtomicWrites:
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         with patch(
-            "deadline.job_attachments._snapshots._operations._download_manifest.os.replace"
+            "deadline.job_attachments._snapshots._operations._download_abs_manifest.os.replace"
         ) as mock_replace:
             mock_replace.side_effect = OSError("Simulated error")
 
             with pytest.raises(OSError, match="Simulated error"):
-                download_manifest(manifest=download_manifest_obj, data_cache=data_cache)
+                download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
         # Verify no temp files are left behind after error
         temp_files = list(download_dir.rglob("*.tmp*"))
