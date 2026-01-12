@@ -96,7 +96,7 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
             raise ValueError(
                 f"HASH_UPLOAD operation requires absolute paths. "
                 f"Found relative path: '{entry.path}'. "
-                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+                f"Use collect_abs_snapshot() or join_manifest() to create a manifest with absolute paths."
             )
 
     for d in manifest.dirs:
@@ -104,7 +104,7 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
             raise ValueError(
                 f"HASH_UPLOAD operation requires absolute paths. "
                 f"Found relative directory path: '{d.path}'. "
-                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+                f"Use collect_abs_snapshot() or join_manifest() to create a manifest with absolute paths."
             )
 
 
@@ -1121,7 +1121,7 @@ def hash_upload_manifest(
 
     Args:
         manifest: Manifest with absolute paths and hash=None for unhashed files
-            (from collect_manifest). Can be AbsSnapshot or AbsSnapshotDiff.
+            (from collect_abs_snapshot). Can be AbsSnapshot or AbsSnapshotDiff.
         data_cache: Content-addressable data cache destination. Either S3DataCache
             for cloud storage or FileSystemDataCache for local/network storage.
         hash_cache: Optional hash cache for efficiency
@@ -1158,7 +1158,7 @@ def hash_upload_manifest(
           chunked hashing. max_memory_bytes must be >= chunk size.
 
     Note:
-        - Input manifest must have absolute paths (from collect_manifest)
+        - Input manifest must have absolute paths (from collect_abs_snapshot)
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
         - Deleted entries are unchanged (they mark deletions, no hash needed)

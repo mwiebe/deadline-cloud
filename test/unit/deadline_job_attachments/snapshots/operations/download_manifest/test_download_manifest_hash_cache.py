@@ -16,7 +16,7 @@ from typing import cast
 from unittest.mock import patch
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     download_manifest,
     join_manifest,
@@ -53,7 +53,7 @@ class TestDownloadManifestHashCacheSkip:
         (source_dir / "file2.txt").write_text("Content 2")
 
         # Collect and upload
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -99,7 +99,7 @@ class TestDownloadManifestHashCacheSkip:
         (source_dir / "test.txt").write_text("Test content")
 
         # Collect and upload
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -144,7 +144,7 @@ class TestDownloadManifestHashCacheSkip:
         (source_dir / "test.txt").write_text("Original content")
 
         # Collect and upload
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -192,7 +192,7 @@ class TestDownloadManifestHashCacheSkip:
         (source_dir / "test.txt").write_text("Test content")
 
         # Collect and upload
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -238,7 +238,7 @@ class TestDownloadManifestHashCacheSkip:
         (source_dir / "test.txt").write_text("Test content")
 
         # Collect and upload
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 

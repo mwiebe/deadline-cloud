@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 from deadline.job_attachments._snapshots import (
     hash_manifest,
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
     AbsSnapshot,
     ManifestFilePath,
@@ -43,7 +43,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -67,7 +67,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -98,7 +98,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -128,7 +128,7 @@ class TestHashManifestWithCache:
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -159,7 +159,7 @@ class TestHashManifestWithCache:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,

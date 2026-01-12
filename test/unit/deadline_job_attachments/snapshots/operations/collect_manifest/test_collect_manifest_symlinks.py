@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest symlink handling.
+Tests for collect_abs_snapshot symlink handling.
 
 These tests cover:
 - Symlink chain handling with PRESERVE policy
@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
 )
 from deadline.job_attachments._snapshots import AbsSnapshot
@@ -35,7 +35,7 @@ class TestPreservePolicy:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -51,7 +51,7 @@ class TestPreservePolicy:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -69,7 +69,7 @@ class TestPreservePolicy:
         link = tmp_path / "link_dir"
         link.symlink_to(subdir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -100,7 +100,7 @@ class TestSymlinkChains:
         link2.symlink_to("link1.txt")
         link3.symlink_to("link2.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -122,7 +122,7 @@ class TestSymlinkChains:
         link1.symlink_to("target.txt")
         link2.symlink_to("link1.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -167,7 +167,7 @@ class TestSymlinkChains:
         else:
             link.symlink_to("../outside.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -189,7 +189,7 @@ class TestCollapsePolicy:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -213,7 +213,7 @@ class TestCollapsePolicy:
         link = tmp_path / "link_dir"
         link.symlink_to(subdir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -240,7 +240,7 @@ class TestCollapsePolicy:
         link1 = root / "link1"
         link1.symlink_to(subdir1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -261,7 +261,7 @@ class TestCollapsePolicy:
         link1.symlink_to(target)
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -290,7 +290,7 @@ class TestExcludePolicy:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
@@ -309,7 +309,7 @@ class TestExcludePolicy:
         link = tmp_path / "link_dir"
         link.symlink_to(subdir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
@@ -340,7 +340,7 @@ class TestTransitiveIncludeTargets:
         link = root / "link.txt"
         link.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -368,7 +368,7 @@ class TestTransitiveIncludeTargets:
         link = root / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -391,7 +391,7 @@ class TestTransitiveIncludeTargets:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -413,7 +413,7 @@ class TestSymlinkTargetIsDirectory:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -433,7 +433,7 @@ class TestSymlinkTargetIsDirectory:
         link = tmp_path / "link_dir"
         link.symlink_to(subdir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -457,7 +457,7 @@ class TestSymlinkInFilenames:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [link],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -474,7 +474,7 @@ class TestSymlinkInFilenames:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [link],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -492,7 +492,7 @@ class TestSymlinkInFilenames:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [],
             optional_filenames=[link],

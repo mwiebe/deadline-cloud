@@ -14,7 +14,7 @@ from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
     hash_manifest,
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
     AbsSnapshotDiff,
     AbsSnapshot,
@@ -35,7 +35,7 @@ class TestSymlinkPassthrough:
 
         link.symlink_to("target.txt")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -203,7 +203,7 @@ class TestDirectoryEntryHandling:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,

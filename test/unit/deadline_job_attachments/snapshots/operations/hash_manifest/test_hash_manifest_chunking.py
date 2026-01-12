@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 from deadline.job_attachments._snapshots import (
     hash_manifest,
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
     DEFAULT_FILE_CHUNK_SIZE,
     AbsSnapshot,
@@ -224,7 +224,7 @@ class TestLargeFileChunking:
         test_file = tmp_path / "small.txt"
         test_file.write_text("small content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,

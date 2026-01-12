@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest duplicate path handling.
+Tests for collect_abs_snapshot duplicate path handling.
 
 These tests cover:
 - Overlapping directories
@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
 )
 
@@ -32,7 +32,7 @@ class TestOverlappingDirectories:
         (child / "child_file.txt").write_text("child content")
 
         # Pass both parent and child directories
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [parent, child],
             [],
         )
@@ -54,7 +54,7 @@ class TestOverlappingDirectories:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir, subdir],
             [],
         )
@@ -77,7 +77,7 @@ class TestOverlappingDirectories:
         (dir1 / "file1.txt").write_text("content1")
         (dir2 / "file2.txt").write_text("content2")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [dir1, dir2],
             [],
         )
@@ -98,7 +98,7 @@ class TestDirectoryAndFilenameOverlap:
         file_path = subdir / "file.txt"
         file_path.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [file_path],
         )
@@ -113,7 +113,7 @@ class TestDirectoryAndFilenameOverlap:
         file_path = tmp_path / "file.txt"
         file_path.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [file_path],
             optional_filenames=[file_path],
@@ -131,7 +131,7 @@ class TestDirectoryAndFilenameOverlap:
         file_path = subdir / "file.txt"
         file_path.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [],
             optional_filenames=[file_path],
@@ -153,7 +153,7 @@ class TestSymlinkDeduplication:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -174,7 +174,7 @@ class TestSymlinkDeduplication:
         link2 = tmp_path / "link2.txt"
         link2.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -194,7 +194,7 @@ class TestSymlinkDeduplication:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [link],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -218,7 +218,7 @@ class TestDirectoryEntryDeduplication:
         (grandchild / "file.txt").write_text("content")
 
         # Walk from multiple starting points
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [parent, child],
             [],
         )
@@ -236,7 +236,7 @@ class TestDirectoryEntryDeduplication:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [],
         )
@@ -258,7 +258,7 @@ class TestTotalSizeDeduplication:
         file_path.write_text("12345")  # 5 bytes
 
         # Pass file in both directory and filenames
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [file_path],
         )
@@ -276,7 +276,7 @@ class TestTotalSizeDeduplication:
         file2.write_text("1234567890")  # 10 bytes
 
         # Pass file1 in both directory and filenames
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [file1],
         )
@@ -295,8 +295,8 @@ class TestCollectedPathsSet:
         for i in range(5):
             (subdir / f"file{i}.txt").write_text(f"content{i}")
 
-        manifest1 = collect_manifest([subdir], [])
-        manifest2 = collect_manifest([subdir], [])
+        manifest1 = collect_abs_snapshot([subdir], [])
+        manifest2 = collect_abs_snapshot([subdir], [])
 
         # Same files should be collected
         paths1 = {p.path for p in manifest1.files}
@@ -312,7 +312,7 @@ class TestCollectedPathsSet:
 
         # When file is in both filenames and directory, it should only appear once
         # The order of processing shouldn't matter for the final result
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [file_path],
         )

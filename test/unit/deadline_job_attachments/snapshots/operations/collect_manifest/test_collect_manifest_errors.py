@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest error handling and edge cases.
+Tests for collect_abs_snapshot error handling and edge cases.
 
 These tests cover:
 - Input validation (missing files, directories, invalid paths)
@@ -22,20 +22,20 @@ from unittest.mock import patch
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
 )
 
 
 class TestInputValidation:
-    """Tests for input validation in collect_manifest."""
+    """Tests for input validation in collect_abs_snapshot."""
 
     def test_raises_on_nonexistent_directory(self, tmp_path: Path) -> None:
         """Raises FileNotFoundError when directory doesn't exist."""
         nonexistent = tmp_path / "nonexistent"
 
         with pytest.raises(FileNotFoundError, match="Directory does not exist"):
-            collect_manifest(
+            collect_abs_snapshot(
                 [nonexistent],
                 [],
             )
@@ -46,7 +46,7 @@ class TestInputValidation:
         file_path.write_text("content")
 
         with pytest.raises(ValueError, match="Path is not a directory"):
-            collect_manifest(
+            collect_abs_snapshot(
                 [file_path],
                 [],
             )
@@ -56,7 +56,7 @@ class TestInputValidation:
         nonexistent = tmp_path / "nonexistent.txt"
 
         with pytest.raises(FileNotFoundError, match="File does not exist"):
-            collect_manifest(
+            collect_abs_snapshot(
                 [],
                 [nonexistent],
             )
@@ -67,14 +67,14 @@ class TestInputValidation:
         subdir.mkdir()
 
         with pytest.raises(ValueError, match="Path is not a file or symlink"):
-            collect_manifest(
+            collect_abs_snapshot(
                 [],
                 [subdir],
             )
 
     def test_empty_directories_and_filenames_returns_empty_manifest(self, tmp_path: Path) -> None:
         """Empty inputs return an empty manifest."""
-        manifest = collect_manifest([], [])
+        manifest = collect_abs_snapshot([], [])
 
         assert len(manifest.files) == 0
         assert len(manifest.dirs) == 0
@@ -91,7 +91,7 @@ class TestOptionalFilenames:
         file2 = tmp_path / "optional.txt"
         file2.write_text("optional")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [file1],
             optional_filenames=[file2],
@@ -107,7 +107,7 @@ class TestOptionalFilenames:
         file1.write_text("required")
         missing = tmp_path / "missing.txt"
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [file1],
             optional_filenames=[missing],
@@ -124,7 +124,7 @@ class TestOptionalFilenames:
         subdir = tmp_path / "subdir"
         subdir.mkdir()
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [file1],
             optional_filenames=[subdir],
@@ -141,7 +141,7 @@ class TestOptionalFilenames:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [],
             optional_filenames=[link],
@@ -161,7 +161,7 @@ class TestBrokenSymlinks:
         link = tmp_path / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -177,7 +177,7 @@ class TestBrokenSymlinks:
         link = tmp_path / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -194,7 +194,7 @@ class TestBrokenSymlinks:
         nonexistent = tmp_path / "nonexistent.txt"
         link.symlink_to(nonexistent)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -210,7 +210,7 @@ class TestBrokenSymlinks:
         link = tmp_path / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ALL,
@@ -234,7 +234,7 @@ class TestPermissionErrors:
         unreadable.chmod(0o000)
 
         try:
-            manifest = collect_manifest(
+            manifest = collect_abs_snapshot(
                 [tmp_path],
                 [],
             )
@@ -261,7 +261,7 @@ class TestPermissionErrors:
             # The behavior depends on implementation - may raise or skip
             # This test documents whichever behavior exists
             try:
-                manifest = collect_manifest(
+                manifest = collect_abs_snapshot(
                     [tmp_path],
                     [],
                 )
@@ -295,7 +295,7 @@ class TestOSErrorHandling:
             # The implementation should handle this gracefully
             # Note: This may or may not be caught depending on where stat is called
             try:
-                collect_manifest(
+                collect_abs_snapshot(
                     [tmp_path],
                     [],
                 )
@@ -320,7 +320,7 @@ class TestOSErrorHandling:
 
         with patch("os.readlink", mock_readlink):
             try:
-                collect_manifest(
+                collect_abs_snapshot(
                     [tmp_path],
                     [],
                     symlink_policy=SymlinkPolicy.PRESERVE,
@@ -350,7 +350,7 @@ class TestFilesDisappearDuringCollection:
 
         with patch.object(Path, "stat", mock_stat):
             with pytest.raises(OSError, match="File disappeared during collection"):
-                collect_manifest(
+                collect_abs_snapshot(
                     [tmp_path],
                     [],
                 )
@@ -361,7 +361,7 @@ class TestWindowsLongPathPrefix:
 
     def test_longpath_prefix_removal_mocked(self, tmp_path: Path) -> None:
         """Test that Windows long path prefix is handled (mocked for cross-platform)."""
-        from deadline.job_attachments._snapshots._operations._collect_manifest import (
+        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot import (
             _remove_longpath_prefix,
         )
 
@@ -375,7 +375,7 @@ class TestWindowsLongPathPrefix:
 
     def test_normal_path_unchanged(self, tmp_path: Path) -> None:
         """Normal paths are unchanged by _remove_longpath_prefix."""
-        from deadline.job_attachments._snapshots._operations._collect_manifest import (
+        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot import (
             _remove_longpath_prefix,
         )
 

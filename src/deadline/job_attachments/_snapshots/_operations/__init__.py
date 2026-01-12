@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-from ._collect_manifest import collect_manifest
+from ._collect_abs_snapshot import collect_abs_snapshot
 from ._hash_manifest import hash_manifest
 from ._hash_upload_manifest import hash_upload_manifest, UploadResult
 from ._download_manifest import download_manifest, DownloadResult
@@ -12,7 +12,7 @@ from ._partition_manifest import partition_manifest
 from ._join_manifest import join_manifest
 
 __all__ = [
-    "collect_manifest",
+    "collect_abs_snapshot",
     "hash_manifest",
     "hash_upload_manifest",
     "UploadResult",

@@ -18,7 +18,7 @@ import boto3
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     FileSystemDataCache,
     S3DataCache,
@@ -56,7 +56,7 @@ class TestSymlinkPassthroughFileSystem:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -121,7 +121,7 @@ class TestSymlinkPassthroughS3:
         link = tmp_path / "link.txt"
         link.symlink_to(target)
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -269,7 +269,7 @@ class TestDirectoryEntryHandlingS3:
         subdir.mkdir()
         (subdir / "file.txt").write_text("Content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,

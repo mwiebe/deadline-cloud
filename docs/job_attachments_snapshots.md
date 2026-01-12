@@ -217,7 +217,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 
 | Module | Operation | Description |
 |--------|-----------|-------------|
-| `_collect_manifest.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
+| `_collect_abs_snapshot.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
 | `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_download_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
@@ -320,14 +320,14 @@ class FileSystemDataCache(ContentAddressedDataCache):
 
 ## Operation Details
 
-### 1. COLLECT: `collect_manifest()`
+### 1. COLLECT: `collect_abs_snapshot()`
 
-**Location:** `_collect_manifest.py`
+**Location:** `_collect_abs_snapshot.py`
 
 Collects provided lists of paths into a manifest with absolute paths, WITHOUT computing hashes:
 
 ```python
-def collect_manifest(
+def collect_abs_snapshot(
     directories: List[Path | str],
     filenames: List[Path | str],
     *,
@@ -347,7 +347,7 @@ def collect_manifest(
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
 | `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = use `DEFAULT_FILE_CHUNK_SIZE` (256MB). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
 
-**Symlink Policy Options (for `collect_manifest`):**
+**Symlink Policy Options (for `collect_abs_snapshot`):**
 
 | Policy | Description |
 |--------|-------------|
@@ -380,12 +380,12 @@ def collect_manifest(
 
 ```python
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
 )
 
 # Collect files from different locations using absolute paths (default: COLLAPSE_ESCAPING)
-manifest = collect_manifest(
+manifest = collect_abs_snapshot(
     ["/data/shared/models", "/data/shared/textures"],  # directories (positional)
     ["/home/user/project/scene.blend"],                 # filenames (positional)
     optional_filenames=["/home/user/project/cache.bin"],  # Included if exists
@@ -400,13 +400,13 @@ for entry in manifest.files[:2]:
 
 ```python
 from deadline.job_attachments._snapshots import (
-    collect_manifest
+    collect_abs_snapshot
 )
 
 # Collect with COLLAPSE_ESCAPING (default behavior)
 # Symlinks pointing within the collected paths are preserved
 # Symlinks pointing outside are collapsed to files/directories
-manifest = collect_manifest(
+manifest = collect_abs_snapshot(
     ["/projects/my_scene"],  # directories
     [],                       # filenames (empty list)
 )
@@ -427,7 +427,7 @@ for entry in manifest.files:
 
 **Location:** `_hash_manifest.py`
 
-Fills in hashes for a manifest that was created by `collect_manifest()` or `compute_diff_manifest()`. The input manifest must have absolute paths.
+Fills in hashes for a manifest that was created by `collect_abs_snapshot()` or `compute_diff_manifest()`. The input manifest must have absolute paths.
 
 ```python
 def hash_manifest(
@@ -442,7 +442,7 @@ def hash_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
+| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
@@ -502,13 +502,13 @@ The `parentManifestHash` field is preserved from the input manifest. The manifes
 
 ```python
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_manifest,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
 
 # Collect the directory tree with absolute paths
-abs_manifest = collect_manifest(
+abs_manifest = collect_abs_snapshot(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
 )
@@ -586,7 +586,7 @@ def hash_upload_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_manifest`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
+| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
 | `data_cache` | Content-addressable data cache destination. Either `S3DataCache` for cloud storage or `FileSystemDataCache` for local/network storage. |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
@@ -826,7 +826,7 @@ The `parentManifestHash` and `fileChunkSizeBytes` fields are preserved from the 
 ```python
 import boto3
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     S3DataCache,
 )
@@ -834,7 +834,7 @@ from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
 
 # Collect the directory tree with absolute paths
-abs_manifest = collect_manifest(
+abs_manifest = collect_abs_snapshot(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
 )
@@ -883,14 +883,14 @@ Output:
 ```python
 from pathlib import Path
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     FileSystemDataCache,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
 
 # Collect the directory tree with absolute paths
-abs_manifest = collect_manifest(
+abs_manifest = collect_abs_snapshot(
     ["/projects/my_scene"],  # directories
     [],                       # filenames
 )
@@ -1018,7 +1018,7 @@ result = download_manifest(manifest=cloud_manifest, data_cache=s3_cache)
 local_baseline = result.manifest
 
 # Later, detect actual user changes reliably
-current_state = collect_manifest([download_dir], [])
+current_state = collect_abs_snapshot([download_dir], [])
 current_hashed = hash_manifest(current_state)
 changes = compute_diff_manifest(parent=local_baseline, current=current_hashed)
 # 'changes' now correctly reflects only real user modifications,
@@ -1394,7 +1394,7 @@ DOWNLOAD is the inverse of HASH_UPLOAD:
 ```python
 # Round-trip example:
 # 1. Collect and upload
-abs_manifest = collect_manifest(["/projects/scene"], [])
+abs_manifest = collect_abs_snapshot(["/projects/scene"], [])
 upload_result = hash_upload_manifest(abs_manifest, s3_cache)
 
 # 2. Save manifest
@@ -2171,7 +2171,7 @@ Directory ──[collect]──► AbsSnapshot ──[hash]──► Hashed ─�
 
 ```python
 # Step 1: Collect directory tree with absolute paths
-abs_manifest = collect_manifest([root], [], version=version)
+abs_manifest = collect_abs_snapshot([root], [], version=version)
 
 # Step 2: Hash all files (requires absolute paths)
 hashed = hash_manifest(abs_manifest, hash_cache)
@@ -2208,7 +2208,7 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect current directory with absolute paths, then extract as relative
-abs_manifest = collect_manifest([root], [], version=version)
+abs_manifest = collect_abs_snapshot([root], [], version=version)
 current_unhashed = subtree_manifest(abs_manifest, root)
 
 # Filter BOTH with same patterns
@@ -2247,7 +2247,7 @@ with open(parent_path) as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Collect and hash current directory (hash before subtree!)
-abs_manifest = collect_manifest([root], [], version=version)
+abs_manifest = collect_abs_snapshot([root], [], version=version)
 hashed = hash_manifest(abs_manifest, hash_cache, force_rehash=True)
 current_rel = subtree_manifest(hashed, root)
 

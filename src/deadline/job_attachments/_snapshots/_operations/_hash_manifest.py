@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Module for filling in hashes for manifest objects that were created by collect_manifest
+Module for filling in hashes for manifest objects that were created by collect_abs_snapshot
 or compute_diff_manifest.
 
 This module implements the HASH operation from the composable manifest operations design:
@@ -49,13 +49,13 @@ def hash_manifest(
     """
     Fill in hashes for a manifest structure with absolute paths.
 
-    Given a manifest with hash=None for file entries (from collect_manifest or
+    Given a manifest with hash=None for file entries (from collect_abs_snapshot or
     compute_diff_manifest), computes and fills in the actual hashes.
 
     Args:
         manifest: Manifest with absolute paths and hash=None for unhashed files.
             Can be either:
-            - AbsSnapshot (from collect_manifest)
+            - AbsSnapshot (from collect_abs_snapshot)
             - AbsSnapshotDiff (from compute_diff_manifest with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
@@ -91,7 +91,7 @@ def hash_manifest(
           use chunked hashing with chunkhashes field
 
     Note:
-        - Input manifest must have absolute paths (from collect_manifest or join_manifest)
+        - Input manifest must have absolute paths (from collect_abs_snapshot or join_manifest)
         - Symlink entries are unchanged (they have symlink_target, not hash)
         - Directory entries are unchanged (they have no hash)
         - Deleted entries are unchanged (they mark deletions, no hash needed)
@@ -242,7 +242,7 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
             raise ValueError(
                 f"HASH operation requires absolute paths. "
                 f"Found relative path: '{entry.path}'. "
-                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+                f"Use collect_abs_snapshot() or join_manifest() to create a manifest with absolute paths."
             )
 
     for d in manifest.dirs:
@@ -250,7 +250,7 @@ def _validate_absolute_paths(manifest: AbsManifest) -> None:
             raise ValueError(
                 f"HASH operation requires absolute paths. "
                 f"Found relative directory path: '{d.path}'. "
-                f"Use collect_manifest() or join_manifest() to create a manifest with absolute paths."
+                f"Use collect_abs_snapshot() or join_manifest() to create a manifest with absolute paths."
             )
 
 

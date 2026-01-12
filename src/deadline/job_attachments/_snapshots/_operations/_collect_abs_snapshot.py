@@ -38,7 +38,7 @@ from .._manifest import (
 logger = logging.getLogger(__name__)
 
 
-def collect_manifest(
+def collect_abs_snapshot(
     directories: List[Path | str],
     filenames: List[Path | str],
     *,
@@ -120,7 +120,7 @@ def collect_manifest(
             if abs_path.exists() and (abs_path.is_file() or abs_path.is_symlink()):
                 validated_optional.append(abs_path)
 
-    return _collect_manifest_impl(
+    return _collect_abs_snapshot_impl(
         symlink_policy=symlink_policy,
         filenames=validated_filenames,
         optional_filenames=validated_optional,
@@ -134,7 +134,7 @@ def collect_manifest(
 # =============================================================================
 
 
-def _collect_manifest_impl(
+def _collect_abs_snapshot_impl(
     *,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     filenames: List[Path],

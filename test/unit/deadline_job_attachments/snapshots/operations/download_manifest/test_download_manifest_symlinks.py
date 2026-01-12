@@ -17,7 +17,7 @@ from typing import cast
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     download_manifest,
     join_manifest,
@@ -54,7 +54,7 @@ class TestDownloadManifestSymlinks:
         link_file = source_dir / "link.txt"
         link_file.symlink_to(target_file)
 
-        collected = collect_manifest([source_dir], [], symlink_policy=SymlinkPolicy.PRESERVE)
+        collected = collect_abs_snapshot([source_dir], [], symlink_policy=SymlinkPolicy.PRESERVE)
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -83,7 +83,7 @@ class TestDownloadManifestSymlinks:
         link_file = source_dir / "link.txt"
         link_file.symlink_to(target_file)
 
-        collected = collect_manifest([source_dir], [], symlink_policy=SymlinkPolicy.PRESERVE)
+        collected = collect_abs_snapshot([source_dir], [], symlink_policy=SymlinkPolicy.PRESERVE)
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 

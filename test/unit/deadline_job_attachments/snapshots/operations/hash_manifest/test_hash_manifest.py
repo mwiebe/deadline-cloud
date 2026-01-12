@@ -6,7 +6,7 @@ Tests for hash_manifest core functionality.
 These tests cover:
 - Basic file hashing
 - Metadata preservation (size, mtime, runnable)
-- End-to-end with collect_manifest
+- End-to-end with collect_abs_snapshot
 - Manifest type preservation (snapshot vs diff)
 """
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
     hash_manifest,
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
     AbsSnapshotDiff,
     AbsSnapshot,
@@ -39,7 +39,7 @@ class TestHashManifestBasic:
         test_file = tmp_path / "test.txt"
         test_file.write_text("hello world")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -58,7 +58,7 @@ class TestHashManifestBasic:
         test_file = tmp_path / "test.txt"
         test_file.write_text("test content for hashing")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -73,7 +73,7 @@ class TestHashManifestBasic:
         (tmp_path / "a.txt").write_text("aaa")
         (tmp_path / "b.txt").write_text("bbbbb")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -91,7 +91,7 @@ class TestHashManifestBasic:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -107,7 +107,7 @@ class TestHashManifestBasic:
         (tmp_path / "a.txt").write_text("aaa")  # 3 bytes
         (tmp_path / "b.txt").write_text("bbbbb")  # 5 bytes
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -120,7 +120,7 @@ class TestHashManifestBasic:
         """Hash algorithm is preserved."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -136,7 +136,7 @@ class TestHashManifestBasic:
         if os.name != "nt":
             test_file.chmod(0o755)
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -149,7 +149,7 @@ class TestHashManifestBasic:
         """Hashing AbsSnapshot returns AbsSnapshot."""
         (tmp_path / "test.txt").write_text("test")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -360,7 +360,7 @@ class TestManifestTypePreservation:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,

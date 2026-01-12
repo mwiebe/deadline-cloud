@@ -16,7 +16,7 @@ from typing import Any, Dict
 from unittest.mock import MagicMock
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_manifest,
     hash_upload_manifest,
 )
@@ -35,13 +35,13 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 
 
 class TestCollectManifestFileChunkSizeBytes:
-    """Tests for file_chunk_size_bytes parameter in collect_manifest."""
+    """Tests for file_chunk_size_bytes parameter in collect_abs_snapshot."""
 
     def test_default_chunk_size_when_not_specified(self, tmp_path: Path) -> None:
         """When file_chunk_size_bytes is not specified, uses DEFAULT_FILE_CHUNK_SIZE (256MB)."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             directories=[tmp_path],
             filenames=[],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -55,7 +55,7 @@ class TestCollectManifestFileChunkSizeBytes:
         (tmp_path / "file.txt").write_text("content")
         custom_chunk_size = 1024 * 1024  # 1MB
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=custom_chunk_size,
@@ -68,7 +68,7 @@ class TestCollectManifestFileChunkSizeBytes:
         """When file_chunk_size_bytes is WHOLE_FILE_CHUNK_SIZE, files are hashed as a whole."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
@@ -361,12 +361,12 @@ class TestEndToEndFileChunkSizeBytes:
         return FileSystemDataCache(root_path=cache_root)
 
     def test_collect_then_hash_preserves_chunk_size(self, tmp_path: Path) -> None:
-        """Chunk size flows from collect_manifest through hash_manifest."""
+        """Chunk size flows from collect_abs_snapshot through hash_manifest."""
         (tmp_path / "file.txt").write_text("content")
         custom_chunk_size = 1024 * 1024  # 1MB
 
         # Collect with custom chunk size
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=custom_chunk_size,
@@ -382,13 +382,13 @@ class TestEndToEndFileChunkSizeBytes:
         assert hashed.fileChunkSizeBytes == custom_chunk_size
 
     def test_collect_then_hash_upload_preserves_chunk_size(self, tmp_path: Path) -> None:
-        """Chunk size flows from collect_manifest through hash_upload_manifest."""
+        """Chunk size flows from collect_abs_snapshot through hash_upload_manifest."""
         cache_root = tmp_path / "cache"
         (tmp_path / "file.txt").write_text("content")
         custom_chunk_size = 1024 * 1024  # 1MB
 
         # Collect with custom chunk size
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=custom_chunk_size,
@@ -413,7 +413,7 @@ class TestEndToEndFileChunkSizeBytes:
         hash_chunk_size = 1024 * 1024  # 1MB
 
         # Collect with one chunk size
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             directories=[tmp_path],
             filenames=[],
             file_chunk_size_bytes=collect_chunk_size,

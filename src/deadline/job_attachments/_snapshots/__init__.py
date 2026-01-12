@@ -27,7 +27,7 @@ from ._content_addressed_data_cache import (
     FileSystemDataCache,
 )
 from ._operations import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_manifest,
     hash_upload_manifest,
     UploadResult,
@@ -65,7 +65,7 @@ __all__ = [
     "S3DataCache",
     "FileSystemDataCache",
     # Operations
-    "collect_manifest",
+    "collect_abs_snapshot",
     "hash_manifest",
     "hash_upload_manifest",
     "UploadResult",

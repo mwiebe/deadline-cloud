@@ -19,7 +19,7 @@ import boto3
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     FileSystemDataCache,
     S3DataCache,
@@ -314,7 +314,7 @@ class TestContentAddressableStorageS3:
         file2 = tmp_path / "file2.txt"
         file2.write_text("Same content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,

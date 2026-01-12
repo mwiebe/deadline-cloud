@@ -62,7 +62,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 # Import snapshots library
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_manifest,
     hash_upload_manifest,
     download_manifest,
@@ -638,7 +638,7 @@ def test_collect(
 
     start = time.perf_counter()
     with profile_operation("collect", config.cprofile_operation, print_fn):
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             directories=[source_root],
             filenames=[],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,

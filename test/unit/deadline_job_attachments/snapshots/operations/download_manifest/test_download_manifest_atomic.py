@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     download_manifest,
     join_manifest,
@@ -51,7 +51,7 @@ class TestDownloadManifestAtomicWrites:
         (source_dir / "file1.txt").write_text("Content 1")
         (source_dir / "file2.txt").write_text("Content 2")
 
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -73,7 +73,7 @@ class TestDownloadManifestAtomicWrites:
 
         (source_dir / "test.txt").write_text("Test content")
 
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -112,7 +112,7 @@ class TestDownloadManifestAtomicWrites:
 
         (source_dir / "test.txt").write_text("Test content")
 
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 

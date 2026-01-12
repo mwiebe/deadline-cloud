@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest EXCLUDE_ESCAPING symlink policy.
+Tests for collect_abs_snapshot EXCLUDE_ESCAPING symlink policy.
 
 These tests cover:
 - Non-escaping symlinks (preserved)
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from deadline.job_attachments._snapshots import collect_manifest, SymlinkPolicy
+from deadline.job_attachments._snapshots import collect_abs_snapshot, SymlinkPolicy
 
 
 class TestExcludeEscapingBasics:
@@ -32,7 +32,7 @@ class TestExcludeEscapingBasics:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -57,7 +57,7 @@ class TestExcludeEscapingBasics:
         link = root / "link.txt"
         link.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -82,7 +82,7 @@ class TestExcludeEscapingBasics:
         link_dir = root / "link_dir"
         link_dir.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -107,7 +107,7 @@ class TestExcludeEscapingBasics:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("nested")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -135,7 +135,7 @@ class TestExcludeEscapingMixed:
         link_outside = root / "link_outside.txt"
         link_outside.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -164,7 +164,7 @@ class TestExcludeEscapingMixed:
         link_to_dir1 = dir2 / "link_to_dir1"
         link_to_dir1.symlink_to(dir1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [dir1, dir2],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -191,7 +191,7 @@ class TestExcludeEscapingChains:
         link2 = root / "link2.txt"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -219,7 +219,7 @@ class TestExcludeEscapingChains:
         link2 = root / "link2"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -244,7 +244,7 @@ class TestExcludeEscapingChains:
         link2 = root / "link2.txt"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -271,7 +271,7 @@ class TestExcludeEscapingChains:
         link2 = root / "link2"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -300,7 +300,7 @@ class TestExcludeEscapingChains:
         link2 = root / "link2.txt"
         link2.symlink_to(outside_link)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -330,7 +330,7 @@ class TestExcludeEscapingChains:
         link2 = root / "link2"
         link2.symlink_to(outside_link)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -363,7 +363,7 @@ class TestExcludeEscapingChains:
         link1 = root / "link1.txt"
         link1.symlink_to("link2.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -389,7 +389,7 @@ class TestExcludeEscapingEdgeCases:
         link = root / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -406,7 +406,7 @@ class TestExcludeEscapingEdgeCases:
         link = root / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -430,7 +430,7 @@ class TestExcludeEscapingEdgeCases:
         link = root / "link_to_file"
         link.symlink_to(outside_file)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -471,7 +471,7 @@ class TestExcludeEscapingEdgeCases:
         else:
             link.symlink_to("../outside.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -497,7 +497,7 @@ class TestExcludeEscapingVsCollapseEscaping:
         link.symlink_to(outside)
 
         # EXCLUDE_ESCAPING: symlink is excluded
-        manifest_exclude = collect_manifest(
+        manifest_exclude = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -506,7 +506,7 @@ class TestExcludeEscapingVsCollapseEscaping:
         assert link.as_posix() not in paths_exclude
 
         # COLLAPSE_ESCAPING: symlink is collapsed to file
-        manifest_collapse = collect_manifest(
+        manifest_collapse = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -528,7 +528,7 @@ class TestExcludeEscapingVsCollapseEscaping:
         link_dir.symlink_to(outside_dir)
 
         # EXCLUDE_ESCAPING: symlink dir is excluded
-        manifest_exclude = collect_manifest(
+        manifest_exclude = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -540,7 +540,7 @@ class TestExcludeEscapingVsCollapseEscaping:
         assert f"{link_dir.as_posix()}/file.txt" not in paths_exclude
 
         # COLLAPSE_ESCAPING: symlink dir is collapsed with contents inlined
-        manifest_collapse = collect_manifest(
+        manifest_collapse = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -560,7 +560,7 @@ class TestExcludeEscapingVsCollapseEscaping:
         link.symlink_to("target.txt")
 
         # EXCLUDE_ESCAPING: non-escaping symlink preserved
-        manifest_exclude = collect_manifest(
+        manifest_exclude = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.EXCLUDE_ESCAPING,
@@ -570,7 +570,7 @@ class TestExcludeEscapingVsCollapseEscaping:
         assert paths_exclude[link.as_posix()].symlink_target == target.as_posix()
 
         # COLLAPSE_ESCAPING: non-escaping symlink preserved
-        manifest_collapse = collect_manifest(
+        manifest_collapse = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,

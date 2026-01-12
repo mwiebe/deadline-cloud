@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest COLLAPSE_ESCAPING symlink policy.
+Tests for collect_abs_snapshot COLLAPSE_ESCAPING symlink policy.
 
 These tests cover:
 - Non-escaping symlinks (preserved)
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from deadline.job_attachments._snapshots import collect_manifest, SymlinkPolicy
+from deadline.job_attachments._snapshots import collect_abs_snapshot, SymlinkPolicy
 
 
 class TestCollapseEscapingBasics:
@@ -32,7 +32,7 @@ class TestCollapseEscapingBasics:
         link = tmp_path / "link.txt"
         link.symlink_to("target.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -57,7 +57,7 @@ class TestCollapseEscapingBasics:
         link = root / "link.txt"
         link.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -85,7 +85,7 @@ class TestCollapseEscapingBasics:
         link_dir = root / "link_dir"
         link_dir.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -111,7 +111,7 @@ class TestCollapseEscapingBasics:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("nested")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -139,7 +139,7 @@ class TestCollapseEscapingMixed:
         link_outside = root / "link_outside.txt"
         link_outside.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -170,7 +170,7 @@ class TestCollapseEscapingMixed:
         link_to_dir1 = dir2 / "link_to_dir1"
         link_to_dir1.symlink_to(dir1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [dir1, dir2],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -197,7 +197,7 @@ class TestCollapseEscapingChains:
         link2 = root / "link2.txt"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -225,7 +225,7 @@ class TestCollapseEscapingChains:
         link2 = root / "link2"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -250,7 +250,7 @@ class TestCollapseEscapingChains:
         link2 = root / "link2.txt"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -279,7 +279,7 @@ class TestCollapseEscapingChains:
         link2 = root / "link2"
         link2.symlink_to(link1)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -307,7 +307,7 @@ class TestCollapseEscapingChains:
         link2 = root / "link2.txt"
         link2.symlink_to(outside_link)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -339,7 +339,7 @@ class TestCollapseEscapingChains:
         link2 = root / "link2"
         link2.symlink_to(outside_link)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -372,7 +372,7 @@ class TestCollapseEscapingChains:
         link1 = root / "link1.txt"
         link1.symlink_to("link2.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -399,7 +399,7 @@ class TestCollapseEscapingEdgeCases:
         link = root / "broken_link.txt"
         link.symlink_to(tmp_path / "nonexistent.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -417,7 +417,7 @@ class TestCollapseEscapingEdgeCases:
         link = root / "broken_dir_link"
         link.symlink_to(tmp_path / "nonexistent_dir")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -453,7 +453,7 @@ class TestCollapseEscapingEdgeCases:
         link_dir = root / "link_dir"
         link_dir.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -492,7 +492,7 @@ class TestCollapseEscapingEdgeCases:
         link_dir = root / "link_dir"
         link_dir.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -524,7 +524,7 @@ class TestCollapseEscapingEdgeCases:
         link = root / "link_to_file"
         link.symlink_to(outside_file)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -550,7 +550,7 @@ class TestCollapseEscapingEdgeCases:
         link_dir = root / "link_dir"
         link_dir.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
@@ -594,7 +594,7 @@ class TestCollapseEscapingEdgeCases:
         else:
             link.symlink_to("../outside.txt")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,

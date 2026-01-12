@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest TRANSITIVE_INCLUDE_TARGETS symlink policy.
+Tests for collect_abs_snapshot TRANSITIVE_INCLUDE_TARGETS symlink policy.
 
 These tests cover:
 - Transitive file targets
@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
 )
 
@@ -34,7 +34,7 @@ class TestTransitiveFileTargets:
         link = root / "link.txt"
         link.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -65,7 +65,7 @@ class TestTransitiveFileTargets:
         link2 = root / "link2.txt"
         link2.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -89,7 +89,7 @@ class TestTransitiveFileTargets:
         link = root / "link.txt"
         link.symlink_to(target)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -117,7 +117,7 @@ class TestTransitiveDirectoryTargets:
         link = root / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -148,7 +148,7 @@ class TestTransitiveDirectoryTargets:
         link = root / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -175,7 +175,7 @@ class TestTransitiveDirectoryTargets:
         link = root / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -210,7 +210,7 @@ class TestTransitiveSymlinksInTargets:
         link = root / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -250,7 +250,7 @@ class TestTransitiveSymlinksInTargets:
         link = root / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -282,7 +282,7 @@ class TestTransitiveBrokenTargets:
         nonexistent = tmp_path / "nonexistent.txt"
         link.symlink_to(nonexistent)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -306,7 +306,7 @@ class TestTransitiveBrokenTargets:
         nonexistent_dir = tmp_path / "nonexistent_dir"
         link.symlink_to(nonexistent_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -339,7 +339,7 @@ class TestTransitiveMultipleTargets:
         link2 = root / "link2.txt"
         link2.symlink_to(outside2)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -372,7 +372,7 @@ class TestTransitiveMultipleTargets:
         link = root / "link.txt"
         link.symlink_to(outside2)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -424,7 +424,7 @@ class TestTransitiveMultipleTargets:
         link = root / "link.txt"
         link.symlink_to(sym4)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [root],
             [],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -467,7 +467,7 @@ class TestTransitiveWithFilenames:
         link = tmp_path / "link.txt"
         link.symlink_to(outside)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [link],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,
@@ -490,7 +490,7 @@ class TestTransitiveWithFilenames:
         link = tmp_path / "link_dir"
         link.symlink_to(outside_dir)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [link],
             symlink_policy=SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS,

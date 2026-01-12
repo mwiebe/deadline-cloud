@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import cast
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     download_manifest,
     join_manifest,
@@ -52,7 +52,7 @@ class TestDownloadManifestFileConflictResolution:
         existing_file = download_dir / "test.txt"
         existing_file.write_text("Existing content")
 
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -82,7 +82,7 @@ class TestDownloadManifestFileConflictResolution:
         existing_file = download_dir / "test.txt"
         existing_file.write_text("Existing content")
 
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 
@@ -112,7 +112,7 @@ class TestDownloadManifestFileConflictResolution:
         existing_file = download_dir / "test.txt"
         existing_file.write_text("Existing content")
 
-        collected = collect_manifest([source_dir], [])
+        collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
         upload_result = hash_upload_manifest(collected, data_cache)
 

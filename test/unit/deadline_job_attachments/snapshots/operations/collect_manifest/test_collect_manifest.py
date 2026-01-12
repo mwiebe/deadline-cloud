@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for collect_manifest core functionality.
+Tests for collect_abs_snapshot core functionality.
 
 These tests cover:
 - Absolute path generation for files and directories
@@ -11,15 +11,15 @@ These tests cover:
 - File chunk size parameter
 
 For symlink-related tests, see:
-- test_collect_manifest_symlinks.py - Basic symlink policies
-- test_collect_manifest_collapse_escaping.py - COLLAPSE_ESCAPING policy
-- test_collect_manifest_transitive.py - TRANSITIVE_INCLUDE_TARGETS policy
+- test_collect_abs_snapshot_symlinks.py - Basic symlink policies
+- test_collect_abs_snapshot_collapse_escaping.py - COLLAPSE_ESCAPING policy
+- test_collect_abs_snapshot_transitive.py - TRANSITIVE_INCLUDE_TARGETS policy
 
 For error handling tests, see:
-- test_collect_manifest_errors.py
+- test_collect_abs_snapshot_errors.py
 
 For deduplication tests, see:
-- test_collect_manifest_deduplication.py
+- test_collect_abs_snapshot_deduplication.py
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     SymlinkPolicy,
 )
 from deadline.job_attachments._snapshots import (
@@ -41,13 +41,13 @@ from deadline.job_attachments._snapshots import (
 
 
 class TestCollectManifestAbsolutePaths:
-    """Tests for absolute path generation in collect_manifest."""
+    """Tests for absolute path generation in collect_abs_snapshot."""
 
     def test_absolute_paths(self, tmp_path: Path) -> None:
-        """When using collect_manifest, paths are absolute."""
+        """When using collect_abs_snapshot, paths are absolute."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -62,7 +62,7 @@ class TestCollectManifestAbsolutePaths:
         subdir.mkdir()
         (subdir / "nested.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -79,7 +79,7 @@ class TestCollectManifestAbsolutePaths:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -94,10 +94,10 @@ class TestCollectManifestAbsolutePaths:
         assert subdir.as_posix() in dir_paths
 
     def test_produces_absolute_paths(self, tmp_path: Path) -> None:
-        """collect_manifest produces absolute paths."""
+        """collect_abs_snapshot produces absolute paths."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -106,10 +106,10 @@ class TestCollectManifestAbsolutePaths:
         assert file_entries[0].path == (tmp_path / "file.txt").as_posix()
 
     def test_returns_abs_snapshot_manifest(self, tmp_path: Path) -> None:
-        """collect_manifest returns AbsSnapshot type."""
+        """collect_abs_snapshot returns AbsSnapshot type."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -126,7 +126,7 @@ class TestCollectManifestMetadata:
         content = "Hello, World!"
         file_path.write_text(content)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -141,7 +141,7 @@ class TestCollectManifestMetadata:
         stat_info = file_path.stat()
         expected_mtime = stat_info.st_mtime_ns // 1000
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -154,7 +154,7 @@ class TestCollectManifestMetadata:
         file_path = tmp_path / "file.txt"
         file_path.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -169,7 +169,7 @@ class TestCollectManifestMetadata:
         script.write_text("#!/bin/bash\necho hello")
         script.chmod(0o755)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -186,7 +186,7 @@ class TestCollectManifestMetadata:
         if os.name != "nt":
             file_path.chmod(0o644)
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -201,7 +201,7 @@ class TestCollectManifestMetadata:
         file1.write_text("12345")  # 5 bytes
         file2.write_text("1234567890")  # 10 bytes
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -212,7 +212,7 @@ class TestCollectManifestMetadata:
         """Hash algorithm is set to XXH128."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -230,7 +230,7 @@ class TestCollectManifestDirectoryHandling:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -247,7 +247,7 @@ class TestCollectManifestDirectoryHandling:
         level3.mkdir(parents=True)
         (level3 / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -267,7 +267,7 @@ class TestCollectManifestDirectoryHandling:
         (dir1 / "file1.txt").write_text("content1")
         (dir2 / "file2.txt").write_text("content2")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [dir1, dir2],
             [],
         )
@@ -282,7 +282,7 @@ class TestCollectManifestDirectoryHandling:
         subdir.mkdir()
         (subdir / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [],
         )
@@ -304,7 +304,7 @@ class TestCollectManifestFilenamesParameter:
         file3.write_text("content3")
 
         # Only collect file1 and file2
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [file1, file2],
         )
@@ -323,7 +323,7 @@ class TestCollectManifestFilenamesParameter:
         extra_file = tmp_path / "extra.txt"
         extra_file.write_text("extra")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [subdir],
             [extra_file],
         )
@@ -337,7 +337,7 @@ class TestCollectManifestFilenamesParameter:
         file1 = tmp_path / "file1.txt"
         file1.write_text("content1")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [file1],
         )
@@ -353,7 +353,7 @@ class TestCollectManifestFilenamesParameter:
         file1 = tmp_path / "file1.txt"
         file1.write_text("content1")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [str(tmp_path)],
             [str(file1)],
         )
@@ -369,7 +369,7 @@ class TestCollectManifestChunkSize:
         """Default chunk size is DEFAULT_FILE_CHUNK_SIZE."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -381,7 +381,7 @@ class TestCollectManifestChunkSize:
         (tmp_path / "file.txt").write_text("content")
 
         custom_size = 64 * 1024 * 1024  # 64MB
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             file_chunk_size_bytes=custom_size,
@@ -393,7 +393,7 @@ class TestCollectManifestChunkSize:
         """WHOLE_FILE_CHUNK_SIZE disables chunking."""
         (tmp_path / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
@@ -410,7 +410,7 @@ class TestCollectManifestEmptyInputs:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [empty_dir],
             [],
         )
@@ -422,7 +422,7 @@ class TestCollectManifestEmptyInputs:
 
     def test_no_inputs(self) -> None:
         """No inputs results in empty manifest."""
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [],
             [],
         )
@@ -440,7 +440,7 @@ class TestCollectManifestSpecialFiles:
         hidden = tmp_path / ".hidden"
         hidden.write_text("hidden content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -454,7 +454,7 @@ class TestCollectManifestSpecialFiles:
         hidden_dir.mkdir()
         (hidden_dir / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -470,7 +470,7 @@ class TestCollectManifestSpecialFiles:
         file_with_spaces = tmp_path / "file with spaces.txt"
         file_with_spaces.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -483,7 +483,7 @@ class TestCollectManifestSpecialFiles:
         unicode_file = tmp_path / "файл_文件_αρχείο.txt"
         unicode_file.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -496,7 +496,7 @@ class TestCollectManifestSpecialFiles:
         empty_file = tmp_path / "empty.txt"
         empty_file.write_text("")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -512,7 +512,7 @@ class TestCollectManifestSpecialFiles:
         file_with_backslash = tmp_path / "file\\with\\backslash.txt"
         file_with_backslash.write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )
@@ -528,7 +528,7 @@ class TestCollectManifestSpecialFiles:
         dir_with_backslash.mkdir()
         (dir_with_backslash / "file.txt").write_text("content")
 
-        manifest = collect_manifest(
+        manifest = collect_abs_snapshot(
             [tmp_path],
             [],
         )

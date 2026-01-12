@@ -20,7 +20,7 @@ import boto3
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    collect_manifest,
+    collect_abs_snapshot,
     hash_upload_manifest,
     FileSystemDataCache,
     S3DataCache,
@@ -130,7 +130,7 @@ class TestHashUploadManifestBasicFileSystem:
         file3.parent.mkdir()
         file3.write_text("Content of file 3")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -368,7 +368,7 @@ class TestHashUploadManifestBasicS3:
         file3.parent.mkdir()
         file3.write_text("Content of file 3")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
@@ -462,7 +462,7 @@ class TestHashUploadManifestBasicS3:
         if os.name != "nt":
             test_file.chmod(0o755)
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
@@ -541,7 +541,7 @@ class TestManifestTypePreservation:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        collected = collect_manifest(
+        collected = collect_abs_snapshot(
             [tmp_path],
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
