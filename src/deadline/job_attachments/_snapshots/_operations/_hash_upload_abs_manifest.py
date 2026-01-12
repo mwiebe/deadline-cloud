@@ -77,7 +77,7 @@ DEFAULT_MAX_WORKERS = 10
 @dataclass
 class UploadResult:
     """
-    Result of a hash_upload_manifest operation.
+    Result of a hash_upload_abs_manifest operation.
 
     Attributes:
         statistics: Summary statistics about the upload operation including
@@ -1105,7 +1105,7 @@ def _run_pipeline(
             return pipeline.wait_for_completion()
 
 
-def hash_upload_manifest(
+def hash_upload_abs_manifest(
     manifest: AbsManifest,
     data_cache: ContentAddressedDataCache,
     hash_cache: Optional[HashCache] = None,

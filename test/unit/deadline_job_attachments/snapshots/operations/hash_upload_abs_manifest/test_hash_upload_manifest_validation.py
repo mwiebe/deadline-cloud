@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_upload_manifest input validation and error cases.
+Tests for hash_upload_abs_manifest input validation and error cases.
 
 These tests cover:
 - Relative path rejection
@@ -17,7 +17,7 @@ from typing import Optional
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
     S3DataCache,
     AbsSnapshot,
@@ -59,7 +59,7 @@ class TestInputValidationFileSystem:
 
         data_cache = FileSystemDataCache(root_path=cache_root)
         with pytest.raises(ValueError, match="requires absolute paths"):
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -88,7 +88,7 @@ class TestInputValidationFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -131,7 +131,7 @@ class TestInputValidationS3:
 
         data_cache = self._create_s3_data_cache()
         with pytest.raises(ValueError, match="requires absolute paths"):
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -158,7 +158,7 @@ class TestInputValidationS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )

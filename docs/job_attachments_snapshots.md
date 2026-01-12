@@ -219,7 +219,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 |--------|-----------|-------------|
 | `_collect_abs_snapshot.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
 | `_hash_abs_manifest.py` | HASH | Fills in hashes for collected manifest |
-| `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
+| `_hash_upload_abs_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_download_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_manifest.py` | DIFF | Computes difference between two manifests |
@@ -564,14 +564,14 @@ for entry in hashed_diff.files:
         print(f"  new/modified: {entry.path} hash={entry.hash[:16]}...")
 ```
 
-### 3. HASH_UPLOAD: `hash_upload_manifest()`
+### 3. HASH_UPLOAD: `hash_upload_abs_manifest()`
 
-**Location:** `_hash_upload_manifest.py`
+**Location:** `_hash_upload_abs_manifest.py`
 
 Fills in hashes for a manifest AND uploads file content to a data cache in a pipelined manner. This operation combines hashing and uploading into a single pass over the data, avoiding the need to read files twice (once for hashing, once for uploading).
 
 ```python
-def hash_upload_manifest(
+def hash_upload_abs_manifest(
     manifest: AbsManifest,
     data_cache: ContentAddressedDataCache,
     hash_cache: Optional[HashCache] = None,
@@ -711,7 +711,7 @@ For chunked files, each chunk is stored separately:
 
 | Cache | Purpose | Location |
 |-------|---------|----------|
-| `hash_cache` | Skip hashing for files with unchanged mtime | `hash_upload_manifest()` parameter |
+| `hash_cache` | Skip hashing for files with unchanged mtime | `hash_upload_abs_manifest()` parameter |
 | `s3_check_cache` | Skip upload for files already in S3 | `S3DataCache` member |
 
 When both caches hit (for `S3DataCache`), the file is completely skipped (no read, no hash, no upload).
@@ -827,7 +827,7 @@ The `parentManifestHash` and `fileChunkSizeBytes` fields are preserved from the 
 import boto3
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     S3DataCache,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
@@ -850,7 +850,7 @@ with HashCache("/tmp/hash_cache") as hash_cache:
         )
 
         # Hash and upload in a single pipelined pass
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=abs_manifest,
             data_cache=data_cache,
             hash_cache=hash_cache,
@@ -884,7 +884,7 @@ Output:
 from pathlib import Path
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
@@ -902,7 +902,7 @@ data_cache = FileSystemDataCache(
 
 # Hash and write to local filesystem
 with HashCache("/tmp/hash_cache") as hash_cache:
-    result = hash_upload_manifest(
+    result = hash_upload_abs_manifest(
         manifest=abs_manifest,
         data_cache=data_cache,
         hash_cache=hash_cache,
@@ -1395,7 +1395,7 @@ DOWNLOAD is the inverse of HASH_UPLOAD:
 # Round-trip example:
 # 1. Collect and upload
 abs_manifest = collect_abs_snapshot(["/projects/scene"], [])
-upload_result = hash_upload_manifest(abs_manifest, s3_cache)
+upload_result = hash_upload_abs_manifest(abs_manifest, s3_cache)
 
 # 2. Save manifest
 with open("scene.manifest", "w") as f:

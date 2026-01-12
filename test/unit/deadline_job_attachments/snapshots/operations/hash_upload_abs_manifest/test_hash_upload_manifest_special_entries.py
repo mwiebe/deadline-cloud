@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_upload_manifest special entry handling.
+Tests for hash_upload_abs_manifest special entry handling.
 
 These tests cover:
 - Symlink entries (pass through unchanged)
@@ -19,7 +19,7 @@ import pytest
 
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
     S3DataCache,
     SymlinkPolicy,
@@ -71,7 +71,7 @@ class TestSymlinkPassthroughFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=filtered_manifest,
             data_cache=data_cache,
         )
@@ -128,7 +128,7 @@ class TestSymlinkPassthroughS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
         )
@@ -176,7 +176,7 @@ class TestDeletedEntryPassthroughFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -227,7 +227,7 @@ class TestDeletedEntryPassthroughS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -276,7 +276,7 @@ class TestDirectoryEntryHandlingS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
         )

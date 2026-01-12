@@ -150,7 +150,7 @@ def _collect_abs_snapshot_impl(
        collapse if target is outside (escaping)
 
     Files are collected with hash=None to indicate hashes have not been computed.
-    Use hash_abs_manifest() or hash_upload_manifest() to fill in hashes.
+    Use hash_abs_manifest() or hash_upload_abs_manifest() to fill in hashes.
 
     Args:
         file_chunk_size_bytes: Chunk size for large file hashing.

@@ -21,7 +21,7 @@ import pytest
 
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     download_manifest,
     join_manifest,
     subtree_manifest,
@@ -199,7 +199,7 @@ class TestDownloadManifestFileSystem:
 
         collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
-        upload_result = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
@@ -226,7 +226,7 @@ class TestDownloadManifestFileSystem:
 
         collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
-        upload_result = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
@@ -252,7 +252,7 @@ class TestDownloadManifestFileSystem:
 
         collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
-        upload_result = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
@@ -283,7 +283,7 @@ class TestDownloadManifestFileSystem:
             [source_dir], [], symlink_policy=SymlinkPolicy.COLLAPSE_ALL
         )
         data_cache = self._create_filesystem_data_cache(cache_root)
-        upload_result = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
@@ -322,7 +322,7 @@ class TestDownloadManifestS3:
 
         collected = collect_abs_snapshot([source_dir], [])
         data_cache = self._create_s3_data_cache()
-        upload_result = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
@@ -350,7 +350,7 @@ class TestDownloadManifestS3:
             [source_dir], [], symlink_policy=SymlinkPolicy.COLLAPSE_ALL
         )
         data_cache = self._create_s3_data_cache()
-        upload_result = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_abs_manifest(collected, data_cache)
 
         rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))

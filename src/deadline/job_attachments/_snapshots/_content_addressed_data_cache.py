@@ -4,7 +4,7 @@
 Content-addressable data cache classes for the HASH_UPLOAD operation.
 
 This module defines the abstract base class and concrete implementations for
-content-addressable storage backends used by hash_upload_manifest().
+content-addressable storage backends used by hash_upload_abs_manifest().
 
 Classes:
     ContentAddressedDataCache: Abstract base class for data caches

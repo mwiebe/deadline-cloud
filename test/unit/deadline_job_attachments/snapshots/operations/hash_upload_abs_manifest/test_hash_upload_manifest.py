@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_upload_manifest core functionality.
+Tests for hash_upload_abs_manifest core functionality.
 
 These tests cover:
 - Basic file hashing and uploading
@@ -21,7 +21,7 @@ import pytest
 
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
     S3DataCache,
     SymlinkPolicy,
@@ -38,7 +38,7 @@ TEST_KEY_PREFIX = "Data"
 
 
 class TestHashUploadManifestBasicFileSystem:
-    """Tests for basic hash_upload_manifest functionality with FileSystemDataCache."""
+    """Tests for basic hash_upload_abs_manifest functionality with FileSystemDataCache."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
         """Create a FileSystemDataCache for testing."""
@@ -64,7 +64,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -98,7 +98,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -147,7 +147,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=filtered_manifest,
             data_cache=data_cache,
         )
@@ -190,7 +190,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -224,7 +224,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -260,7 +260,7 @@ class TestHashUploadManifestBasicFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -271,7 +271,7 @@ class TestHashUploadManifestBasicFileSystem:
 
 
 class TestHashUploadManifestBasicS3:
-    """Tests for basic hash_upload_manifest functionality with S3DataCache."""
+    """Tests for basic hash_upload_abs_manifest functionality with S3DataCache."""
 
     @pytest.fixture(autouse=True)
     def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
@@ -308,7 +308,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -340,7 +340,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -377,7 +377,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
         )
@@ -418,7 +418,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -450,7 +450,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -473,7 +473,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
         )
@@ -508,7 +508,7 @@ class TestHashUploadManifestBasicS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -519,7 +519,7 @@ class TestHashUploadManifestBasicS3:
 
 
 class TestManifestTypePreservation:
-    """Tests verifying that manifest types are preserved through hash_upload_manifest."""
+    """Tests verifying that manifest types are preserved through hash_upload_abs_manifest."""
 
     @pytest.fixture(autouse=True)
     def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
@@ -552,7 +552,7 @@ class TestManifestTypePreservation:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
         )
@@ -583,7 +583,7 @@ class TestManifestTypePreservation:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -613,7 +613,7 @@ class TestManifestTypePreservation:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -646,7 +646,7 @@ class TestManifestTypePreservation:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )

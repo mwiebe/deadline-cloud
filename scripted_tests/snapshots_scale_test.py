@@ -64,7 +64,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_abs_manifest,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     download_manifest,
     compute_diff_manifest,
     subtree_manifest,
@@ -756,7 +756,7 @@ def test_hash_upload_filesystem(
     )
 
     print_fn(
-        f"  Starting hash_upload_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
+        f"  Starting hash_upload_abs_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
     if not config.use_hash_cache:
         print_fn("  (force_rehash=True, so hash cache checking should be skipped)")
@@ -765,7 +765,7 @@ def test_hash_upload_filesystem(
         actual_hash_cache = hash_cache if config.use_hash_cache else None
         start = time.perf_counter()
         with profile_operation("upload", config.cprofile_operation, print_fn):
-            upload_result = hash_upload_manifest(
+            upload_result = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=actual_hash_cache,
@@ -862,7 +862,7 @@ def test_hash_upload_s3(
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
             with profile_operation("upload", config.cprofile_operation, print_fn):
-                upload_result = hash_upload_manifest(
+                upload_result = hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                     hash_cache=hash_cache,
@@ -2046,7 +2046,7 @@ def main() -> int:
     parser.add_argument(
         "--no-hash-cache",
         action="store_true",
-        help="Disable hash cache (pass None to hash_upload_manifest)",
+        help="Disable hash cache (pass None to hash_upload_abs_manifest)",
     )
     parser.add_argument(
         "--cprofile",

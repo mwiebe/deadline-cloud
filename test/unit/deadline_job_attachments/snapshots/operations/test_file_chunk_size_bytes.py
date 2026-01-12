@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
     hash_abs_manifest,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
 )
 from deadline.job_attachments._snapshots._content_addressed_data_cache import (
     FileSystemDataCache,
@@ -206,7 +206,7 @@ class TestHashManifestFileChunkSizeBytes:
 
 
 class TestHashUploadManifestFileChunkSizeBytes:
-    """Tests for file_chunk_size_bytes parameter in hash_upload_manifest."""
+    """Tests for file_chunk_size_bytes parameter in hash_upload_abs_manifest."""
 
     def _create_filesystem_data_cache(self, cache_root: Path) -> FileSystemDataCache:
         """Create a FileSystemDataCache for testing."""
@@ -236,7 +236,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             file_chunk_size_bytes=None,  # Should preserve input
@@ -269,7 +269,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             file_chunk_size_bytes=output_chunk_size,
@@ -300,7 +300,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             file_chunk_size_bytes=2 * 1024 * 1024,  # Set output chunk size
@@ -337,7 +337,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             file_chunk_size_bytes=None,  # Preserve input
@@ -382,7 +382,7 @@ class TestEndToEndFileChunkSizeBytes:
         assert hashed.fileChunkSizeBytes == custom_chunk_size
 
     def test_collect_then_hash_upload_preserves_chunk_size(self, tmp_path: Path) -> None:
-        """Chunk size flows from collect_abs_snapshot through hash_upload_manifest."""
+        """Chunk size flows from collect_abs_snapshot through hash_upload_abs_manifest."""
         cache_root = tmp_path / "cache"
         (tmp_path / "file.txt").write_text("content")
         custom_chunk_size = 1024 * 1024  # 1MB
@@ -398,7 +398,7 @@ class TestEndToEndFileChunkSizeBytes:
 
         # Hash+upload should preserve chunk size when None
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
             file_chunk_size_bytes=None,
@@ -506,7 +506,7 @@ class TestEndToEndFileChunkSizeBytes:
         # Override with small chunk size - file SHOULD be chunked now
         small_chunk_size = 16
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             file_chunk_size_bytes=small_chunk_size,
@@ -727,7 +727,7 @@ class TestHashManifestSmallFiles:
 
 class TestHashUploadManifestFilesystem:
     """
-    Tests for hash_upload_manifest with FileSystemDataCache.
+    Tests for hash_upload_abs_manifest with FileSystemDataCache.
 
     These tests verify that chunking works correctly with small chunk sizes,
     and that deduplication and idempotent uploads work as expected.
@@ -766,7 +766,7 @@ class TestHashUploadManifestFilesystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,  # 1MB memory limit
@@ -816,7 +816,7 @@ class TestHashUploadManifestFilesystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -862,7 +862,7 @@ class TestHashUploadManifestFilesystem:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # First upload
-        result1 = hash_upload_manifest(
+        result1 = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -872,7 +872,7 @@ class TestHashUploadManifestFilesystem:
         cache_files_after_first = list(cache_root.glob("*.xxh128"))
 
         # Second upload (same file)
-        result2 = hash_upload_manifest(
+        result2 = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -925,7 +925,7 @@ class TestHashUploadManifestFilesystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -941,7 +941,7 @@ class TestHashUploadManifestFilesystem:
 
 class TestHashUploadManifestS3:
     """
-    Tests for hash_upload_manifest with S3DataCache.
+    Tests for hash_upload_abs_manifest with S3DataCache.
 
     These tests verify that chunking works correctly with small chunk sizes,
     and that deduplication and idempotent uploads work as expected with S3.
@@ -1021,7 +1021,7 @@ class TestHashUploadManifestS3:
         mock_client = self._create_mock_s3_client()
         data_cache = self._create_s3_data_cache(mock_client)
 
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -1074,7 +1074,7 @@ class TestHashUploadManifestS3:
         mock_client = self._create_mock_s3_client()
         data_cache = self._create_s3_data_cache(mock_client)
 
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -1122,7 +1122,7 @@ class TestHashUploadManifestS3:
         data_cache = self._create_s3_data_cache(mock_client)
 
         # First upload
-        result1 = hash_upload_manifest(
+        result1 = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -1132,7 +1132,7 @@ class TestHashUploadManifestS3:
         first_upload_calls = mock_client.put_object.call_count
 
         # Second upload (same file) - should use conditional writes
-        result2 = hash_upload_manifest(
+        result2 = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,
@@ -1183,7 +1183,7 @@ class TestHashUploadManifestS3:
         mock_client = self._create_mock_s3_client()
         data_cache = self._create_s3_data_cache(mock_client)
 
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=input_manifest,
             data_cache=data_cache,
             max_memory_bytes=1024 * 1024,

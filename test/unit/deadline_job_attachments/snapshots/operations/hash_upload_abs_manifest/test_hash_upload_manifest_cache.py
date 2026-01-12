@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_upload_manifest cache integration.
+Tests for hash_upload_abs_manifest cache integration.
 
 These tests cover:
 - Hash cache integration (cache hits, misses, updates)
@@ -20,7 +20,7 @@ import pytest
 
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
     S3DataCache,
     SymlinkPolicy,
@@ -72,7 +72,7 @@ class TestHashUploadWithHashCacheFileSystem:
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             data_cache = self._create_filesystem_data_cache(cache_root)
-            result = hash_upload_manifest(
+            result = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -129,7 +129,7 @@ class TestHashUploadWithHashCacheS3:
 
         with HashCache(str(cache_dir)) as hash_cache:
             data_cache = self._create_s3_data_cache()
-            result = hash_upload_manifest(
+            result = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -167,7 +167,7 @@ class TestHashUploadWithHashCacheS3:
         # First upload
         with S3CheckCache(str(cache_dir)) as s3_cache:
             data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -175,7 +175,7 @@ class TestHashUploadWithHashCacheS3:
         # Second upload with same file - should use cache
         with S3CheckCache(str(cache_dir)) as s3_cache:
             data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -227,7 +227,7 @@ class TestContentAddressableStorageFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -265,7 +265,7 @@ class TestContentAddressableStorageFileSystem:
 
         # First upload
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result1 = hash_upload_manifest(
+        result1 = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -275,7 +275,7 @@ class TestContentAddressableStorageFileSystem:
         original_mtime = cached_file.stat().st_mtime
 
         # Second upload - should skip since file exists
-        result2 = hash_upload_manifest(
+        result2 = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -321,7 +321,7 @@ class TestContentAddressableStorageS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=collected,
             data_cache=data_cache,
         )
@@ -376,7 +376,7 @@ class TestHashCacheWithChunkedFiles:
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             data_cache = self._create_filesystem_data_cache(cache_root)
-            result = hash_upload_manifest(
+            result = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -429,7 +429,7 @@ class TestHashCacheWithChunkedFiles:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - populates cache
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -437,7 +437,7 @@ class TestHashCacheWithChunkedFiles:
             )
 
             # Second run - should use cached chunk hashes
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -491,7 +491,7 @@ class TestS3CheckCacheUpdates:
 
         with S3CheckCache(str(cache_dir)) as s3_cache:
             data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache)
-            result = hash_upload_manifest(
+            result = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -542,14 +542,14 @@ class TestS3CheckCacheUpdates:
 
             # First upload
             self.s3_client.put_object = tracking_put_object
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
             first_run_calls = len(put_object_calls)
 
             # Second upload - should skip due to S3 check cache
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -605,7 +605,7 @@ class TestPartialCacheHits:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - cache file1
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest1,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -633,7 +633,7 @@ class TestPartialCacheHits:
             )
 
             # Second run - file1 should be cached, file2 should be processed
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest2,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -676,7 +676,7 @@ class TestPartialCacheHits:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - cache both chunks
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -687,7 +687,7 @@ class TestPartialCacheHits:
             # so we verify the full cache scenario works correctly
 
             # Second run - should use cached chunks
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -726,7 +726,7 @@ class TestPartialCacheHits:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - cache the file
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest1,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -760,7 +760,7 @@ class TestPartialCacheHits:
             )
 
             # Second run with different mtime - should recompute hash
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest2,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -809,7 +809,7 @@ class TestStreamingFilesCacheIntegration:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # First run - uploads file
-        result1 = hash_upload_manifest(
+        result1 = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,  # Force streaming mode
@@ -819,7 +819,7 @@ class TestStreamingFilesCacheIntegration:
         original_mtime = cached_file.stat().st_mtime
 
         # Second run - should skip since file exists in data cache
-        result2 = hash_upload_manifest(
+        result2 = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,
@@ -859,7 +859,7 @@ class TestStreamingFilesCacheIntegration:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - populates hash cache
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -873,7 +873,7 @@ class TestStreamingFilesCacheIntegration:
             assert cached_entry.file_hash == result1.manifest.files[0].hash
 
             # Second run - should use hash cache
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -941,7 +941,7 @@ class TestHashCacheHitButObjectMissingFromS3:
         with HashCache(str(hash_cache_dir)) as hash_cache:
             # First upload - populates hash cache and uploads to S3
             data_cache = self._create_s3_data_cache()
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -968,7 +968,7 @@ class TestHashCacheHitButObjectMissingFromS3:
             # Second upload - hash cache hits, but S3 HeadObject misses
             # Must re-read and re-hash to verify before uploading
             data_cache2 = self._create_s3_data_cache()  # Fresh cache, no s3_check_cache
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache2,
                 hash_cache=hash_cache,
@@ -1023,7 +1023,7 @@ class TestHashCacheHitButObjectMissingFromS3:
         with HashCache(str(hash_cache_dir)) as hash_cache:
             # First upload - populates hash cache with original hash
             data_cache = self._create_s3_data_cache()
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest1,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -1083,7 +1083,7 @@ class TestHashCacheHitButObjectMissingFromS3:
             # File is re-read, produces new_hash, HeadObject(new_hash) hits
             # Should skip upload
             data_cache2 = self._create_s3_data_cache()
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest2,
                 data_cache=data_cache2,
                 hash_cache=hash_cache,

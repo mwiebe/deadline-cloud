@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_upload_manifest pipeline internals.
+Tests for hash_upload_abs_manifest pipeline internals.
 
 These tests cover:
 - _MemoryPool class
@@ -23,13 +23,13 @@ import boto3
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
     S3DataCache,
     AbsSnapshot,
     ManifestFilePath,
 )
-from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
+from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
     _ChunkWorkItem,
     _MemoryPool,
     _StreamingWorkItem,
@@ -239,7 +239,7 @@ class TestChunkedFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,  # Small memory limit
@@ -291,7 +291,7 @@ class TestChunkedFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,
@@ -344,7 +344,7 @@ class TestChunkedFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,
@@ -389,7 +389,7 @@ class TestChunkedFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,
@@ -423,7 +423,7 @@ class TestChunkedFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,
@@ -471,7 +471,7 @@ class TestStreamingFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,  # Smaller than file size
@@ -523,7 +523,7 @@ class TestStreamingFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,
@@ -574,7 +574,7 @@ class TestStreamingFileProcessingFileSystem:
         )
 
         data_cache = self._create_filesystem_data_cache(cache_root)
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,
@@ -635,7 +635,7 @@ class TestChunkedFileProcessingS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,
@@ -672,7 +672,7 @@ class TestChunkedFileProcessingS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=64,
@@ -739,7 +739,7 @@ class TestStreamingFileProcessingS3:
         )
 
         data_cache = self._create_s3_data_cache()
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,
@@ -788,7 +788,7 @@ class TestMemoryLimitValidation:
         data_cache = FileSystemDataCache(root_path=cache_root)
 
         with pytest.raises(ValueError, match="max_memory_bytes.*must be >= fileChunkSizeBytes"):
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 max_memory_bytes=32,  # Less than chunk size
@@ -819,7 +819,7 @@ class TestMemoryLimitValidation:
         data_cache = FileSystemDataCache(root_path=cache_root)
 
         # Should not raise
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
             max_memory_bytes=32,  # Equal to chunk size

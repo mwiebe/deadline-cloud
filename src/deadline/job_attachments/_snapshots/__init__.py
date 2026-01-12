@@ -29,7 +29,7 @@ from ._content_addressed_data_cache import (
 from ._operations import (
     collect_abs_snapshot,
     hash_abs_manifest,
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     UploadResult,
     download_manifest,
     DownloadResult,
@@ -67,7 +67,7 @@ __all__ = [
     # Operations
     "collect_abs_snapshot",
     "hash_abs_manifest",
-    "hash_upload_manifest",
+    "hash_upload_abs_manifest",
     "UploadResult",
     "download_manifest",
     "DownloadResult",

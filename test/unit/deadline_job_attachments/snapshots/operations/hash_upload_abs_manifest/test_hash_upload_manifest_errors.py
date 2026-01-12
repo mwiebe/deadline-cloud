@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_upload_manifest error handling and edge cases.
+Tests for hash_upload_abs_manifest error handling and edge cases.
 
 These tests cover:
 - File read errors (permissions, deleted during processing)
@@ -25,7 +25,7 @@ import pytest
 from botocore.exceptions import BotoCoreError, ClientError
 
 from deadline.job_attachments._snapshots import (
-    hash_upload_manifest,
+    hash_upload_abs_manifest,
     FileSystemDataCache,
     S3DataCache,
     AbsSnapshot,
@@ -71,7 +71,7 @@ class TestRelativePathValidation:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         with pytest.raises(ValueError, match="requires absolute paths"):
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -96,7 +96,7 @@ class TestRelativePathValidation:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         with pytest.raises(ValueError, match="requires absolute paths"):
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -128,7 +128,7 @@ class TestRelativePathValidation:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # Should not raise
-        result = hash_upload_manifest(
+        result = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -167,7 +167,7 @@ class TestFileReadErrors:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         with pytest.raises(FileNotFoundError):
-            hash_upload_manifest(
+            hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
             )
@@ -203,7 +203,7 @@ class TestFileReadErrors:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             with pytest.raises(PermissionError):
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                 )
@@ -249,7 +249,7 @@ class TestForceRehash:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - populates cache
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -260,7 +260,7 @@ class TestForceRehash:
 
             # Second run with force_rehash=True should still process the file
             # We can verify by checking that the pipeline runs (no exception)
-            result2 = hash_upload_manifest(
+            result2 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -299,7 +299,7 @@ class TestForceRehash:
             data_cache = self._create_filesystem_data_cache(cache_root)
 
             # First run - populates cache
-            result1 = hash_upload_manifest(
+            result1 = hash_upload_abs_manifest(
                 manifest=manifest,
                 data_cache=data_cache,
                 hash_cache=hash_cache,
@@ -364,7 +364,7 @@ class TestS3ClientErrors:
             side_effect=ClientError(error_response, "PutObject"),
         ):
             with pytest.raises(JobAttachmentsS3ClientError) as exc_info:
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                 )
@@ -403,7 +403,7 @@ class TestS3ClientErrors:
             side_effect=ClientError(error_response, "PutObject"),
         ):
             with pytest.raises(JobAttachmentsS3ClientError) as exc_info:
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                 )
@@ -442,7 +442,7 @@ class TestS3ClientErrors:
             side_effect=TestBotoCoreError(message="Connection failed"),
         ):
             with pytest.raises(JobAttachmentS3BotoCoreError):
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                 )
@@ -471,14 +471,14 @@ class TestS3ClientErrors:
         data_cache = self._create_s3_data_cache()
 
         # First upload to populate the bucket
-        result1 = hash_upload_manifest(
+        result1 = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
         assert result1.manifest.files[0].hash is not None
 
         # Second upload should skip since object exists (HeadObject will find it)
-        result2 = hash_upload_manifest(
+        result2 = hash_upload_abs_manifest(
             manifest=manifest,
             data_cache=data_cache,
         )
@@ -521,7 +521,7 @@ class TestStreamingUploadErrors:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # Mock the streaming upload to simulate hash mismatch
-        from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
+        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
             _TaskBasedPipeline,
         )
 
@@ -534,7 +534,7 @@ class TestStreamingUploadErrors:
 
         with patch.object(_TaskBasedPipeline, "_stream_upload_to_filesystem", mock_stream_upload):
             with pytest.raises(ValueError, match="Hash mismatch during streaming upload"):
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                     max_memory_bytes=32,  # Force streaming mode
@@ -584,7 +584,7 @@ class TestStreamingUploadErrorsS3:
         data_cache = self._create_s3_data_cache()
 
         # Mock to simulate hash mismatch
-        from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
+        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
             _TaskBasedPipeline,
         )
 
@@ -596,7 +596,7 @@ class TestStreamingUploadErrorsS3:
 
         with patch.object(_TaskBasedPipeline, "_stream_upload_to_s3", mock_stream_upload):
             with pytest.raises(ValueError, match="Hash mismatch during streaming upload"):
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                     max_memory_bytes=32,  # Force streaming mode
@@ -652,7 +652,7 @@ class TestStreamingUploadErrorsS3:
                 side_effect=ClientError(error_response, "UploadPart"),
             ):
                 with pytest.raises(JobAttachmentsS3ClientError):
-                    hash_upload_manifest(
+                    hash_upload_abs_manifest(
                         manifest=manifest,
                         data_cache=data_cache,
                         max_memory_bytes=1024,  # Force streaming mode
@@ -705,7 +705,7 @@ class TestStreamingUploadErrorsS3:
                 side_effect=ClientError(error_response, "PutObject"),
             ):
                 with pytest.raises(JobAttachmentsS3ClientError) as exc_info:
-                    hash_upload_manifest(
+                    hash_upload_abs_manifest(
                         manifest=manifest,
                         data_cache=data_cache,
                         max_memory_bytes=32,
@@ -750,7 +750,7 @@ class TestUnsupportedHashAlgorithm:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # Mock the pipeline to use an unsupported algorithm for streaming hash
-        from deadline.job_attachments._snapshots._operations._hash_upload_manifest import (
+        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
             _TaskBasedPipeline,
         )
 
@@ -770,7 +770,7 @@ class TestUnsupportedHashAlgorithm:
 
         with patch.object(_TaskBasedPipeline, "_stream_hash_file", mock_stream_hash):
             with pytest.raises(ValueError, match="Unsupported hash algorithm"):
-                hash_upload_manifest(
+                hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
                     max_memory_bytes=32,  # Force streaming
