@@ -169,8 +169,8 @@ class TestHashManifestFileChunkSizeBytes:
         # Output should preserve WHOLE_FILE_CHUNK_SIZE
         assert result.fileChunkSizeBytes == WHOLE_FILE_CHUNK_SIZE
         # File should have hash (not chunkhashes)
-        assert result.manifest.files[0].hash is not None
-        assert result.manifest.files[0].chunkhashes is None
+        assert result.files[0].hash is not None
+        assert result.files[0].chunkhashes is None
 
     def test_hash_computed_correctly_with_custom_chunk_size(self, tmp_path: Path) -> None:
         """Hash is computed correctly regardless of chunk size parameter."""
@@ -199,8 +199,8 @@ class TestHashManifestFileChunkSizeBytes:
         )
 
         # Hash should be computed
-        assert result.manifest.files[0].hash is not None
-        assert len(result.manifest.files[0].hash) == 32  # XXH128 produces 32 hex chars
+        assert result.files[0].hash is not None
+        assert len(result.files[0].hash) == 32  # XXH128 produces 32 hex chars
         # Output chunk size should be set
         assert result.fileChunkSizeBytes == 1024 * 1024
 
@@ -242,7 +242,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
             file_chunk_size_bytes=None,  # Should preserve input
         )
 
-        assert result.fileChunkSizeBytes == input_chunk_size
+        assert result.manifest.fileChunkSizeBytes == input_chunk_size
 
     def test_overrides_chunk_size_when_specified(self, tmp_path: Path) -> None:
         """When file_chunk_size_bytes is set, overrides input manifest's chunk size."""
@@ -275,7 +275,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
             file_chunk_size_bytes=output_chunk_size,
         )
 
-        assert result.fileChunkSizeBytes == output_chunk_size
+        assert result.manifest.fileChunkSizeBytes == output_chunk_size
 
     def test_hash_and_upload_with_custom_chunk_size(self, tmp_path: Path) -> None:
         """Hash and upload work correctly with custom chunk size."""
@@ -310,7 +310,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         assert result.manifest.files[0].hash is not None
         assert len(result.manifest.files[0].hash) == 32  # XXH128 produces 32 hex chars
         # Output chunk size should be set
-        assert result.fileChunkSizeBytes == 2 * 1024 * 1024
+        assert result.manifest.fileChunkSizeBytes == 2 * 1024 * 1024
         # File should be uploaded to cache
         assert data_cache.object_exists(result.manifest.files[0].hash, "xxh128")
 
@@ -344,7 +344,7 @@ class TestHashUploadManifestFileChunkSizeBytes:
         )
 
         # Output should preserve WHOLE_FILE_CHUNK_SIZE
-        assert result.fileChunkSizeBytes == WHOLE_FILE_CHUNK_SIZE
+        assert result.manifest.fileChunkSizeBytes == WHOLE_FILE_CHUNK_SIZE
         # File should have hash (not chunkhashes)
         assert result.manifest.files[0].hash is not None
         assert result.manifest.files[0].chunkhashes is None
@@ -403,7 +403,7 @@ class TestEndToEndFileChunkSizeBytes:
             data_cache=data_cache,
             file_chunk_size_bytes=None,
         )
-        assert result.fileChunkSizeBytes == custom_chunk_size
+        assert result.manifest.fileChunkSizeBytes == custom_chunk_size
 
     def test_override_chunk_size_at_each_stage(self, tmp_path: Path) -> None:
         """Chunk size can be overridden at each stage of the pipeline."""
@@ -468,9 +468,9 @@ class TestEndToEndFileChunkSizeBytes:
 
         # File (64 bytes) is larger than chunk size (16 bytes), so it SHOULD have chunkhashes
         # Expected: 64 / 16 = 4 chunks
-        assert result.manifest.files[0].hash is None, "File should have chunkhashes, not hash"
-        assert result.manifest.files[0].chunkhashes is not None, "File should have chunkhashes"
-        assert len(result.manifest.files[0].chunkhashes) == 4, "File should have 4 chunks (64/16)"
+        assert result.files[0].hash is None, "File should have chunkhashes, not hash"
+        assert result.files[0].chunkhashes is not None, "File should have chunkhashes"
+        assert len(result.files[0].chunkhashes) == 4, "File should have 4 chunks (64/16)"
 
     def test_override_chunk_size_affects_chunking_decision_hash_upload(
         self, tmp_path: Path
@@ -513,7 +513,7 @@ class TestEndToEndFileChunkSizeBytes:
         )
 
         # Output should have the overridden chunk size
-        assert result.fileChunkSizeBytes == small_chunk_size
+        assert result.manifest.fileChunkSizeBytes == small_chunk_size
 
         # File (64 bytes) is larger than chunk size (16 bytes), so it SHOULD have chunkhashes
         # Expected: 64 / 16 = 4 chunks
@@ -561,12 +561,12 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # File should have chunkhashes, not hash
-        assert result.manifest.files[0].hash is None
-        assert result.manifest.files[0].chunkhashes is not None
-        assert len(result.manifest.files[0].chunkhashes) == 64  # 1024 / 16 = 64 chunks
+        assert result.files[0].hash is None
+        assert result.files[0].chunkhashes is not None
+        assert len(result.files[0].chunkhashes) == 64  # 1024 / 16 = 64 chunks
 
         # Verify each chunk hash is correct
-        for i, chunk_hash in enumerate(result.manifest.files[0].chunkhashes):
+        for i, chunk_hash in enumerate(result.files[0].chunkhashes):
             chunk_start = i * chunk_size
             chunk_end = min(chunk_start + chunk_size, file_size)
             expected_hash = hash_data(content[chunk_start:chunk_end], HashAlgorithm.XXH128)
@@ -602,12 +602,12 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # File should have hash, not chunkhashes
-        assert result.manifest.files[0].hash is not None
-        assert result.manifest.files[0].chunkhashes is None
+        assert result.files[0].hash is not None
+        assert result.files[0].chunkhashes is None
 
         # Verify hash is correct
         expected_hash = hash_data(content, HashAlgorithm.XXH128)
-        assert result.manifest.files[0].hash == expected_hash
+        assert result.files[0].hash == expected_hash
 
     def test_hash_manifest_multiple_small_files_with_small_chunks(self, tmp_path: Path) -> None:
         """Test hashing multiple small files with small chunk sizes."""
@@ -647,8 +647,8 @@ class TestHashManifestSmallFiles:
         # All files should have chunkhashes since they're all > chunk_size
         for i, (filename, size) in enumerate(files_data):
             expected_chunks = size // chunk_size
-            assert result.manifest.files[i].hash is None, f"File {filename} should not have hash"
-            chunkhashes = result.manifest.files[i].chunkhashes
+            assert result.files[i].hash is None, f"File {filename} should not have hash"
+            chunkhashes = result.files[i].chunkhashes
             assert chunkhashes is not None, f"File {filename} should have chunkhashes"
             assert len(chunkhashes) == expected_chunks, (
                 f"File {filename} should have {expected_chunks} chunks"
@@ -688,7 +688,7 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # Both files should have the same hash
-        assert result.manifest.files[0].hash == result.manifest.files[1].hash
+        assert result.files[0].hash == result.files[1].hash
 
     def test_hash_manifest_different_files_different_hash(self, tmp_path: Path) -> None:
         """Test that different files produce different hashes."""
@@ -722,7 +722,7 @@ class TestHashManifestSmallFiles:
         result = hash_manifest(manifest=input_manifest)
 
         # Files should have different hashes
-        assert result.manifest.files[0].hash != result.manifest.files[1].hash
+        assert result.files[0].hash != result.files[1].hash
 
 
 class TestHashUploadManifestFilesystem:

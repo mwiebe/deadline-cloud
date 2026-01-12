@@ -29,12 +29,6 @@ from ...exceptions import (
 
 logger = logging.getLogger("deadline.job_attachments.download")
 
-# Part size for multi-part parallel downloads (8MB)
-DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE = 8 * 1024 * 1024  # 8MB
-
-# Minimum file size to use multi-part download
-MIN_SIZE_FOR_MULTIPART_DOWNLOAD = 16 * 1024 * 1024  # 16MB
-
 
 @dataclass
 class S3ParallelDownloadState:
@@ -84,7 +78,7 @@ class S3DownloadPipeline(DownloadPipelineBase):
             raise TypeError("Expected S3DataCache")
 
         # For large files, use parallel multipart download
-        if file_size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+        if file_size >= 2 * self._data_cache.multipart_part_size:
             local_path = temp_path.parent / temp_path.name.replace(".tmp", "")
             # Extract actual local_path from the entry
             from ..._utils import _get_long_path_compatible_path
@@ -143,7 +137,7 @@ class S3DownloadPipeline(DownloadPipelineBase):
         with open(temp_path, "wb") as f:
             preallocate_file(f, file_size)
 
-        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        part_size = self._data_cache.multipart_part_size
         num_parts = (file_size + part_size - 1) // part_size
 
         state = S3ParallelDownloadState(
@@ -186,7 +180,7 @@ class S3DownloadPipeline(DownloadPipelineBase):
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError("Expected S3DataCache")
 
-        part_size = DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE
+        part_size = self._data_cache.multipart_part_size
         num_chunks = len(entry.chunkhashes)  # type: ignore
 
         # Calculate total number of parts across all chunks
@@ -198,7 +192,7 @@ class S3DownloadPipeline(DownloadPipelineBase):
             else:
                 chunk_size = self._chunk_size_bytes
 
-            if chunk_size < MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+            if chunk_size < 2 * self._data_cache.multipart_part_size:
                 total_parts += 1
             else:
                 num_parts_in_chunk = (chunk_size + part_size - 1) // part_size
@@ -222,7 +216,7 @@ class S3DownloadPipeline(DownloadPipelineBase):
 
             s3_key = self._data_cache.get_object_key(chunk_hash, self._hash_alg)
 
-            if chunk_size < MIN_SIZE_FOR_MULTIPART_DOWNLOAD:
+            if chunk_size < 2 * self._data_cache.multipart_part_size:
                 self._executor.submit(
                     self._download_small_chunk_with_callback,
                     state,

@@ -54,9 +54,9 @@ class TestDownloadManifestFileConflictResolution:
 
         collected = collect_manifest([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
-        hashed = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_manifest(collected, data_cache)
 
-        rel_manifest = subtree_manifest(hashed, str(source_dir))
+        rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         result = download_manifest(
@@ -84,9 +84,9 @@ class TestDownloadManifestFileConflictResolution:
 
         collected = collect_manifest([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
-        hashed = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_manifest(collected, data_cache)
 
-        rel_manifest = subtree_manifest(hashed, str(source_dir))
+        rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         result = download_manifest(
@@ -114,9 +114,9 @@ class TestDownloadManifestFileConflictResolution:
 
         collected = collect_manifest([source_dir], [])
         data_cache = self._create_filesystem_data_cache(cache_root)
-        hashed = hash_upload_manifest(collected, data_cache)
+        upload_result = hash_upload_manifest(collected, data_cache)
 
-        rel_manifest = subtree_manifest(hashed, str(source_dir))
+        rel_manifest = subtree_manifest(upload_result.manifest, str(source_dir))
         download_manifest_obj = _to_abs_snapshot(join_manifest(rel_manifest, str(download_dir)))
 
         result = download_manifest(

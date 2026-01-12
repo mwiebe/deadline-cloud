@@ -4,7 +4,7 @@
 Tests for S3 multi-part parallel downloads.
 
 These tests verify:
-- Regular files use multi-part download when size >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD
+- Regular files use multi-part download when size >= 2 * multipart_part_size
 - Chunked files use multi-part download for large chunks
 - Byte-range requests are correctly calculated
 - Parts are written to correct offsets in temp file
@@ -13,7 +13,7 @@ These tests verify:
 
 from pathlib import Path
 from typing import Any, Dict, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from deadline.job_attachments._snapshots import (
     download_manifest,
@@ -22,7 +22,6 @@ from deadline.job_attachments._snapshots import (
 from deadline.job_attachments._snapshots._manifest import ManifestFilePath
 from deadline.job_attachments._snapshots._content_addressed_data_cache import S3DataCache
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
-import deadline.job_attachments._snapshots._operations._download_manifest_s3_pipeline as s3_pipeline_module
 
 
 class TestMultipartDownloadRegularFiles:
@@ -47,20 +46,22 @@ class TestMultipartDownloadRegularFiles:
         return mock_client
 
     def test_large_file_uses_multipart_download(self, tmp_path: Path) -> None:
-        """Files >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD use parallel byte-range requests."""
+        """Files >= 2 * multipart_part_size use parallel byte-range requests."""
         download_dir = tmp_path / "download"
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create 100-byte file content (> 64 byte threshold)
+        # Create 100-byte file content (> 64 byte threshold when part_size=32)
         file_content = bytes(range(100))  # 0, 1, 2, ..., 99
         file_hash = "largefilehash"
         s3_key = f"Data/{file_hash}.xxh128"
 
         mock_client = self._create_mock_s3_client({s3_key: file_content})
+        # Set multipart_part_size=32, so threshold is 64 bytes
         data_cache = S3DataCache(
             s3_bucket="test-bucket",
             s3_key_prefix="Data",
             s3_client=mock_client,
+            multipart_part_size=32,
         )
 
         target_path = download_dir / "large_file.bin"
@@ -78,10 +79,7 @@ class TestMultipartDownloadRegularFiles:
             total_size=len(file_content),
         )
 
-        # Patch the constants on the S3 pipeline module
-        with patch.object(s3_pipeline_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(s3_pipeline_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -101,20 +99,22 @@ class TestMultipartDownloadRegularFiles:
         assert "bytes=96-99" in ranges  # Last part is smaller
 
     def test_small_file_uses_single_request(self, tmp_path: Path) -> None:
-        """Files < MIN_SIZE_FOR_MULTIPART_DOWNLOAD use single get_object request."""
+        """Files < 2 * multipart_part_size use single get_object request."""
         download_dir = tmp_path / "download"
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create 32-byte file content (< 64 byte threshold)
+        # Create 32-byte file content (< 64 byte threshold when part_size=32)
         file_content = b"small file content here!12345678"  # 32 bytes
         file_hash = "smallfilehash"
         s3_key = f"Data/{file_hash}.xxh128"
 
         mock_client = self._create_mock_s3_client({s3_key: file_content})
+        # Set multipart_part_size=32, so threshold is 64 bytes
         data_cache = S3DataCache(
             s3_bucket="test-bucket",
             s3_key_prefix="Data",
             s3_client=mock_client,
+            multipart_part_size=32,
         )
 
         target_path = download_dir / "small_file.bin"
@@ -132,9 +132,7 @@ class TestMultipartDownloadRegularFiles:
             total_size=len(file_content),
         )
 
-        # Patch the constant on the S3 pipeline module
-        with patch.object(s3_pipeline_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -171,20 +169,22 @@ class TestMultipartDownloadChunkedFiles:
         return mock_client
 
     def test_large_chunk_uses_multipart_download(self, tmp_path: Path) -> None:
-        """Chunks >= MIN_SIZE_FOR_MULTIPART_DOWNLOAD use parallel byte-range requests."""
+        """Chunks >= 2 * multipart_part_size use parallel byte-range requests."""
         download_dir = tmp_path / "download"
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create 100-byte chunk content (> 64 byte threshold)
+        # Create 100-byte chunk content (> 64 byte threshold when part_size=32)
         chunk_content = bytes(range(100))  # 0, 1, 2, ..., 99
         chunk_hash = "largechunkhash"
         s3_key = f"Data/{chunk_hash}.xxh128"
 
         mock_client = self._create_mock_s3_client({s3_key: chunk_content})
+        # Set multipart_part_size=32, so threshold is 64 bytes
         data_cache = S3DataCache(
             s3_bucket="test-bucket",
             s3_key_prefix="Data",
             s3_client=mock_client,
+            multipart_part_size=32,
         )
 
         target_path = download_dir / "chunked_file.bin"
@@ -204,10 +204,7 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=256,  # Chunk size in manifest
         )
 
-        # Patch the constants on the S3 pipeline module
-        with patch.object(s3_pipeline_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(s3_pipeline_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -219,20 +216,22 @@ class TestMultipartDownloadChunkedFiles:
         assert mock_client.get_object.call_count == 4
 
     def test_small_chunk_uses_single_request(self, tmp_path: Path) -> None:
-        """Chunks < MIN_SIZE_FOR_MULTIPART_DOWNLOAD use single get_object request."""
+        """Chunks < 2 * multipart_part_size use single get_object request."""
         download_dir = tmp_path / "download"
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create 32-byte chunk content (< 64 byte threshold)
+        # Create 32-byte chunk content (< 64 byte threshold when part_size=32)
         chunk_content = b"small chunk content here!1234567"  # 32 bytes
         chunk_hash = "smallchunkhash"
         s3_key = f"Data/{chunk_hash}.xxh128"
 
         mock_client = self._create_mock_s3_client({s3_key: chunk_content})
+        # Set multipart_part_size=32, so threshold is 64 bytes
         data_cache = S3DataCache(
             s3_bucket="test-bucket",
             s3_key_prefix="Data",
             s3_client=mock_client,
+            multipart_part_size=32,
         )
 
         target_path = download_dir / "chunked_file.bin"
@@ -252,9 +251,7 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=256,
         )
 
-        # Patch the constant on the S3 pipeline module
-        with patch.object(s3_pipeline_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -285,10 +282,12 @@ class TestMultipartDownloadChunkedFiles:
                 f"Data/{chunk1_hash}.xxh128": chunk1_content,
             }
         )
+        # Set multipart_part_size=32, so threshold is 64 bytes
         data_cache = S3DataCache(
             s3_bucket="test-bucket",
             s3_key_prefix="Data",
             s3_client=mock_client,
+            multipart_part_size=32,
         )
 
         target_path = download_dir / "multi_chunk_file.bin"
@@ -309,10 +308,7 @@ class TestMultipartDownloadChunkedFiles:
             file_chunk_size_bytes=chunk_size,
         )
 
-        # Patch the constants on the S3 pipeline module
-        with patch.object(s3_pipeline_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(s3_pipeline_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify file was downloaded correctly
         assert target_path.exists()
@@ -358,11 +354,11 @@ class TestMultipartDownloadMixedFiles:
         download_dir = tmp_path / "download"
         download_dir.mkdir(parents=True, exist_ok=True)
 
-        # Small file (32 bytes < 64 threshold)
+        # Small file (32 bytes < 64 threshold when part_size=32)
         small_content = b"small file content here!12345678"
         small_hash = "smallhash"
 
-        # Large file (100 bytes >= 64 threshold)
+        # Large file (100 bytes >= 64 threshold when part_size=32)
         large_content = bytes(range(100))
         large_hash = "largehash"
 
@@ -372,10 +368,12 @@ class TestMultipartDownloadMixedFiles:
                 f"Data/{large_hash}.xxh128": large_content,
             }
         )
+        # Set multipart_part_size=32, so threshold is 64 bytes
         data_cache = S3DataCache(
             s3_bucket="test-bucket",
             s3_key_prefix="Data",
             s3_client=mock_client,
+            multipart_part_size=32,
         )
 
         small_path = download_dir / "small.bin"
@@ -400,10 +398,7 @@ class TestMultipartDownloadMixedFiles:
             total_size=len(small_content) + len(large_content),
         )
 
-        # Patch the constants on the S3 pipeline module
-        with patch.object(s3_pipeline_module, "MIN_SIZE_FOR_MULTIPART_DOWNLOAD", 64):
-            with patch.object(s3_pipeline_module, "DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE", 32):
-                result = download_manifest(manifest=manifest, data_cache=data_cache)
+        result = download_manifest(manifest=manifest, data_cache=data_cache)
 
         # Verify both files downloaded correctly
         assert small_path.exists()

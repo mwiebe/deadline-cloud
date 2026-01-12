@@ -22,6 +22,10 @@ from typing import Any, Optional
 from ..caches.s3_check_cache import S3CheckCache
 
 
+# Default part size for S3 multipart uploads/downloads (32MB)
+DEFAULT_S3_MULTIPART_PART_SIZE = 32 * 1024 * 1024  # 32MB
+
+
 @dataclass
 class ContentAddressedDataCache(ABC):
     """
@@ -79,12 +83,14 @@ class S3DataCache(ContentAddressedDataCache):
         s3_key_prefix: The key prefix for content-addressable storage (e.g., "Data")
         s3_client: A boto3 S3 client with permissions for GetObject, PutObject, HeadObject
         s3_check_cache: Optional cache to avoid redundant S3 existence checks
+        multipart_part_size: Part size for multipart uploads/downloads (default: 32MB)
     """
 
     s3_bucket: str
     s3_key_prefix: str
     s3_client: Any  # boto3 S3 client
     s3_check_cache: Optional[S3CheckCache] = field(default=None)
+    multipart_part_size: int = field(default=DEFAULT_S3_MULTIPART_PART_SIZE)
 
     def get_object_key(self, hash_value: str, algorithm: str) -> str:
         """Returns the S3 key for a given hash."""

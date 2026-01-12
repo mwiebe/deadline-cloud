@@ -106,26 +106,27 @@ ContentAddressedDataCache
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Performance
+### Example Performance Measurement
 
 Here's an example performance measurement from an EC2 instance against S3 in the same region.
 The script scripted_tests/snapshots_scale_test.py was used to generate the data.
 
-One thing we can see is that the caches
+One thing we can see is that the caches are providing large benefit. In the cases where the caches
+can fully eliminate S3 access, all the timings are sub-second.
 
-#### Transfer time for 4 GB, 442 files
+#### S3 Transfer time for 25 GB, 1905 files
 
 ====================================================================================================
 SCALING TEST SUMMARY (Duration as M:SS)
 ====================================================================================================
 |  Workers |      UPLOAD cold | UPLOAD warm-head |  UPLOAD warm-all |    DOWNLOAD cold |    DOWNLOAD warm |
 |---------:|-----------------:|-----------------:|-----------------:|-----------------:|-----------------:|
-|        1 |             1:02 |             0:06 |           0:00.0 |             1:26 |           0:00.2 |
-|        2 |             0:34 |             0:03 |           0:00.1 |             0:41 |           0:00.2 |
-|        4 |             0:24 |             0:02 |           0:00.1 |             0:29 |           0:00.2 |
-|        8 |             0:18 |           0:01.0 |           0:00.1 |             0:14 |           0:00.2 |
-|       16 |             0:17 |             0:01 |           0:00.1 |             0:08 |           0:00.2 |
-|       32 |             0:19 |             0:01 |           0:00.1 |             0:09 |           0:00.2 |
+|        1 |             5:44 |             0:25 |           0:00.2 |            11:08 |           0:00.3 |
+|        2 |             2:49 |             0:12 |           0:00.3 |             5:02 |           0:00.4 |
+|        4 |             2:05 |             0:06 |           0:00.3 |             2:25 |           0:00.4 |
+|        8 |             1:43 |             0:04 |           0:00.3 |             1:51 |           0:00.4 |
+|       16 |             1:43 |             0:04 |           0:00.3 |             0:47 |           0:00.4 |
+|       32 |             1:56 |             0:04 |           0:00.3 |             0:45 |           0:00.4 |
 
 ### Use Cases
 

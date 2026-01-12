@@ -530,10 +530,16 @@ class _TaskBasedPipeline:
         if self._hash_alg != HashAlgorithm.XXH128:
             raise ValueError(f"Unsupported hash algorithm for streaming: {self._hash_alg}")
 
+        # Use the data cache's part size if available, otherwise use default
+        if isinstance(self._data_cache, S3DataCache):
+            buffer_size = self._data_cache.multipart_part_size
+        else:
+            buffer_size = DEFAULT_STREAM_BUFFER_SIZE
+
         hasher = xxhash.xxh128()
         with open(file_path, "rb") as f:
             while True:
-                chunk = f.read(DEFAULT_STREAM_BUFFER_SIZE)
+                chunk = f.read(buffer_size)
                 if not chunk:
                     break
                 hasher.update(chunk)
@@ -772,7 +778,7 @@ class _TaskBasedPipeline:
         s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
 
         hasher = xxhash.xxh128()
-        multipart_threshold = 8 * 1024 * 1024  # 8MB threshold for multipart
+        multipart_threshold = 2 * self._data_cache.multipart_part_size
 
         try:
             extra_args: Dict[str, Any] = {}
@@ -845,7 +851,7 @@ class _TaskBasedPipeline:
         try:
             parts: List[Dict[str, Any]] = []
             part_number = 1
-            part_size = 64 * 1024 * 1024  # 64MB parts
+            part_size = self._data_cache.multipart_part_size
 
             with open(item.file_path, "rb") as f:
                 while True:

@@ -321,12 +321,13 @@ class TestS3ClientErrors:
         create_s3_bucket(TEST_BUCKET)
         self.s3_client = s3
 
-    def _create_s3_data_cache(self) -> S3DataCache:
+    def _create_s3_data_cache(self, multipart_part_size: int = 32 * 1024 * 1024) -> S3DataCache:
         """Create an S3DataCache for testing."""
         return S3DataCache(
             s3_bucket=TEST_BUCKET,
             s3_key_prefix=TEST_KEY_PREFIX,
             s3_client=self.s3_client,
+            multipart_part_size=multipart_part_size,
         )
 
     def test_s3_client_error_forbidden(self, tmp_path: Path) -> None:
@@ -549,12 +550,13 @@ class TestStreamingUploadErrorsS3:
         create_s3_bucket(TEST_BUCKET)
         self.s3_client = s3
 
-    def _create_s3_data_cache(self) -> S3DataCache:
+    def _create_s3_data_cache(self, multipart_part_size: int = 32 * 1024 * 1024) -> S3DataCache:
         """Create an S3DataCache for testing."""
         return S3DataCache(
             s3_bucket=TEST_BUCKET,
             s3_key_prefix=TEST_KEY_PREFIX,
             s3_client=self.s3_client,
+            multipart_part_size=multipart_part_size,
         )
 
     def test_hash_mismatch_during_streaming_s3_small(self, tmp_path: Path) -> None:
@@ -602,7 +604,7 @@ class TestStreamingUploadErrorsS3:
 
     def test_multipart_upload_error_aborts(self, tmp_path: Path) -> None:
         """Test that multipart upload is aborted on error."""
-        # Create a file large enough to trigger multipart (> 8MB threshold)
+        # Create a file large enough to trigger multipart (> 2 * multipart_part_size threshold)
         test_file = tmp_path / "large.bin"
         # We'll mock the size to avoid creating a huge file
         test_file.write_bytes(b"x" * 100)
@@ -617,7 +619,7 @@ class TestStreamingUploadErrorsS3:
                 ManifestFilePath(
                     path=abs_path,
                     hash=None,
-                    size=10 * 1024 * 1024,  # 10MB - triggers multipart
+                    size=10 * 1024 * 1024,  # 10MB - triggers multipart when part_size=4MB
                     mtime=int(file_stat.st_mtime_ns // 1000),
                 )
             ],
@@ -625,7 +627,8 @@ class TestStreamingUploadErrorsS3:
             file_chunk_size_bytes=-1,  # No chunking
         )
 
-        data_cache = self._create_s3_data_cache()
+        # Use small multipart_part_size so 10MB triggers multipart (threshold = 2 * 4MB = 8MB)
+        data_cache = self._create_s3_data_cache(multipart_part_size=4 * 1024 * 1024)
 
         # Track if abort was called
         abort_called = []
