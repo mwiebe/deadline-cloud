@@ -106,6 +106,25 @@ ContentAddressedDataCache
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Performance
+
+Here's an example performance measurement from an EC2 instance against S3 in the same region.
+The script scripted_tests/snapshots_scale_test.py was used to generate the data.
+
+One thing we can see is that the caches
+
+#### Transfer time for 25 GB, 1905 files
+
+| Workers   | UPLOAD cold | UPLOAD warm-head | UPLOAD warm-all | DOWNLOAD cold | DOWNLOAD warm |
+|--------:  |------------:|-----------------:|----------------:|--------------:|--------------:|
+| 1         | 5:39        | 0:29             | 0:00.1          | 11:20         | 0:00.3        |
+| 2         | 2:47        | 0:24             | 0:00.1          | 4:56          | 0:00.4        |
+| 4         | 2:06        | 0:24             | 0:00.1          | 2:39          | 0:00.4        |
+| 8         | 1:42        | 0:25             | 0:00.1          | 1:24          | 0:00.4        |
+| 16        | 1:42        | 0:24             | 0:00.1          | 1:07          | 0:00.4        |
+| 32        | 1:53        | 0:24             | 0:00.1          | 1:01          | 0:00.4        |
+| 64        | 2:27        | 0:27             | 0:00.1          | 1:04          | 0:00.4        |
+
 ### Use Cases
 
 1. (`deadline bundle submit`) When submitting a job to a cloud render farm,
@@ -592,8 +611,8 @@ The `statistics` field contains a `SummaryStatistics` object with:
 | `transfer_rate` | Upload throughput in bytes/second |
 
 Files are skipped when:
-1. The hash cache has the file's hash AND the data cache already contains that hash (pre-pipeline skip)
-2. The S3 conditional write (`IfNoneMatch='*'`) returns `PreconditionFailed`, indicating the object already exists
+1. The hash cache has the file's hash AND the data cache already contains that hash
+2. The HeadObject check finds the object already exists in S3
 
 **Raises:** `ValueError` if the manifest contains relative paths
 
@@ -695,6 +714,83 @@ For chunked files, each chunk is stored separately:
 When both caches hit (for `S3DataCache`), the file is completely skipped (no read, no hash, no upload).
 
 For `FileSystemDataCache`, the `object_exists()` method checks the local filesystem directly, so no separate check cache is needed.
+
+**Cache Check Architecture:**
+
+All cache checks (hash cache, S3 check cache, and HeadObject fallback) are performed **inside the
+worker thread pool**, not on the main thread. This design choice provides significant performance
+benefits:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Worker Thread (per item)                     │
+├─────────────────────────────────────────────────────────────────┤
+│  1. Check hash cache (thread-local SQLite connection)           │
+│     └─► If hit + mtime match, get cached_hash                   │
+│                                                                  │
+│  2. Check if object exists in data cache:                       │
+│     a. S3 check cache lookup (thread-local SQLite)              │
+│     b. If miss, HeadObject call to S3                           │
+│     └─► If exists, mark as skipped (no memory allocation)       │
+│                                                                  │
+│  3. If object doesn't exist (need to upload):                   │
+│     a. Allocate memory from pool                                │
+│     b. Read file chunk from disk                                │
+│     c. Compute actual hash                                      │
+│     d. If actual hash != cached_hash:                           │
+│        - Re-check HeadObject with actual hash                   │
+│        - If exists, skip upload (release memory)                │
+│     e. Submit to upload stage                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why we re-read and re-hash when S3 misses (even with hash cache hit):**
+
+When the hash cache hits but the object doesn't exist in S3, we must re-read the file and
+compute the hash ourselves before uploading. We cannot trust the hash cache alone for uploads
+because:
+
+1. The hash cache could be stale (file changed but mtime check passed due to clock skew)
+2. The hash cache could be corrupted
+3. We need the actual file data to upload anyway
+
+The hash cache is only trusted for **skipping** when the data already exists in S3 (verified
+by HeadObject). For uploads, we always verify by reading and hashing the actual file content.
+
+**Why we re-check HeadObject when hash changes:**
+
+If the computed hash differs from the cached hash, the file content has changed. The new hash
+might already exist in S3 from a previous upload of identical content (content-addressable
+storage). Rather than uploading redundantly, we do one more HeadObject check with the new hash.
+
+This handles the scenario:
+1. Hash cache has stale `hash_A` (file was modified)
+2. HeadObject(`hash_A`) returns 404 (original content deleted or never uploaded)
+3. We read file, compute `hash_B` (current content)
+4. HeadObject(`hash_B`) returns 200 (content exists from another upload)
+5. Skip upload - no redundant transfer
+
+**Why cache checks are in worker threads (not main thread):**
+
+1. **Parallelizes HeadObject calls:** When the S3 check cache misses, HeadObject calls to S3
+   take ~15ms each. With 2000 chunks, serial execution takes ~30 seconds. With 8 workers
+   in parallel, this drops to ~4 seconds.
+
+2. **Memory efficiency:** By checking caches before allocating memory, items that will be
+   skipped never consume memory pool resources.
+
+3. **Thread-safe caches:** Both `HashCache` and `S3CheckCache` use thread-local SQLite
+   connections (`get_local_connection()`), making concurrent access safe and efficient.
+
+4. **Simpler code flow:** Each worker handles its item end-to-end, from cache check through
+   upload, rather than splitting logic between main thread and workers.
+
+**Performance comparison (25GB, 1920 chunks, warm hash cache, cold S3 check cache):**
+
+| Architecture | HeadObject Time | Reason |
+|--------------|-----------------|--------|
+| Main thread (serial) | ~30 seconds | 1920 × 15ms = 28.8s |
+| Worker threads (8 workers) | ~4 seconds | Parallelized across workers |
 
 **Entry Type Handling:**
 

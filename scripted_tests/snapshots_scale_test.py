@@ -1263,33 +1263,107 @@ def run_s3_test(
         manifest, collect_result = test_collect(source_root, config, print_fn)
         results.append(collect_result)
 
-        # Test HASH_UPLOAD with S3
-        hashed_manifest, hash_upload_result = test_hash_upload_s3(
+        # =====================================================================
+        # UPLOAD PASS 1: Cold (fresh caches, fresh S3 prefix)
+        # =====================================================================
+        # Use a unique prefix to ensure cold upload
+        cold_s3_prefix = f"{s3_prefix}-{int(time.time())}"
+        print_fn(f"\n  [Upload Pass 1: COLD - fresh S3 prefix: {cold_s3_prefix}]")
+
+        hashed_manifest, hash_upload_result_cold = test_hash_upload_s3(
             manifest=manifest,
             s3_bucket=s3_bucket,
-            s3_prefix=s3_prefix,
+            s3_prefix=cold_s3_prefix,
             hash_cache_dir=hash_cache_dir,
             s3_check_cache_dir=s3_check_cache_dir,
             config=config,
             print_fn=print_fn,
         )
-        results.append(hash_upload_result)
+        hash_upload_result_cold = TimingResult(
+            operation="HASH_UPLOAD (S3) - cold",
+            duration_seconds=hash_upload_result_cold.duration_seconds,
+            files_processed=hash_upload_result_cold.files_processed,
+            bytes_processed=hash_upload_result_cold.bytes_processed,
+            throughput_mb_s=hash_upload_result_cold.throughput_mb_s,
+        )
+        results.append(hash_upload_result_cold)
+
+        # =====================================================================
+        # UPLOAD PASS 2: Warm (same hash cache, s3 check cache, data cache)
+        # =====================================================================
+        print_fn(f"\n  [Upload Pass 2: WARM - same hash cache, s3 check cache, data in S3]")
+
+        _, hash_upload_result_warm = test_hash_upload_s3(
+            manifest=manifest,
+            s3_bucket=s3_bucket,
+            s3_prefix=cold_s3_prefix,  # Same prefix - data exists
+            hash_cache_dir=hash_cache_dir,  # Same hash cache
+            s3_check_cache_dir=s3_check_cache_dir,  # Same s3 check cache
+            config=config,
+            print_fn=print_fn,
+        )
+        hash_upload_result_warm = TimingResult(
+            operation="HASH_UPLOAD (S3) - warm (all caches)",
+            duration_seconds=hash_upload_result_warm.duration_seconds,
+            files_processed=hash_upload_result_warm.files_processed,
+            bytes_processed=hash_upload_result_warm.bytes_processed,
+            throughput_mb_s=hash_upload_result_warm.throughput_mb_s,
+        )
+        results.append(hash_upload_result_warm)
+
+        # =====================================================================
+        # UPLOAD PASS 3: Warm but fresh S3 check cache (hash cache warm, data exists)
+        # =====================================================================
+        print_fn(f"\n  [Upload Pass 3: WARM - fresh s3 check cache, same hash cache, data in S3]")
+
+        # Create fresh s3 check cache dir
+        s3_check_cache_dir_fresh = temp_path / "s3_check_cache_fresh"
+
+        _, hash_upload_result_warm_no_s3cache = test_hash_upload_s3(
+            manifest=manifest,
+            s3_bucket=s3_bucket,
+            s3_prefix=cold_s3_prefix,  # Same prefix - data exists
+            hash_cache_dir=hash_cache_dir,  # Same hash cache
+            s3_check_cache_dir=s3_check_cache_dir_fresh,  # Fresh s3 check cache
+            config=config,
+            print_fn=print_fn,
+        )
+        hash_upload_result_warm_no_s3cache = TimingResult(
+            operation="HASH_UPLOAD (S3) - warm (no s3 check cache)",
+            duration_seconds=hash_upload_result_warm_no_s3cache.duration_seconds,
+            files_processed=hash_upload_result_warm_no_s3cache.files_processed,
+            bytes_processed=hash_upload_result_warm_no_s3cache.bytes_processed,
+            throughput_mb_s=hash_upload_result_warm_no_s3cache.throughput_mb_s,
+        )
+        results.append(hash_upload_result_warm_no_s3cache)
 
         if not config.skip_download:
-            # Test DOWNLOAD from S3
-            download_result = test_download_s3(
+            # =================================================================
+            # DOWNLOAD PASS 1: Cold (fresh download dir, fresh hash cache for download)
+            # =================================================================
+            print_fn(f"\n  [Download Pass 1: COLD - fresh download dir]")
+
+            download_hash_cache_dir = temp_path / "download_hash_cache"
+            download_result_cold = test_download_s3(
                 manifest=hashed_manifest,
                 source_root=source_root,
                 download_root=download_root,
                 s3_bucket=s3_bucket,
-                s3_prefix=s3_prefix,
-                hash_cache_dir=hash_cache_dir,
+                s3_prefix=cold_s3_prefix,
+                hash_cache_dir=download_hash_cache_dir,
                 config=config,
                 print_fn=print_fn,
             )
-            results.append(download_result)
+            download_result_cold = TimingResult(
+                operation="DOWNLOAD (S3) - cold",
+                duration_seconds=download_result_cold.duration_seconds,
+                files_processed=download_result_cold.files_processed,
+                bytes_processed=download_result_cold.bytes_processed,
+                throughput_mb_s=download_result_cold.throughput_mb_s,
+            )
+            results.append(download_result_cold)
 
-            # Verify correctness
+            # Verify correctness after first download
             if config.verify_correctness:
                 correctness_result = verify_downloaded_files(
                     download_root=download_root,
@@ -1297,7 +1371,282 @@ def run_s3_test(
                     print_fn=print_fn,
                 )
 
+            # =================================================================
+            # DOWNLOAD PASS 2: Warm (same download dir with files, same hash cache)
+            # =================================================================
+            print_fn(f"\n  [Download Pass 2: WARM - same download dir, same hash cache]")
+
+            download_result_warm = test_download_s3(
+                manifest=hashed_manifest,
+                source_root=source_root,
+                download_root=download_root,  # Same dir - files exist
+                s3_bucket=s3_bucket,
+                s3_prefix=cold_s3_prefix,
+                hash_cache_dir=download_hash_cache_dir,  # Same hash cache
+                config=config,
+                print_fn=print_fn,
+            )
+            download_result_warm = TimingResult(
+                operation="DOWNLOAD (S3) - warm (files exist)",
+                duration_seconds=download_result_warm.duration_seconds,
+                files_processed=download_result_warm.files_processed,
+                bytes_processed=download_result_warm.bytes_processed,
+                throughput_mb_s=download_result_warm.throughput_mb_s,
+            )
+            results.append(download_result_warm)
+
     return results, correctness_result
+
+
+# =============================================================================
+# Scaling Test Runner
+# =============================================================================
+
+
+def run_s3_scaling_test(
+    source_root: Path,
+    s3_bucket: str,
+    s3_prefix: str,
+    base_config: TestConfig,
+    worker_counts: List[int],
+    expected_checksums: Optional[Dict[str, str]] = None,
+    print_fn=print,
+) -> List[Tuple[int, List[TimingResult]]]:
+    """
+    Run scaling test with multiple worker counts.
+
+    Creates test data once, then runs tests with each worker count using fresh caches.
+    Returns list of (worker_count, results) tuples.
+    """
+    import boto3
+
+    all_scaling_results: List[Tuple[int, List[TimingResult]]] = []
+
+    # Use a unique S3 prefix for this scaling test
+    scaling_s3_prefix = f"{s3_prefix}-scaling-{int(time.time())}"
+
+    print_fn("\n" + "=" * 60)
+    print_fn("S3 SCALING TEST")
+    print_fn(f"  s3_bucket: {s3_bucket}")
+    print_fn(f"  s3_prefix: {scaling_s3_prefix}")
+    print_fn(f"  worker_counts: {worker_counts}")
+    print_fn("=" * 60)
+
+    # First, collect the manifest once (doesn't depend on worker count)
+    manifest, _ = test_collect(source_root, base_config, print_fn)
+
+    for worker_count in worker_counts:
+        print_fn("\n" + "#" * 60)
+        print_fn(f"# SCALING TEST: max_workers = {worker_count}")
+        print_fn("#" * 60)
+
+        # Create config with this worker count
+        config = TestConfig(
+            small_files=base_config.small_files,
+            medium_files=base_config.medium_files,
+            large_files=base_config.large_files,
+            large_file_size=base_config.large_file_size,
+            subdirectories=base_config.subdirectories,
+            max_nesting_depth=base_config.max_nesting_depth,
+            max_workers=worker_count,
+            max_memory_mb=base_config.max_memory_mb,
+            verify_correctness=False,  # Skip verification for scaling tests
+            local_only=base_config.local_only,
+            s3_bucket=base_config.s3_bucket,
+            s3_prefix=base_config.s3_prefix,
+            skip_download=base_config.skip_download,
+            setup_only=base_config.setup_only,
+            keep_files=base_config.keep_files,
+            chunk_size_bytes=base_config.chunk_size_bytes,
+            use_hash_cache=base_config.use_hash_cache,
+            cprofile_operation=base_config.cprofile_operation,
+        )
+
+        results: List[TimingResult] = []
+
+        with tempfile.TemporaryDirectory(prefix=f"snapshots_scaling_{worker_count}_") as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Use unique S3 prefix per worker count for cold upload
+            worker_s3_prefix = f"{scaling_s3_prefix}-w{worker_count}"
+
+            # Fresh caches for each worker count
+            hash_cache_dir = temp_path / "hash_cache"
+            s3_check_cache_dir = temp_path / "s3_check_cache"
+            download_root = temp_path / "download"
+
+            # =====================================================================
+            # UPLOAD PASS 1: Cold
+            # =====================================================================
+            print_fn(f"\n  [Upload Cold - workers={worker_count}]")
+            hashed_manifest, upload_cold = test_hash_upload_s3(
+                manifest=manifest,
+                s3_bucket=s3_bucket,
+                s3_prefix=worker_s3_prefix,
+                hash_cache_dir=hash_cache_dir,
+                s3_check_cache_dir=s3_check_cache_dir,
+                config=config,
+                print_fn=print_fn,
+            )
+            upload_cold = TimingResult(
+                operation=f"UPLOAD cold (w={worker_count})",
+                duration_seconds=upload_cold.duration_seconds,
+                files_processed=upload_cold.files_processed,
+                bytes_processed=upload_cold.bytes_processed,
+                throughput_mb_s=upload_cold.throughput_mb_s,
+            )
+            results.append(upload_cold)
+
+            # =====================================================================
+            # UPLOAD PASS 2: Warm (all caches)
+            # =====================================================================
+            print_fn(f"\n  [Upload Warm (all caches) - workers={worker_count}]")
+            _, upload_warm_all = test_hash_upload_s3(
+                manifest=manifest,
+                s3_bucket=s3_bucket,
+                s3_prefix=worker_s3_prefix,
+                hash_cache_dir=hash_cache_dir,
+                s3_check_cache_dir=s3_check_cache_dir,
+                config=config,
+                print_fn=print_fn,
+            )
+            upload_warm_all = TimingResult(
+                operation=f"UPLOAD warm-all (w={worker_count})",
+                duration_seconds=upload_warm_all.duration_seconds,
+                files_processed=upload_warm_all.files_processed,
+                bytes_processed=upload_warm_all.bytes_processed,
+                throughput_mb_s=upload_warm_all.throughput_mb_s,
+            )
+            results.append(upload_warm_all)
+
+            # =====================================================================
+            # UPLOAD PASS 3: Warm (no s3 check cache - HeadObject path)
+            # =====================================================================
+            print_fn(f"\n  [Upload Warm (HeadObject) - workers={worker_count}]")
+            s3_check_cache_dir_fresh = temp_path / "s3_check_cache_fresh"
+            _, upload_warm_head = test_hash_upload_s3(
+                manifest=manifest,
+                s3_bucket=s3_bucket,
+                s3_prefix=worker_s3_prefix,
+                hash_cache_dir=hash_cache_dir,
+                s3_check_cache_dir=s3_check_cache_dir_fresh,
+                config=config,
+                print_fn=print_fn,
+            )
+            upload_warm_head = TimingResult(
+                operation=f"UPLOAD warm-head (w={worker_count})",
+                duration_seconds=upload_warm_head.duration_seconds,
+                files_processed=upload_warm_head.files_processed,
+                bytes_processed=upload_warm_head.bytes_processed,
+                throughput_mb_s=upload_warm_head.throughput_mb_s,
+            )
+            results.append(upload_warm_head)
+
+            if not config.skip_download:
+                # =================================================================
+                # DOWNLOAD PASS 1: Cold
+                # =================================================================
+                print_fn(f"\n  [Download Cold - workers={worker_count}]")
+                download_hash_cache = temp_path / "download_hash_cache"
+                download_cold = test_download_s3(
+                    manifest=hashed_manifest,
+                    source_root=source_root,
+                    download_root=download_root,
+                    s3_bucket=s3_bucket,
+                    s3_prefix=worker_s3_prefix,
+                    hash_cache_dir=download_hash_cache,
+                    config=config,
+                    print_fn=print_fn,
+                )
+                download_cold = TimingResult(
+                    operation=f"DOWNLOAD cold (w={worker_count})",
+                    duration_seconds=download_cold.duration_seconds,
+                    files_processed=download_cold.files_processed,
+                    bytes_processed=download_cold.bytes_processed,
+                    throughput_mb_s=download_cold.throughput_mb_s,
+                )
+                results.append(download_cold)
+
+                # =================================================================
+                # DOWNLOAD PASS 2: Warm
+                # =================================================================
+                print_fn(f"\n  [Download Warm - workers={worker_count}]")
+                download_warm = test_download_s3(
+                    manifest=hashed_manifest,
+                    source_root=source_root,
+                    download_root=download_root,
+                    s3_bucket=s3_bucket,
+                    s3_prefix=worker_s3_prefix,
+                    hash_cache_dir=download_hash_cache,
+                    config=config,
+                    print_fn=print_fn,
+                )
+                download_warm = TimingResult(
+                    operation=f"DOWNLOAD warm (w={worker_count})",
+                    duration_seconds=download_warm.duration_seconds,
+                    files_processed=download_warm.files_processed,
+                    bytes_processed=download_warm.bytes_processed,
+                    throughput_mb_s=download_warm.throughput_mb_s,
+                )
+                results.append(download_warm)
+
+        all_scaling_results.append((worker_count, results))
+
+    return all_scaling_results
+
+
+def print_scaling_summary(
+    scaling_results: List[Tuple[int, List[TimingResult]]],
+    total_bytes: int,
+    print_fn=print,
+) -> None:
+    """Print a summary chart of scaling test results."""
+    print_fn("\n" + "=" * 80)
+    print_fn("SCALING TEST SUMMARY")
+    print_fn("=" * 80)
+
+    # Extract operation types from first result
+    if not scaling_results:
+        return
+
+    _, first_results = scaling_results[0]
+    op_types = [r.operation.split(" (w=")[0] for r in first_results]
+
+    # Print header
+    header = f"{'Workers':>8}"
+    for op in op_types:
+        header += f" | {op:>20}"
+    print_fn(header)
+    print_fn("-" * len(header))
+
+    # Print data rows (throughput in MB/s)
+    for worker_count, results in scaling_results:
+        row = f"{worker_count:>8}"
+        for r in results:
+            if r.throughput_mb_s > 10000:
+                row += f" | {r.throughput_mb_s/1000:>17.1f}k"
+            else:
+                row += f" | {r.throughput_mb_s:>18.1f}"
+        print_fn(row)
+
+    print_fn("\n(Throughput in MB/s)")
+
+    # Also print duration table
+    print_fn("\n" + "-" * 80)
+    print_fn("Duration (seconds):")
+    print_fn("-" * 80)
+
+    header = f"{'Workers':>8}"
+    for op in op_types:
+        header += f" | {op:>20}"
+    print_fn(header)
+    print_fn("-" * len(header))
+
+    for worker_count, results in scaling_results:
+        row = f"{worker_count:>8}"
+        for r in results:
+            row += f" | {r.duration_seconds:>18.2f}s"
+        print_fn(row)
 
 
 # =============================================================================
@@ -1439,9 +1788,9 @@ def main() -> int:
     # Concurrency options
     parser.add_argument(
         "--max-workers",
-        type=int,
-        default=DEFAULT_MAX_WORKERS,
-        help=f"Maximum number of parallel workers (default: {DEFAULT_MAX_WORKERS})",
+        type=str,
+        default=str(DEFAULT_MAX_WORKERS),
+        help=f"Maximum number of parallel workers. Can be comma-separated for scaling test, e.g. '1,2,4,8,16' (default: {DEFAULT_MAX_WORKERS})",
     )
     parser.add_argument(
         "--max-memory",
@@ -1556,7 +1905,11 @@ def main() -> int:
     # Calculate default memory if not specified
     max_memory_mb = args.max_memory if args.max_memory is not None else _get_default_max_memory_mb()
 
-    # Build config
+    # Parse max_workers - can be single int or comma-separated list
+    worker_counts = [int(w.strip()) for w in args.max_workers.split(",")]
+    is_scaling_test = len(worker_counts) > 1
+
+    # Build config (use first worker count for initial config)
     config = TestConfig(
         small_files=args.small_files,
         medium_files=args.medium_files,
@@ -1564,7 +1917,7 @@ def main() -> int:
         large_file_size=preset_large_file_size,
         subdirectories=args.subdirectories,
         max_nesting_depth=args.max_nesting_depth,
-        max_workers=args.max_workers,
+        max_workers=worker_counts[0],
         max_memory_mb=max_memory_mb,
         verify_correctness=not args.no_verify,
         local_only=args.local_only,
@@ -1592,7 +1945,10 @@ def main() -> int:
     )
     print(f"  Subdirectories: {config.subdirectories}")
     print(f"  Max nesting depth: {config.max_nesting_depth}")
-    print(f"  Max workers: {config.max_workers}")
+    if is_scaling_test:
+        print(f"  Max workers: {worker_counts} (SCALING TEST)")
+    else:
+        print(f"  Max workers: {config.max_workers}")
     max_memory_str = f"{config.max_memory_mb / 1024:.1f} GB"
     if args.max_memory is None:
         max_memory_str += " (auto)"
@@ -1622,7 +1978,7 @@ def main() -> int:
         else:
             source_root = Path(tempfile.mkdtemp(prefix="snapshots_stress_src_"))
 
-        _, _, expected_checksums = create_test_files(source_root, config)
+        _, total_bytes, expected_checksums = create_test_files(source_root, config)
 
         if config.setup_only:
             print(f"\nSetup complete. Test files are in: {source_root}")
@@ -1630,7 +1986,26 @@ def main() -> int:
 
     try:
         # Run tests
-        if config.local_only:
+        if is_scaling_test and not config.local_only:
+            # Run scaling test with multiple worker counts
+            scaling_results = run_s3_scaling_test(
+                source_root=source_root,
+                s3_bucket=config.s3_bucket,  # type: ignore
+                s3_prefix=config.s3_prefix,  # type: ignore
+                base_config=config,
+                worker_counts=worker_counts,
+                expected_checksums=expected_checksums,
+            )
+
+            total_time = time.perf_counter() - start_time
+
+            # Print scaling summary
+            print_scaling_summary(scaling_results, total_bytes)
+            print(f"\n  Total test time: {total_time:.2f} seconds")
+            print("\n✓ SCALING TEST COMPLETE")
+            return 0
+
+        elif config.local_only:
             results, correctness = run_high_concurrency_test(
                 source_root, config, expected_checksums
             )

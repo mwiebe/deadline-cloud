@@ -264,6 +264,9 @@ class _TaskBasedPipeline:
     memory while UPLOAD tasks run independently to release that memory.
 
     Flow: READ+HASH task (pool 1) → UPLOAD task (pool 2) → completion
+
+    Cache checks (hash cache, S3 check cache, HeadObject) are performed in the
+    READ+HASH worker threads to parallelize S3 API calls.
     """
 
     def __init__(
@@ -275,6 +278,8 @@ class _TaskBasedPipeline:
         data_cache: ContentAddressedDataCache,
         account_id: Optional[str],
         progress_tracker: Optional[ProgressTracker],
+        hash_cache: Optional[HashCache] = None,
+        force_rehash: bool = False,
     ) -> None:
         self._read_hash_executor = read_hash_executor
         self._upload_executor = upload_executor
@@ -283,6 +288,8 @@ class _TaskBasedPipeline:
         self._data_cache = data_cache
         self._account_id = account_id
         self._progress_tracker = progress_tracker
+        self._hash_cache = hash_cache
+        self._force_rehash = force_rehash
 
         # Track completion
         self._pending_count = 0
@@ -353,9 +360,66 @@ class _TaskBasedPipeline:
     # READ+HASH Stage (Combined for CPU cache efficiency)
     # =========================================================================
 
+    def _check_cache_and_skip(self, item: WorkItem) -> tuple[Optional[str], bool]:
+        """
+        Check hash cache and data cache to see if this item can be skipped.
+
+        Returns (cached_hash, can_skip):
+        - (hash, True): Hash found and object exists in data cache - skip entirely
+        - (hash, False): Hash found but object not in data cache - need to verify
+        - (None, False): No cached hash - need to read and hash
+        
+        When can_skip is False but cached_hash is not None, the caller should
+        compare the computed hash with cached_hash. If they match, no need to
+        re-check HeadObject. If they differ, should check HeadObject with new hash.
+        
+        This is called from worker threads to parallelize cache checks.
+        """
+        if self._hash_cache is None or self._force_rehash:
+            return None, False
+
+        mtime_str = str(item.mtime) if item.mtime is not None else ""
+
+        # Get hash cache entry (uses thread-local SQLite connection)
+        if isinstance(item, _StreamingWorkItem):
+            hash_cache_entry = self._hash_cache.get_entry(
+                item.cache_key,
+                self._hash_alg,
+            )
+        else:
+            # _ChunkWorkItem
+            if item.chunk_start == 0 and item.chunk_end == item.file_size:
+                # Whole file (single chunk)
+                hash_cache_entry = self._hash_cache.get_entry(
+                    item.cache_key,
+                    self._hash_alg,
+                )
+            else:
+                # Chunked file
+                hash_cache_entry = self._hash_cache.get_entry(
+                    item.cache_key,
+                    self._hash_alg,
+                    item.chunk_start,
+                    item.chunk_end,
+                )
+
+        if hash_cache_entry is None or hash_cache_entry.last_modified_time != mtime_str:
+            return None, False
+
+        cached_hash = hash_cache_entry.file_hash
+
+        # Check if object exists in data cache (may call HeadObject for S3)
+        if self._data_cache.object_exists(cached_hash, self._hash_alg.value):
+            return cached_hash, True  # Can skip entirely
+
+        return cached_hash, False  # Have cached hash but need to verify
+
     def _do_read_and_hash(self, item: WorkItem) -> None:
         """
         Combined READ+HASH stage: Read file data and compute hash while bytes stream into buffer.
+
+        First checks caches to skip items that are already uploaded. Cache checks are done
+        in worker threads to parallelize S3 HeadObject calls.
 
         For _ChunkWorkItem: allocate memory, read chunk data, hash as bytes stream in, submit UPLOAD task.
         For _StreamingWorkItem: stream through file computing hash as we read, submit UPLOAD task.
@@ -371,9 +435,44 @@ class _TaskBasedPipeline:
                     self._decrement_pending()
                     return
 
+            # Check caches first (before allocating memory)
+            # This parallelizes HeadObject calls across worker threads
+            cached_hash, can_skip = self._check_cache_and_skip(item)
+            if can_skip:
+                # Item is fully cached - mark as skipped and record result
+                if isinstance(item, _StreamingWorkItem):
+                    item.file_hash = cached_hash
+                else:
+                    item.chunk_hash = cached_hash
+                item.skipped = True
+                item.uploaded = False
+                # Track progress for skipped items
+                if self._progress_tracker is not None:
+                    if isinstance(item, _StreamingWorkItem):
+                        self._progress_tracker.track_progress_callback(item.file_size)
+                    else:
+                        self._progress_tracker.track_progress_callback(item.chunk_end - item.chunk_start)
+                self._record_result(item)
+                self._decrement_pending()
+                logger.debug(f"Skipped (cache hit): {item.file_path}")
+                return
+
             if isinstance(item, _StreamingWorkItem):
                 # Streaming items compute hash while reading (already combined)
                 item.file_hash = self._stream_hash_file(item.file_path)
+                
+                # If hash changed from cached, check if new hash exists in S3
+                if cached_hash is not None and item.file_hash != cached_hash:
+                    if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
+                        item.skipped = True
+                        item.uploaded = False
+                        if self._progress_tracker is not None:
+                            self._progress_tracker.track_progress_callback(item.file_size)
+                        self._record_result(item)
+                        self._decrement_pending()
+                        logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
+                        return
+                
                 # Submit to UPLOAD stage in the upload pool
                 self._upload_executor.submit(self._do_upload, item)
                 return
@@ -392,6 +491,21 @@ class _TaskBasedPipeline:
                 # Hash while data is fresh in memory
                 if item.data is not None:
                     item.chunk_hash = hash_data(item.data, self._hash_alg)
+                    
+                    # If hash changed from cached, check if new hash exists in S3
+                    if cached_hash is not None and item.chunk_hash != cached_hash:
+                        if self._data_cache.object_exists(item.chunk_hash, self._hash_alg.value):
+                            # Release memory - we're not uploading
+                            self._memory_pool.release(chunk_size)
+                            item.data = None
+                            item.skipped = True
+                            item.uploaded = False
+                            if self._progress_tracker is not None:
+                                self._progress_tracker.track_progress_callback(chunk_size)
+                            self._record_result(item)
+                            self._decrement_pending()
+                            logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
+                            return
             except Exception:
                 # Release memory on error
                 self._memory_pool.release(chunk_size)
@@ -923,6 +1037,8 @@ def _run_pipeline(
     max_memory_bytes: int,
     max_workers: int,
     progress_tracker: Optional[ProgressTracker],
+    hash_cache: Optional[HashCache] = None,
+    force_rehash: bool = False,
 ) -> List[WorkItem]:
     """
     Run the pipeline on work items using separate thread pools for each stage.
@@ -930,6 +1046,9 @@ def _run_pipeline(
     Uses two thread pools to prevent deadlock:
     - READ+HASH pool: reads files and computes hashes, blocks on memory allocation
     - UPLOAD pool: writes to data cache and releases memory
+
+    Cache checks (hash cache, S3 check cache, HeadObject) are performed in the
+    READ+HASH worker threads to parallelize S3 API calls.
 
     This separation ensures UPLOAD tasks can always run to release memory,
     even when READ+HASH tasks are blocked waiting for memory.
@@ -942,6 +1061,8 @@ def _run_pipeline(
         max_memory_bytes: Maximum memory for buffering
         max_workers: Maximum number of parallel workers per pool
         progress_tracker: Optional progress tracker
+        hash_cache: Optional hash cache for skipping already-hashed files
+        force_rehash: If True, ignore hash cache
 
     Returns:
         List of processed work items with hashes filled in
@@ -964,6 +1085,8 @@ def _run_pipeline(
                 data_cache=data_cache,
                 account_id=account_id,
                 progress_tracker=progress_tracker,
+                hash_cache=hash_cache,
+                force_rehash=force_rehash,
             )
 
             # Submit all work items
@@ -1150,192 +1273,104 @@ def hash_upload_manifest(
 
     # Track statistics
     start_time = time.perf_counter()
-    skipped_files = 0
-    skipped_bytes = 0
-    processed_files = 0
-    processed_bytes = 0
 
-    # Check caches and filter out fully cached items
-    items_to_process: List[WorkItem] = []
+    # Results from pipeline (cache checks happen in worker threads)
     cached_results: Dict[
         str, Union[str, Dict[int, str]]
     ] = {}  # cache_key -> hash or {chunk_idx -> hash}
 
-    for item in all_work_items:
-        skip_pipeline = False
-
-        if hash_cache is not None and not force_rehash:
-            mtime_str = str(item.mtime) if item.mtime is not None else ""
-
-            if isinstance(item, _StreamingWorkItem):
-                # Whole file hash lookup
-                hash_cache_entry = hash_cache.get_entry(
-                    item.cache_key,
-                    manifest.hashAlg,
-                )
-                if (
-                    hash_cache_entry is not None
-                    and hash_cache_entry.last_modified_time == mtime_str
-                ):
-                    cached_hash = hash_cache_entry.file_hash
-                    if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
-                        skip_pipeline = True
-                        cached_results[item.cache_key] = cached_hash
-                        logger.debug("Fully cached (hash + data cache): %s", item.file_path)
-            elif isinstance(item, _ChunkWorkItem):
-                if file_chunk_counts[item.cache_key] == 0:
-                    # Whole file (single chunk)
-                    hash_cache_entry = hash_cache.get_entry(
-                        item.cache_key,
-                        manifest.hashAlg,
-                    )
-                else:
-                    # Chunked file
-                    hash_cache_entry = hash_cache.get_entry(
-                        item.cache_key,
-                        manifest.hashAlg,
-                        item.chunk_start,
-                        item.chunk_end,
-                    )
-
-                if (
-                    hash_cache_entry is not None
-                    and hash_cache_entry.last_modified_time == mtime_str
-                ):
-                    cached_hash = hash_cache_entry.file_hash
-                    if data_cache.object_exists(cached_hash, manifest.hashAlg.value):
-                        skip_pipeline = True
-                        if file_chunk_counts[item.cache_key] == 0:
-                            # Whole file
-                            cached_results[item.cache_key] = cached_hash
-                        else:
-                            # Chunked file
-                            if item.cache_key not in cached_results:
-                                cached_results[item.cache_key] = {}
-                            chunk_dict = cached_results[item.cache_key]
-                            if isinstance(chunk_dict, dict):
-                                chunk_dict[item.chunk_index] = cached_hash
-                        logger.debug(
-                            f"Fully cached (hash + data cache): {item.file_path}"
-                            + (
-                                f" chunk {item.chunk_index}"
-                                if file_chunk_counts[item.cache_key] > 0
-                                else ""
-                            )
-                        )
-
-        if not skip_pipeline:
-            items_to_process.append(item)
-
-    # Calculate skipped vs processed based on what's going through the pipeline
-    # Track which files are fully skipped before pipeline (all chunks cached in hash+S3 cache)
-    files_with_work: set = set()
-    for item in items_to_process:
-        files_with_work.add(item.cache_key)
-
-    # Files skipped before pipeline (hash cache + S3 check cache hit)
-    pre_skipped_files = 0
-    pre_skipped_bytes = 0
-    for cache_key, (idx, entry) in entry_map.items():
-        file_size = entry.size or 0
-        if cache_key not in files_with_work:
-            pre_skipped_files += 1
-            pre_skipped_bytes += file_size
-
-    # Track uploads that were skipped during pipeline (PreconditionFailed)
-    pipeline_skipped_bytes_per_file: Dict[str, int] = {}  # cache_key -> skipped bytes
-
-    # Run the unified pipeline
-    if items_to_process:
+    # Run the unified pipeline (cache checks are parallelized in worker threads)
+    pipeline_results: List[WorkItem] = []
+    if all_work_items:
         pipeline_results = _run_pipeline(
-            work_items=items_to_process,
+            work_items=all_work_items,
             hash_alg=manifest.hashAlg,
             data_cache=data_cache,
             account_id=account_id,
             max_memory_bytes=max_memory_bytes,
             max_workers=max_workers,
             progress_tracker=progress_tracker,
+            hash_cache=hash_cache,
+            force_rehash=force_rehash,
         )
 
-        # Process results and update caches
-        for item in pipeline_results:
-            if isinstance(item, _StreamingWorkItem):
-                if item.file_hash is not None:
-                    cached_results[item.cache_key] = item.file_hash
+    # Process results and update caches
+    # Track skipped vs processed statistics
+    skipped_files_set: set = set()
+    skipped_bytes = 0
+    processed_bytes = 0
 
-                    # Update hash cache
-                    if hash_cache is not None:
-                        mtime_str = str(item.mtime) if item.mtime is not None else ""
-                        hash_cache.put_entry(
-                            HashCacheEntry(
-                                file_path=item.cache_key,
-                                hash_algorithm=manifest.hashAlg,
-                                file_hash=item.file_hash,
-                                last_modified_time=mtime_str,
-                                range_start=0,
-                                range_end=WHOLE_FILE_RANGE_END,
-                            )
+    for item in pipeline_results:
+        if isinstance(item, _StreamingWorkItem):
+            if item.file_hash is not None:
+                cached_results[item.cache_key] = item.file_hash
+
+                # Update hash cache (only for items that weren't skipped from cache)
+                if hash_cache is not None and not item.skipped:
+                    mtime_str = str(item.mtime) if item.mtime is not None else ""
+                    hash_cache.put_entry(
+                        HashCacheEntry(
+                            file_path=item.cache_key,
+                            hash_algorithm=manifest.hashAlg,
+                            file_hash=item.file_hash,
+                            last_modified_time=mtime_str,
+                            range_start=0,
+                            range_end=WHOLE_FILE_RANGE_END,
                         )
+                    )
 
-            elif isinstance(item, _ChunkWorkItem):
-                if item.chunk_hash is not None:
-                    if file_chunk_counts[item.cache_key] == 0:
-                        # Whole file
-                        cached_results[item.cache_key] = item.chunk_hash
-                        range_start = 0
-                        range_end = WHOLE_FILE_RANGE_END
-                    else:
-                        # Chunked file
-                        if item.cache_key not in cached_results:
-                            cached_results[item.cache_key] = {}
-                        chunk_dict = cached_results[item.cache_key]
-                        if isinstance(chunk_dict, dict):
-                            chunk_dict[item.chunk_index] = item.chunk_hash
-                        range_start = item.chunk_start
-                        range_end = item.chunk_end
+        elif isinstance(item, _ChunkWorkItem):
+            if item.chunk_hash is not None:
+                if file_chunk_counts[item.cache_key] == 0:
+                    # Whole file
+                    cached_results[item.cache_key] = item.chunk_hash
+                    range_start = 0
+                    range_end = WHOLE_FILE_RANGE_END
+                else:
+                    # Chunked file
+                    if item.cache_key not in cached_results:
+                        cached_results[item.cache_key] = {}
+                    chunk_dict = cached_results[item.cache_key]
+                    if isinstance(chunk_dict, dict):
+                        chunk_dict[item.chunk_index] = item.chunk_hash
+                    range_start = item.chunk_start
+                    range_end = item.chunk_end
 
-                    # Update hash cache
-                    if hash_cache is not None:
-                        mtime_str = str(item.mtime) if item.mtime is not None else ""
-                        hash_cache.put_entry(
-                            HashCacheEntry(
-                                file_path=item.cache_key,
-                                hash_algorithm=manifest.hashAlg,
-                                file_hash=item.chunk_hash,
-                                last_modified_time=mtime_str,
-                                range_start=range_start,
-                                range_end=range_end,
-                            )
+                # Update hash cache (only for items that weren't skipped from cache)
+                if hash_cache is not None and not item.skipped:
+                    mtime_str = str(item.mtime) if item.mtime is not None else ""
+                    hash_cache.put_entry(
+                        HashCacheEntry(
+                            file_path=item.cache_key,
+                            hash_algorithm=manifest.hashAlg,
+                            file_hash=item.chunk_hash,
+                            last_modified_time=mtime_str,
+                            range_start=range_start,
+                            range_end=range_end,
                         )
+                    )
 
-        # Track skipped uploads from pipeline (PreconditionFailed or S3 check cache)
-        for item in pipeline_results:
-            if item.skipped:
-                chunk_size = item.chunk_end - item.chunk_start if isinstance(item, _ChunkWorkItem) else item.file_size
-                if item.cache_key not in pipeline_skipped_bytes_per_file:
-                    pipeline_skipped_bytes_per_file[item.cache_key] = 0
-                pipeline_skipped_bytes_per_file[item.cache_key] += chunk_size
-
-    # Calculate final statistics
-    # A file is "skipped" if ALL its bytes were skipped (either pre-pipeline or during pipeline)
-    for cache_key, (idx, entry) in entry_map.items():
-        file_size = entry.size or 0
-        if cache_key not in files_with_work:
-            # Skipped before pipeline
-            skipped_files += 1
-            skipped_bytes += file_size
+        # Track statistics
+        chunk_size = item.chunk_end - item.chunk_start if isinstance(item, _ChunkWorkItem) else item.file_size
+        if item.skipped:
+            skipped_bytes += chunk_size
+            skipped_files_set.add(item.cache_key)
         else:
-            # Went through pipeline - check if all bytes were skipped
-            skipped_in_pipeline = pipeline_skipped_bytes_per_file.get(cache_key, 0)
-            if skipped_in_pipeline >= file_size:
-                # All bytes skipped during upload
+            processed_bytes += chunk_size
+
+    # Calculate final file-level statistics
+    skipped_files = 0
+    processed_files = 0
+    for cache_key in entry_map:
+        if cache_key in skipped_files_set:
+            # Check if ALL chunks of this file were skipped
+            all_skipped = all(item.skipped for item in pipeline_results if item.cache_key == cache_key)
+            if all_skipped:
                 skipped_files += 1
-                skipped_bytes += file_size
             else:
-                # At least some bytes were uploaded
                 processed_files += 1
-                processed_bytes += file_size - skipped_in_pipeline
-                skipped_bytes += skipped_in_pipeline
+        else:
+            processed_files += 1
 
     # Build result manifest
     hashed_paths: List[ManifestFilePath] = []

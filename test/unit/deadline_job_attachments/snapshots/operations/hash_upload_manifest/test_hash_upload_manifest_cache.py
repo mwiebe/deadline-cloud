@@ -881,3 +881,213 @@ class TestStreamingFilesCacheIntegration:
             )
 
             assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
+
+
+class TestHashCacheHitButObjectMissingFromS3:
+    """Tests for the case where hash cache has the hash but object is not on S3."""
+
+    @pytest.fixture(autouse=True)
+    def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
+        """Create the test S3 bucket before each test."""
+        create_s3_bucket(TEST_BUCKET)
+        self.s3_client = s3
+
+    def _create_s3_data_cache(self, s3_check_cache: Optional[S3CheckCache] = None) -> S3DataCache:
+        """Create an S3DataCache for testing."""
+        return S3DataCache(
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+            s3_client=self.s3_client,
+            s3_check_cache=s3_check_cache,
+        )
+
+    def test_hash_cache_hit_but_s3_miss_uploads_correctly(self, tmp_path: Path) -> None:
+        """Test that file is uploaded when hash cache hits but object is not on S3.
+        
+        This tests the scenario where:
+        1. Hash cache has the hash from a previous run
+        2. S3 check cache is empty (or cleared)
+        3. Object was deleted from S3
+        
+        The implementation must re-read and re-hash the file before uploading,
+        even though the hash cache has an entry. This is because we can't trust
+        the hash cache alone for uploads - we need to verify the hash by reading
+        the actual file data. The hash cache is only trusted for skipping when
+        the data already exists in S3.
+        """
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_content = "Test content for hash cache hit but S3 miss"
+        test_file.write_text(test_content)
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            # First upload - populates hash cache and uploads to S3
+            data_cache = self._create_s3_data_cache()
+            result1 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+            )
+            file_hash = result1.manifest.files[0].hash
+
+            # Verify hash cache entry exists
+            cache_key = str(test_file.resolve())
+            cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
+            assert cached_entry is not None, "Hash cache should have entry after first upload"
+            assert cached_entry.file_hash == file_hash
+
+            # Delete the object from S3 (simulating S3 data loss or cleanup)
+            s3_key = f"{TEST_KEY_PREFIX}/{file_hash}.xxh128"
+            self.s3_client.delete_object(Bucket=TEST_BUCKET, Key=s3_key)
+
+            # Verify object is gone
+            try:
+                self.s3_client.head_object(Bucket=TEST_BUCKET, Key=s3_key)
+                assert False, "Object should have been deleted"
+            except self.s3_client.exceptions.ClientError as e:
+                assert e.response["Error"]["Code"] == "404"
+
+            # Second upload - hash cache hits, but S3 HeadObject misses
+            # Must re-read and re-hash to verify before uploading
+            data_cache2 = self._create_s3_data_cache()  # Fresh cache, no s3_check_cache
+            result2 = hash_upload_manifest(
+                manifest=manifest,
+                data_cache=data_cache2,
+                hash_cache=hash_cache,
+            )
+
+            # Hash should be the same
+            assert result2.manifest.files[0].hash == file_hash
+
+            # Object should now exist in S3 again
+            response = self.s3_client.head_object(Bucket=TEST_BUCKET, Key=s3_key)
+            assert response["ContentLength"] == int(file_stat.st_size)
+
+            # Verify the content is correct
+            obj = self.s3_client.get_object(Bucket=TEST_BUCKET, Key=s3_key)
+            uploaded_content = obj["Body"].read().decode("utf-8")
+            assert uploaded_content == test_content, "Uploaded content should match original file"
+
+
+    def test_hash_changed_but_new_hash_exists_skips_upload(self, tmp_path: Path) -> None:
+        """Test that upload is skipped when hash changed but new hash already exists in S3.
+        
+        This tests the scenario where:
+        1. Hash cache has stale hash (hash_A) from previous run
+        2. HeadObject(hash_A) returns 404
+        3. File is re-read and re-hashed, producing hash_B
+        4. HeadObject(hash_B) returns 200 (exists from another upload)
+        5. Upload should be skipped
+        """
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        original_content = "Original content"
+        test_file.write_text(original_content)
+        file_stat = test_file.stat()
+        original_mtime = int(file_stat.st_mtime_ns // 1000)
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest1 = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=original_mtime,
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            # First upload - populates hash cache with original hash
+            data_cache = self._create_s3_data_cache()
+            result1 = hash_upload_manifest(
+                manifest=manifest1,
+                data_cache=data_cache,
+                hash_cache=hash_cache,
+            )
+            original_hash = result1.manifest.files[0].hash
+
+            # Now upload different content to S3 (simulating another client)
+            new_content = "New content that already exists"
+            from deadline.job_attachments.asset_manifests.hash_algorithms import hash_data
+            new_hash = hash_data(new_content.encode(), HashAlgorithm.XXH128)
+            new_s3_key = f"{TEST_KEY_PREFIX}/{new_hash}.xxh128"
+            self.s3_client.put_object(
+                Bucket=TEST_BUCKET,
+                Key=new_s3_key,
+                Body=new_content.encode(),
+            )
+
+            # Delete the original object from S3
+            original_s3_key = f"{TEST_KEY_PREFIX}/{original_hash}.xxh128"
+            self.s3_client.delete_object(Bucket=TEST_BUCKET, Key=original_s3_key)
+
+            # Modify the local file to have the new content
+            import time
+            time.sleep(0.01)  # Ensure mtime changes
+            test_file.write_text(new_content)
+            new_stat = test_file.stat()
+            new_size = int(new_stat.st_size)
+
+            # Create manifest with OLD mtime (simulating stale hash cache entry)
+            # The hash cache will hit because mtime matches the cached entry
+            manifest2 = AbsSnapshot(
+                hash_alg=HashAlgorithm.XXH128,
+                files=[
+                    ManifestFilePath(
+                        path=abs_path,
+                        hash=None,
+                        size=new_size,
+                        mtime=original_mtime,  # Use old mtime to trigger cache hit
+                    )
+                ],
+                total_size=new_size,
+            )
+
+            # Track put_object calls
+            put_calls = []
+            original_put = self.s3_client.put_object
+            def tracking_put(*args, **kwargs):
+                put_calls.append(kwargs.get("Key"))
+                return original_put(*args, **kwargs)
+            self.s3_client.put_object = tracking_put
+
+            # Second upload - hash cache hits (mtime matches), HeadObject(original_hash) misses
+            # File is re-read, produces new_hash, HeadObject(new_hash) hits
+            # Should skip upload
+            data_cache2 = self._create_s3_data_cache()
+            result2 = hash_upload_manifest(
+                manifest=manifest2,
+                data_cache=data_cache2,
+                hash_cache=hash_cache,
+            )
+
+            # Should have computed the new hash
+            assert result2.manifest.files[0].hash == new_hash
+
+            # Should NOT have uploaded (object already exists)
+            assert len(put_calls) == 0, f"Should not upload when hash exists, but got {put_calls}"
