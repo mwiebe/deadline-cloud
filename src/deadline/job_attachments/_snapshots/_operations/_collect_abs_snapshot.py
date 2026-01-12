@@ -88,7 +88,7 @@ def collect_abs_snapshot(
         ValueError: If any path in filenames is not a file or symlink.
 
     Note:
-        - Use hash_manifest() to fill in file hashes
+        - Use hash_abs_manifest() to fill in file hashes
         - All composable operations use v2025 structure internally
         - For v2023 on-disk format, use lossy conversion after processing
     """
@@ -150,7 +150,7 @@ def _collect_abs_snapshot_impl(
        collapse if target is outside (escaping)
 
     Files are collected with hash=None to indicate hashes have not been computed.
-    Use hash_manifest() or hash_upload_manifest() to fill in hashes.
+    Use hash_abs_manifest() or hash_upload_manifest() to fill in hashes.
 
     Args:
         file_chunk_size_bytes: Chunk size for large file hashing.

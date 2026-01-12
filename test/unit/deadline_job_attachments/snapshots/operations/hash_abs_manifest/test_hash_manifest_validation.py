@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_manifest input validation and error cases.
+Tests for hash_abs_manifest input validation and error cases.
 
 These tests cover:
 - Relative path rejection
@@ -17,7 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from deadline.job_attachments._snapshots import (
-    hash_manifest,
+    hash_abs_manifest,
     collect_abs_snapshot,
     SymlinkPolicy,
     DEFAULT_FILE_CHUNK_SIZE,
@@ -29,7 +29,7 @@ from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorit
 
 
 class TestInputValidation:
-    """Tests for input validation in hash_manifest."""
+    """Tests for input validation in hash_abs_manifest."""
 
     def test_rejects_relative_paths(self, tmp_path: Path) -> None:
         """Manifest with relative paths raises ValueError."""
@@ -49,7 +49,7 @@ class TestInputValidation:
         manifest.files[0].path = "relative/path/file.txt"
 
         with pytest.raises(ValueError, match="requires absolute paths"):
-            hash_manifest(manifest)
+            hash_abs_manifest(manifest)
 
     def test_accepts_absolute_paths(self, tmp_path: Path) -> None:
         """Manifest with absolute paths is accepted."""
@@ -62,7 +62,7 @@ class TestInputValidation:
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
         assert hashed.files[0].hash is not None
         assert hashed.files[0].hash != ""
 
@@ -90,7 +90,7 @@ class TestInputValidation:
         manifest.files[0].hash = "somehash"
 
         with pytest.raises(ValueError, match="should have hash=None"):
-            hash_manifest(manifest)
+            hash_abs_manifest(manifest)
 
     def test_large_file_valid_input_with_none_chunkhashes(self, tmp_path: Path) -> None:
         """Large file with chunkhashes=None (unhashed) is valid and gets hashed."""
@@ -114,11 +114,11 @@ class TestInputValidation:
         )
 
         with patch(
-            "deadline.job_attachments._snapshots._operations._hash_manifest._hash_file_chunked"
+            "deadline.job_attachments._snapshots._operations._hash_abs_manifest._hash_file_chunked"
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
-            hashed = hash_manifest(manifest)
+            hashed = hash_abs_manifest(manifest)
 
             assert hashed.files[0].chunkhashes is not None
             assert len(hashed.files[0].chunkhashes) == 2
@@ -145,11 +145,11 @@ class TestInputValidation:
         )
 
         with patch(
-            "deadline.job_attachments._snapshots._operations._hash_manifest._hash_file_chunked"
+            "deadline.job_attachments._snapshots._operations._hash_abs_manifest._hash_file_chunked"
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2", "hash3"]
 
-            hashed = hash_manifest(manifest)
+            hashed = hash_abs_manifest(manifest)
 
             assert hashed.files[0].chunkhashes is not None
             assert len(hashed.files[0].chunkhashes) == 3
@@ -168,7 +168,7 @@ class TestInputValidation:
         collected.files[0].chunkhashes = ["a", "b"]
 
         with pytest.raises(ValueError, match="should have chunkhashes=None"):
-            hash_manifest(collected)
+            hash_abs_manifest(collected)
 
     def test_small_file_valid_input_passes(self, tmp_path: Path) -> None:
         """Small file with valid input (hash=None, chunkhashes=None) passes."""
@@ -183,7 +183,7 @@ class TestInputValidation:
         assert collected.files[0].hash is None
         assert collected.files[0].chunkhashes is None
 
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert isinstance(hashed.files[0].hash, str)
         assert len(hashed.files[0].hash) > 0
@@ -214,7 +214,7 @@ class TestValidationErrorMessages:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            hash_manifest(manifest=input_manifest)
+            hash_abs_manifest(manifest=input_manifest)
 
         assert "should have hash=None" in str(exc_info.value)
         assert "large.bin" in str(exc_info.value)
@@ -241,7 +241,7 @@ class TestValidationErrorMessages:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            hash_manifest(manifest=input_manifest)
+            hash_abs_manifest(manifest=input_manifest)
 
         assert "should have chunkhashes=None" in str(exc_info.value)
         assert "large.bin" in str(exc_info.value)
@@ -267,7 +267,7 @@ class TestValidationErrorMessages:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            hash_manifest(manifest=input_manifest)
+            hash_abs_manifest(manifest=input_manifest)
 
         assert "should have hash=None" in str(exc_info.value)
         assert "small.txt" in str(exc_info.value)
@@ -294,7 +294,7 @@ class TestValidationErrorMessages:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            hash_manifest(manifest=input_manifest)
+            hash_abs_manifest(manifest=input_manifest)
 
         assert "should have chunkhashes=None" in str(exc_info.value)
         assert "small.txt" in str(exc_info.value)
@@ -315,7 +315,7 @@ class TestValidationErrorMessages:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            hash_manifest(manifest=input_manifest)
+            hash_abs_manifest(manifest=input_manifest)
 
         assert "requires absolute paths" in str(exc_info.value)
         assert "relative/path/file.txt" in str(exc_info.value)
@@ -334,7 +334,7 @@ class TestValidationErrorMessages:
         )
 
         with pytest.raises(ValueError) as exc_info:
-            hash_manifest(manifest=input_manifest)
+            hash_abs_manifest(manifest=input_manifest)
 
         assert "requires absolute paths" in str(exc_info.value)
         assert "relative/dir" in str(exc_info.value)

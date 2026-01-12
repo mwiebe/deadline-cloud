@@ -150,7 +150,7 @@ class TestCollectManifestMetadata:
         assert file_entries[0].mtime == expected_mtime
 
     def test_hash_is_none_for_unhashed(self, tmp_path: Path) -> None:
-        """Hash is set to None for unhashed files (to be filled by hash_manifest)."""
+        """Hash is set to None for unhashed files (to be filled by hash_abs_manifest)."""
         file_path = tmp_path / "file.txt"
         file_path.write_text("content")
 

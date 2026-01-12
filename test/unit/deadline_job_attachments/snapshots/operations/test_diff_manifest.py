@@ -16,7 +16,7 @@ These tests cover:
 - preserve_runnable mode for Windows compatibility
 
 Note: The diff operation is a pure comparison - it does NOT compute hashes.
-Both input manifests must already have hashes computed via hash_manifest().
+Both input manifests must already have hashes computed via hash_abs_manifest().
 """
 
 import pytest

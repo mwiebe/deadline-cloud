@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_manifest core functionality.
+Tests for hash_abs_manifest core functionality.
 
 These tests cover:
 - Basic file hashing
@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
-    hash_manifest,
+    hash_abs_manifest,
     collect_abs_snapshot,
     SymlinkPolicy,
     AbsSnapshotDiff,
@@ -22,7 +22,7 @@ from deadline.job_attachments._snapshots import (
     ManifestDirectoryPath,
     ManifestFilePath,
 )
-from deadline.job_attachments._snapshots._operations._hash_manifest import (
+from deadline.job_attachments._snapshots._operations._hash_abs_manifest import (
     _get_or_compute_hash,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import (
@@ -46,7 +46,7 @@ class TestHashManifestBasic:
         )
         assert collected.files[0].hash is None
 
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert len(hashed.files) == 1
         assert hashed.files[0].hash is not None
@@ -63,7 +63,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
         assert hashed.files[0].hash == expected_hash
@@ -78,7 +78,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert len(hashed.files) == 2
         for entry in hashed.files:
@@ -96,7 +96,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert hashed.files[0].size == collected.files[0].size
         assert hashed.files[0].mtime == collected.files[0].mtime
@@ -112,7 +112,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert hashed.totalSize == 8
 
@@ -125,7 +125,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert hashed.hashAlg == HashAlgorithm.XXH128
 
@@ -141,7 +141,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert hashed.files[0].runnable == collected.files[0].runnable
 
@@ -154,7 +154,7 @@ class TestHashManifestBasic:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert isinstance(hashed, AbsSnapshot)
 
@@ -205,7 +205,7 @@ class TestHashDiffManifest:
             parent_manifest_hash="parent123",
         )
 
-        hashed = hash_manifest(diff_manifest)
+        hashed = hash_abs_manifest(diff_manifest)
 
         assert hashed.files[0].hash is not None
         assert hashed.files[0].hash != ""
@@ -253,7 +253,7 @@ class TestHashDiffManifest:
             parent_manifest_hash="parent789",
         )
 
-        hashed = hash_manifest(diff_manifest)
+        hashed = hash_abs_manifest(diff_manifest)
 
         assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash == "parent789"
@@ -294,7 +294,7 @@ class TestHashDiffManifest:
             parent_manifest_hash=None,
         )
 
-        hashed = hash_manifest(diff_manifest)
+        hashed = hash_abs_manifest(diff_manifest)
 
         assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash is None
@@ -324,7 +324,7 @@ class TestManifestTypePreservation:
             total_size=stat_info.st_size,
         )
 
-        hashed = hash_manifest(manifest)
+        hashed = hash_abs_manifest(manifest)
 
         assert isinstance(hashed, AbsSnapshot)
 
@@ -350,7 +350,7 @@ class TestManifestTypePreservation:
             parent_manifest_hash="parent123",
         )
 
-        hashed = hash_manifest(manifest)
+        hashed = hash_abs_manifest(manifest)
 
         assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash == "parent123"
@@ -368,6 +368,6 @@ class TestManifestTypePreservation:
 
         assert isinstance(collected, AbsSnapshot)
 
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert isinstance(hashed, AbsSnapshot)

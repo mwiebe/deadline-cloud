@@ -40,7 +40,7 @@ from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 logger = logging.getLogger(__name__)
 
 
-def hash_manifest(
+def hash_abs_manifest(
     manifest: AbsManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,

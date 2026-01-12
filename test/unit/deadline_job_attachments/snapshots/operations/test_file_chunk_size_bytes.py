@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_manifest,
+    hash_abs_manifest,
     hash_upload_manifest,
 )
 from deadline.job_attachments._snapshots._content_addressed_data_cache import (
@@ -81,7 +81,7 @@ class TestCollectManifestFileChunkSizeBytes:
 
 
 class TestHashManifestFileChunkSizeBytes:
-    """Tests for file_chunk_size_bytes parameter in hash_manifest."""
+    """Tests for file_chunk_size_bytes parameter in hash_abs_manifest."""
 
     def test_preserves_input_chunk_size_when_none(self, tmp_path: Path) -> None:
         """When file_chunk_size_bytes is None, preserves input manifest's chunk size."""
@@ -104,7 +104,7 @@ class TestHashManifestFileChunkSizeBytes:
             file_chunk_size_bytes=input_chunk_size,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             file_chunk_size_bytes=None,  # Should preserve input
         )
@@ -134,7 +134,7 @@ class TestHashManifestFileChunkSizeBytes:
             file_chunk_size_bytes=input_chunk_size,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             file_chunk_size_bytes=output_chunk_size,
         )
@@ -161,7 +161,7 @@ class TestHashManifestFileChunkSizeBytes:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             file_chunk_size_bytes=None,  # Preserve input
         )
@@ -193,7 +193,7 @@ class TestHashManifestFileChunkSizeBytes:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,  # No chunking
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             file_chunk_size_bytes=1024 * 1024,  # Set output chunk size
         )
@@ -361,7 +361,7 @@ class TestEndToEndFileChunkSizeBytes:
         return FileSystemDataCache(root_path=cache_root)
 
     def test_collect_then_hash_preserves_chunk_size(self, tmp_path: Path) -> None:
-        """Chunk size flows from collect_abs_snapshot through hash_manifest."""
+        """Chunk size flows from collect_abs_snapshot through hash_abs_manifest."""
         (tmp_path / "file.txt").write_text("content")
         custom_chunk_size = 1024 * 1024  # 1MB
 
@@ -375,7 +375,7 @@ class TestEndToEndFileChunkSizeBytes:
         assert collected.fileChunkSizeBytes == custom_chunk_size
 
         # Hash should preserve chunk size when None
-        hashed = hash_manifest(
+        hashed = hash_abs_manifest(
             manifest=collected,
             file_chunk_size_bytes=None,
         )
@@ -422,7 +422,7 @@ class TestEndToEndFileChunkSizeBytes:
         assert collected.fileChunkSizeBytes == collect_chunk_size
 
         # Hash with different chunk size
-        hashed = hash_manifest(
+        hashed = hash_abs_manifest(
             manifest=collected,
             file_chunk_size_bytes=hash_chunk_size,
         )
@@ -458,7 +458,7 @@ class TestEndToEndFileChunkSizeBytes:
 
         # Override with small chunk size - file SHOULD be chunked now
         small_chunk_size = 16
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             file_chunk_size_bytes=small_chunk_size,
         )
@@ -524,13 +524,13 @@ class TestEndToEndFileChunkSizeBytes:
 
 class TestHashManifestSmallFiles:
     """
-    Tests for hash_manifest with small files and small chunk sizes.
+    Tests for hash_abs_manifest with small files and small chunk sizes.
 
     These tests verify that chunking works correctly with small chunk sizes,
     producing chunkhashes for files larger than the chunk size.
     """
 
-    def test_hash_manifest_small_file_with_small_chunk_size_produces_chunkhashes(
+    def test_hash_abs_manifest_small_file_with_small_chunk_size_produces_chunkhashes(
         self, tmp_path: Path
     ) -> None:
         """Test that small files with small chunk sizes produce chunkhashes."""
@@ -558,7 +558,7 @@ class TestHashManifestSmallFiles:
             file_chunk_size_bytes=chunk_size,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         # File should have chunkhashes, not hash
         assert result.files[0].hash is None
@@ -572,7 +572,7 @@ class TestHashManifestSmallFiles:
             expected_hash = hash_data(content[chunk_start:chunk_end], HashAlgorithm.XXH128)
             assert chunk_hash == expected_hash, f"Chunk {i} hash mismatch"
 
-    def test_hash_manifest_file_smaller_than_chunk_size_produces_single_hash(
+    def test_hash_abs_manifest_file_smaller_than_chunk_size_produces_single_hash(
         self, tmp_path: Path
     ) -> None:
         """Test that files smaller than chunk size produce a single hash."""
@@ -599,7 +599,7 @@ class TestHashManifestSmallFiles:
             file_chunk_size_bytes=chunk_size,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         # File should have hash, not chunkhashes
         assert result.files[0].hash is not None
@@ -609,7 +609,7 @@ class TestHashManifestSmallFiles:
         expected_hash = hash_data(content, HashAlgorithm.XXH128)
         assert result.files[0].hash == expected_hash
 
-    def test_hash_manifest_multiple_small_files_with_small_chunks(self, tmp_path: Path) -> None:
+    def test_hash_abs_manifest_multiple_small_files_with_small_chunks(self, tmp_path: Path) -> None:
         """Test hashing multiple small files with small chunk sizes."""
         files_data = [
             ("tiny.bin", 32),  # 2 chunks with 16-byte chunk size
@@ -642,7 +642,7 @@ class TestHashManifestSmallFiles:
             file_chunk_size_bytes=chunk_size,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         # All files should have chunkhashes since they're all > chunk_size
         for i, (filename, size) in enumerate(files_data):
@@ -654,7 +654,7 @@ class TestHashManifestSmallFiles:
                 f"File {filename} should have {expected_chunks} chunks"
             )
 
-    def test_hash_manifest_identical_files_same_hash(self, tmp_path: Path) -> None:
+    def test_hash_abs_manifest_identical_files_same_hash(self, tmp_path: Path) -> None:
         """Test that identical files produce the same hash."""
         content = bytes(range(256))
 
@@ -685,12 +685,12 @@ class TestHashManifestSmallFiles:
             total_size=512,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         # Both files should have the same hash
         assert result.files[0].hash == result.files[1].hash
 
-    def test_hash_manifest_different_files_different_hash(self, tmp_path: Path) -> None:
+    def test_hash_abs_manifest_different_files_different_hash(self, tmp_path: Path) -> None:
         """Test that different files produce different hashes."""
         file1 = tmp_path / "file1.bin"
         file2 = tmp_path / "file2.bin"
@@ -719,7 +719,7 @@ class TestHashManifestSmallFiles:
             total_size=16,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         # Files should have different hashes
         assert result.files[0].hash != result.files[1].hash

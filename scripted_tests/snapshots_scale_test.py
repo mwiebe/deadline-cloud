@@ -63,7 +63,7 @@ from typing import Dict, Iterator, List, Optional, Tuple
 # Import snapshots library
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_manifest,
+    hash_abs_manifest,
     hash_upload_manifest,
     download_manifest,
     compute_diff_manifest,
@@ -683,7 +683,7 @@ def test_hash(
 
     with HashCache(str(hash_cache_dir)) as hash_cache:
         start = time.perf_counter()
-        hashed_manifest = hash_manifest(
+        hashed_manifest = hash_abs_manifest(
             manifest=manifest,
             hash_cache=hash_cache,
             force_rehash=True,  # Force rehash for accurate timing

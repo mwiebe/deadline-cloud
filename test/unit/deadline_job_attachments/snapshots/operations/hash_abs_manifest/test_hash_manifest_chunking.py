@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_manifest chunking behavior.
+Tests for hash_abs_manifest chunking behavior.
 
 These tests cover:
 - _hash_file_chunked function
@@ -14,14 +14,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from deadline.job_attachments._snapshots import (
-    hash_manifest,
+    hash_abs_manifest,
     collect_abs_snapshot,
     SymlinkPolicy,
     DEFAULT_FILE_CHUNK_SIZE,
     AbsSnapshot,
     ManifestFilePath,
 )
-from deadline.job_attachments._snapshots._operations._hash_manifest import (
+from deadline.job_attachments._snapshots._operations._hash_abs_manifest import (
     _hash_file_chunked,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -185,7 +185,7 @@ class TestHashFileChunked:
 
 
 class TestLargeFileChunking:
-    """Tests for large file chunking in hash_manifest."""
+    """Tests for large file chunking in hash_abs_manifest."""
 
     def test_large_file_uses_chunkhashes(self, tmp_path: Path) -> None:
         """Files larger than chunk size use chunkhashes instead of hash."""
@@ -209,11 +209,11 @@ class TestLargeFileChunking:
         )
 
         with patch(
-            "deadline.job_attachments._snapshots._operations._hash_manifest._hash_file_chunked"
+            "deadline.job_attachments._snapshots._operations._hash_abs_manifest._hash_file_chunked"
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
-            hashed = hash_manifest(manifest)
+            hashed = hash_abs_manifest(manifest)
 
             assert hashed.files[0].chunkhashes == ["hash1", "hash2"]
             assert hashed.files[0].hash is None
@@ -229,7 +229,7 @@ class TestLargeFileChunking:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert hashed.files[0].hash is not None
         assert hashed.files[0].chunkhashes is None
@@ -264,7 +264,7 @@ class TestChunkedFileCacheMocked:
             file_chunk_size_bytes=chunk_size,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             hash_cache=mock_cache,
         )

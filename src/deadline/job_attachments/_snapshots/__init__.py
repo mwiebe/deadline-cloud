@@ -28,7 +28,7 @@ from ._content_addressed_data_cache import (
 )
 from ._operations import (
     collect_abs_snapshot,
-    hash_manifest,
+    hash_abs_manifest,
     hash_upload_manifest,
     UploadResult,
     download_manifest,
@@ -66,7 +66,7 @@ __all__ = [
     "FileSystemDataCache",
     # Operations
     "collect_abs_snapshot",
-    "hash_manifest",
+    "hash_abs_manifest",
     "hash_upload_manifest",
     "UploadResult",
     "download_manifest",

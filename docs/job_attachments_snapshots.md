@@ -218,7 +218,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | Module | Operation | Description |
 |--------|-----------|-------------|
 | `_collect_abs_snapshot.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
-| `_hash_manifest.py` | HASH | Fills in hashes for collected manifest |
+| `_hash_abs_manifest.py` | HASH | Fills in hashes for collected manifest |
 | `_hash_upload_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_download_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
@@ -423,14 +423,14 @@ for entry in manifest.files:
 - `_create_unhashed_file_entry()` - Creates file entry with `hash=None` and metadata
 - `_handle_symlink()` - Handles symlink according to policy
 
-### 2. HASH: `hash_manifest()`
+### 2. HASH: `hash_abs_manifest()`
 
-**Location:** `_hash_manifest.py`
+**Location:** `_hash_abs_manifest.py`
 
 Fills in hashes for a manifest that was created by `collect_abs_snapshot()` or `compute_diff_manifest()`. The input manifest must have absolute paths.
 
 ```python
-def hash_manifest(
+def hash_abs_manifest(
     manifest: AbsManifest,
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
@@ -503,7 +503,7 @@ The `parentManifestHash` field is preserved from the input manifest. The manifes
 ```python
 from deadline.job_attachments._snapshots import (
     collect_abs_snapshot,
-    hash_manifest,
+    hash_abs_manifest,
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
 
@@ -515,7 +515,7 @@ abs_manifest = collect_abs_snapshot(
 
 # Hash with a cache for efficiency
 with HashCache("/tmp/hash_cache") as cache:
-    hashed = hash_manifest(
+    hashed = hash_abs_manifest(
         manifest=abs_manifest,
         hash_cache=cache,
         force_rehash=False,  # Use cached hashes when available
@@ -542,7 +542,7 @@ Output:
 ```python
 from deadline.job_attachments._snapshots import (
     compute_diff_manifest,
-    hash_manifest,
+    hash_abs_manifest,
 )
 
 # Compute a diff between two snapshots (with ignore_hashes=True for fast comparison)
@@ -554,7 +554,7 @@ diff = compute_diff_manifest(
 )
 
 # Now hash the diff to fill in hashes for new/modified files
-hashed_diff = hash_manifest(diff)
+hashed_diff = hash_abs_manifest(diff)
 
 # Deleted entries are preserved unchanged
 for entry in hashed_diff.files:
@@ -1019,7 +1019,7 @@ local_baseline = result.manifest
 
 # Later, detect actual user changes reliably
 current_state = collect_abs_snapshot([download_dir], [])
-current_hashed = hash_manifest(current_state)
+current_hashed = hash_abs_manifest(current_state)
 changes = compute_diff_manifest(parent=local_baseline, current=current_hashed)
 # 'changes' now correctly reflects only real user modifications,
 # not false positives from mtime precision differences
@@ -2174,7 +2174,7 @@ Directory ──[collect]──► AbsSnapshot ──[hash]──► Hashed ─�
 abs_manifest = collect_abs_snapshot([root], [], version=version)
 
 # Step 2: Hash all files (requires absolute paths)
-hashed = hash_manifest(abs_manifest, hash_cache)
+hashed = hash_abs_manifest(abs_manifest, hash_cache)
 
 # Step 3: Extract as relative paths
 rel_manifest = subtree_manifest(hashed, root)
@@ -2248,7 +2248,7 @@ with open(parent_path) as f:
 
 # Collect and hash current directory (hash before subtree!)
 abs_manifest = collect_abs_snapshot([root], [], version=version)
-hashed = hash_manifest(abs_manifest, hash_cache, force_rehash=True)
+hashed = hash_abs_manifest(abs_manifest, hash_cache, force_rehash=True)
 current_rel = subtree_manifest(hashed, root)
 
 # Filter BOTH with same patterns

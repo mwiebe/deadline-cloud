@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_manifest hash cache integration.
+Tests for hash_abs_manifest hash cache integration.
 
 These tests cover:
 - Cache hits and misses with real HashCache
@@ -15,14 +15,14 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from deadline.job_attachments._snapshots import (
-    hash_manifest,
+    hash_abs_manifest,
     collect_abs_snapshot,
     SymlinkPolicy,
     AbsSnapshot,
     ManifestFilePath,
     WHOLE_FILE_CHUNK_SIZE,
 )
-from deadline.job_attachments._snapshots._operations._hash_manifest import (
+from deadline.job_attachments._snapshots._operations._hash_abs_manifest import (
     _get_or_compute_hash,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import (
@@ -51,7 +51,7 @@ class TestHashManifestWithCache:
         cache_key = str(Path(collected.files[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
-            hashed = hash_manifest(collected, hash_cache=hash_cache)
+            hashed = hash_abs_manifest(collected, hash_cache=hash_cache)
 
             assert hashed.files[0].hash != ""
 
@@ -86,7 +86,7 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = hash_manifest(collected, hash_cache=hash_cache)
+            hashed = hash_abs_manifest(collected, hash_cache=hash_cache)
 
             assert hashed.files[0].hash == fake_hash
 
@@ -116,7 +116,7 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = hash_manifest(collected, hash_cache=hash_cache)
+            hashed = hash_abs_manifest(collected, hash_cache=hash_cache)
 
             assert hashed.files[0].hash != fake_hash
 
@@ -147,7 +147,7 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = hash_manifest(collected, hash_cache=hash_cache, force_rehash=True)
+            hashed = hash_abs_manifest(collected, hash_cache=hash_cache, force_rehash=True)
 
             assert hashed.files[0].hash != fake_hash
 
@@ -164,7 +164,7 @@ class TestHashManifestWithCache:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_manifest(collected, hash_cache=None)
+        hashed = hash_abs_manifest(collected, hash_cache=None)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
         assert hashed.files[0].hash == expected_hash
@@ -242,7 +242,7 @@ class TestHashManifestCacheMocked:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             hash_cache=mock_cache,
         )
@@ -275,7 +275,7 @@ class TestHashManifestCacheMocked:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             hash_cache=mock_cache,
         )
@@ -320,7 +320,7 @@ class TestHashManifestCacheMocked:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             hash_cache=mock_cache,
         )
@@ -354,7 +354,7 @@ class TestHashManifestCacheMocked:
             file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
         )
 
-        result = hash_manifest(
+        result = hash_abs_manifest(
             manifest=input_manifest,
             hash_cache=mock_cache,
             force_rehash=True,

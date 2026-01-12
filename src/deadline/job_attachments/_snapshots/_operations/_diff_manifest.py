@@ -17,7 +17,7 @@ CRITICAL PRECONDITIONS:
    correctly within the filtered view.
 
 2. If ignore_hashes=False (default), both manifests must have hashes computed
-   (via hash_manifest()). If ignore_hashes=True, hashes are not required—
+   (via hash_abs_manifest()). If ignore_hashes=True, hashes are not required—
    comparison is done by metadata only (size, mtime, runnable).
 
 All composable operations use v2025 structure and semantics internally. Support for
@@ -124,7 +124,7 @@ def compute_diff_manifest(
        this function. This ensures deletions are computed correctly within the
        filtered view.
     2. If ignore_hashes=False (default), both manifests must have hashes computed
-       (via hash_manifest()). If ignore_hashes=True, hashes are not required—
+       (via hash_abs_manifest()). If ignore_hashes=True, hashes are not required—
        comparison is done by metadata only (size, mtime, runnable).
 
     Args:

@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for hash_manifest special entry handling.
+Tests for hash_abs_manifest special entry handling.
 
 These tests cover:
 - Symlink entries (pass through unchanged)
@@ -13,7 +13,7 @@ These tests cover:
 from pathlib import Path
 
 from deadline.job_attachments._snapshots import (
-    hash_manifest,
+    hash_abs_manifest,
     collect_abs_snapshot,
     SymlinkPolicy,
     AbsSnapshotDiff,
@@ -40,7 +40,7 @@ class TestSymlinkPassthrough:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         link_path = str(link).replace("\\", "/")
         target_path = str(target).replace("\\", "/")
@@ -71,7 +71,7 @@ class TestSymlinkPassthrough:
             total_size=0,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         assert len(result.files) == 1
         assert result.files[0].path == symlink_path
@@ -95,7 +95,7 @@ class TestSymlinkPassthrough:
             total_size=0,
         )
 
-        hashed = hash_manifest(manifest=input_manifest)
+        hashed = hash_abs_manifest(manifest=input_manifest)
 
         # Symlink should be passed through unchanged
         assert len(hashed.files) == 1
@@ -116,7 +116,7 @@ class TestSymlinkPassthrough:
             total_size=0,
         )
 
-        hashed = hash_manifest(diff_manifest)
+        hashed = hash_abs_manifest(diff_manifest)
 
         assert len(hashed.files) == 1
         assert hashed.files[0].symlink_target == "/some/absolute/target.txt"
@@ -142,7 +142,7 @@ class TestDeletedEntryPassthrough:
             total_size=0,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         assert len(result.files) == 1
         assert result.files[0].path == deleted_path
@@ -165,7 +165,7 @@ class TestDeletedEntryPassthrough:
             parent_manifest_hash="parent456",
         )
 
-        hashed = hash_manifest(diff_manifest)
+        hashed = hash_abs_manifest(diff_manifest)
 
         assert len(hashed.files) == 1
         assert hashed.files[0].deleted is True
@@ -186,7 +186,7 @@ class TestDeletedEntryPassthrough:
             total_size=0,
         )
 
-        hashed = hash_manifest(diff_manifest)
+        hashed = hash_abs_manifest(diff_manifest)
 
         assert len(hashed.dirs) == 1
         assert hashed.dirs[0].deleted is True
@@ -208,7 +208,7 @@ class TestDirectoryEntryHandling:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_manifest(collected)
+        hashed = hash_abs_manifest(collected)
 
         assert len(hashed.dirs) >= 1
         subdir_path = str(subdir).replace("\\", "/")
@@ -239,7 +239,7 @@ class TestDirectoryEntryHandling:
             total_size=7,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         assert len(result.dirs) == 1
         assert result.dirs[0].path == dir_path
@@ -258,7 +258,7 @@ class TestDirectoryEntryHandling:
             total_size=0,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         assert len(result.dirs) == 1
         assert result.dirs[0].path == dir_path
@@ -298,7 +298,7 @@ class TestMixedEntryTypes:
             total_size=7,
         )
 
-        result = hash_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         assert len(result.files) == 3
 
