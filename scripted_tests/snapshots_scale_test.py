@@ -66,7 +66,7 @@ from deadline.job_attachments._snapshots import (
     hash_abs_manifest,
     hash_upload_abs_manifest,
     download_abs_manifest,
-    compute_diff_manifest,
+    diff_snapshots,
     subtree_manifest,
     join_manifest,
     S3DataCache,
@@ -1109,7 +1109,7 @@ def test_diff(
     cprofile_op = config.cprofile_operation if config else None
     start = time.perf_counter()
     with profile_operation("diff", cprofile_op, print_fn):
-        diff = compute_diff_manifest(
+        diff = diff_snapshots(
             parent=manifest1,
             current=manifest2,
             parent_manifest_hash="test_parent_hash",

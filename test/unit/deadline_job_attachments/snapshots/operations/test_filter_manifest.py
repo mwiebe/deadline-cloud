@@ -500,7 +500,7 @@ class TestFilterManifestAbsDiff:
 
         assert filtered.totalSize == 100
 
-    def test_returns_abs_diff_manifest(self) -> None:
+    def test_returns_abs_diff_snapshots(self) -> None:
         """Filtering AbsSnapshotDiff returns AbsSnapshotDiff."""
         manifest = self._create_manifest(
             files=[{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
@@ -553,7 +553,7 @@ class TestFilterManifestRelDiff:
         assert filtered.files[0].path == "keep.blend"
         assert filtered.files[0].deleted is True
 
-    def test_returns_rel_diff_manifest(self) -> None:
+    def test_returns_rel_diff_snapshots(self) -> None:
         """Filtering SnapshotDiff returns SnapshotDiff."""
         manifest = self._create_manifest(
             files=[{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]

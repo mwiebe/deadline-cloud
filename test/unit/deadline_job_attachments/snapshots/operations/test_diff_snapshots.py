@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 """
-Tests for compute_diff_manifest and related functions.
+Tests for diff_snapshots and related functions.
 
 These tests cover:
 - Basic diff computation for unified manifest classes
@@ -23,11 +23,11 @@ import pytest
 from typing import List
 
 from deadline.job_attachments._snapshots import (
-    compute_diff_manifest,
+    diff_snapshots,
     filter_manifest,
     IncludeExcludePathsFilter,
 )
-from deadline.job_attachments._snapshots._operations._diff_manifest import (
+from deadline.job_attachments._snapshots._operations._diff_snapshots import (
     _entries_differ,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
@@ -69,7 +69,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert isinstance(diff, AbsSnapshotDiff)
         assert len(diff.files) == 0
@@ -87,7 +87,7 @@ class TestComputeDiffManifestAbsSnapshot:
             ]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         new_entry = next((p for p in diff.files if p.path == "/new.txt"), None)
         assert new_entry is not None
@@ -103,7 +103,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/file.txt", "hash": "hash2", "size": 100, "mtime": 2000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/file.txt"
@@ -118,7 +118,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 2000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/file.txt"
@@ -133,7 +133,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/file.txt", "hash": "hash1", "size": 200, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/file.txt"
@@ -151,7 +151,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/keep.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         deleted_entry = next((p for p in diff.files if p.path == "/delete.txt"), None)
         assert deleted_entry is not None
@@ -172,7 +172,7 @@ class TestComputeDiffManifestAbsSnapshot:
             ]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         paths = {p.path for p in diff.files}
         assert "/unchanged.txt" not in paths
@@ -188,7 +188,7 @@ class TestComputeDiffManifestAbsSnapshot:
         )
         parent_hash = "abc123def456"
 
-        diff = compute_diff_manifest(parent, current, parent_manifest_hash=parent_hash)
+        diff = diff_snapshots(parent, current, parent_manifest_hash=parent_hash)
 
         assert diff.parentManifestHash == parent_hash
 
@@ -201,7 +201,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert diff.parentManifestHash is None
 
@@ -210,7 +210,7 @@ class TestComputeDiffManifestAbsSnapshot:
         parent = self._create_manifest(files=[], dirs=[{"path": "/old_dir"}])
         current = self._create_manifest(files=[], dirs=[{"path": "/old_dir"}, {"path": "/new_dir"}])
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         dir_paths = {d.path for d in diff.dirs}
         assert "/new_dir" in dir_paths
@@ -222,7 +222,7 @@ class TestComputeDiffManifestAbsSnapshot:
         )
         current = self._create_manifest(files=[], dirs=[{"path": "/keep_dir"}])
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         deleted_dir = next((d for d in diff.dirs if d.path == "/delete_dir"), None)
         assert deleted_dir is not None
@@ -235,7 +235,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/link.txt", "symlink_target": "/new_target.txt"}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/link.txt"
@@ -246,7 +246,7 @@ class TestComputeDiffManifestAbsSnapshot:
         parent = self._create_manifest(files=[])
         current = self._create_manifest([{"path": "/link.txt", "symlink_target": "/target.txt"}])
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].symlink_target == "/target.txt"
@@ -256,7 +256,7 @@ class TestComputeDiffManifestAbsSnapshot:
         parent = self._create_manifest([{"path": "/link.txt", "symlink_target": "/target.txt"}])
         current = self._create_manifest(files=[])
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/link.txt"
@@ -269,7 +269,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert diff.files[0].runnable is True
 
@@ -287,7 +287,7 @@ class TestComputeDiffManifestAbsSnapshot:
             ]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert diff.files[0].chunkhashes == ["chunk1", "chunk2"]
 
@@ -314,7 +314,7 @@ class TestComputeDiffManifestAbsSnapshot:
             ]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert len(diff.files) == 1
         assert diff.files[0].chunkhashes == ["chunk1", "chunk3"]
@@ -328,7 +328,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/new.txt", "hash": "h2", "size": 50, "mtime": 2000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert diff.totalSize == 50
 
@@ -342,11 +342,11 @@ class TestComputeDiffManifestAbsSnapshot:
             ]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert diff.totalSize == 100
 
-    def test_returns_abs_diff_manifest(self) -> None:
+    def test_returns_abs_diff_snapshots(self) -> None:
         """Diff of AbsSnapshots returns AbsSnapshotDiff."""
         parent = self._create_manifest(
             [{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
@@ -355,7 +355,7 @@ class TestComputeDiffManifestAbsSnapshot:
             [{"path": "/a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert isinstance(diff, AbsSnapshotDiff)
 
@@ -388,7 +388,7 @@ class TestComputeDiffManifestRelSnapshot:
             [{"path": "file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert isinstance(diff, SnapshotDiff)
         assert len(diff.files) == 0
@@ -406,7 +406,7 @@ class TestComputeDiffManifestRelSnapshot:
             ]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         new_entry = next((p for p in diff.files if p.path == "new.txt"), None)
         assert new_entry is not None
@@ -424,20 +424,20 @@ class TestComputeDiffManifestRelSnapshot:
             [{"path": "keep.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         deleted_entry = next((p for p in diff.files if p.path == "delete.txt"), None)
         assert deleted_entry is not None
         assert deleted_entry.deleted is True
 
-    def test_returns_rel_diff_manifest(self) -> None:
+    def test_returns_rel_diff_snapshots(self) -> None:
         """Diff of Snapshots returns SnapshotDiff."""
         parent = self._create_manifest([{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}])
         current = self._create_manifest(
             [{"path": "a.txt", "hash": "h1", "size": 10, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         assert isinstance(diff, SnapshotDiff)
 
@@ -461,10 +461,10 @@ class TestComputeDiffManifestValidation:
         )
 
         with pytest.raises(ValueError, match="same path type"):
-            compute_diff_manifest(parent, current)
+            diff_snapshots(parent, current)
 
         with pytest.raises(ValueError, match="same path type"):
-            compute_diff_manifest(parent, current)
+            diff_snapshots(parent, current)
 
 
 class TestComputeDiffWithFilter:
@@ -512,7 +512,7 @@ class TestComputeDiffWithFilter:
         assert isinstance(filtered_parent, AbsSnapshot)
         assert isinstance(filtered_current, AbsSnapshot)
 
-        diff = compute_diff_manifest(filtered_parent, filtered_current)
+        diff = diff_snapshots(filtered_parent, filtered_current)
 
         # Should only have new.blend as added, no deletions
         paths = {p.path for p in diff.files}
@@ -551,7 +551,7 @@ class TestIgnoreHashesMode:
             [{"path": "/file.txt", "hash": "hash2", "size": 100, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current, ignore_hashes=True)
+        diff = diff_snapshots(parent, current, ignore_hashes=True)
 
         # Different hash but same metadata = not modified when ignore_hashes=True
         assert len(diff.files) == 0
@@ -565,7 +565,7 @@ class TestIgnoreHashesMode:
             [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 2000}]
         )
 
-        diff = compute_diff_manifest(parent, current, ignore_hashes=True)
+        diff = diff_snapshots(parent, current, ignore_hashes=True)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/file.txt"
@@ -579,7 +579,7 @@ class TestIgnoreHashesMode:
             [{"path": "/file.txt", "hash": "hash1", "size": 200, "mtime": 1000}]
         )
 
-        diff = compute_diff_manifest(parent, current, ignore_hashes=True)
+        diff = diff_snapshots(parent, current, ignore_hashes=True)
 
         assert len(diff.files) == 1
         assert diff.files[0].path == "/file.txt"
@@ -612,7 +612,7 @@ class TestPreserveRunnableMode:
             [{"path": "/script.sh", "hash": "hash2", "size": 100, "mtime": 2000, "runnable": False}]
         )
 
-        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = diff_snapshots(parent, current, preserve_runnable=True)
 
         assert len(diff.files) == 1
         assert diff.files[0].runnable is True  # Preserved from parent
@@ -624,7 +624,7 @@ class TestPreserveRunnableMode:
             [{"path": "/script.sh", "hash": "hash1", "size": 100, "mtime": 1000, "runnable": True}]
         )
 
-        diff = compute_diff_manifest(parent, current, preserve_runnable=True)
+        diff = diff_snapshots(parent, current, preserve_runnable=True)
 
         assert len(diff.files) == 1
         assert diff.files[0].runnable is True  # From current (no parent)
@@ -818,7 +818,7 @@ class TestDirectoryDeletionSemantics:
             dirs=[],
         )
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         # Should have deletion markers for both files and the directory
         deleted_files = {p.path for p in diff.files if p.deleted}
@@ -839,7 +839,7 @@ class TestDirectoryDeletionSemantics:
         )
         current = self._create_manifest(files=[], dirs=[])
 
-        diff = compute_diff_manifest(parent, current)
+        diff = diff_snapshots(parent, current)
 
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
         assert "/deleted_dir" in deleted_dirs

@@ -349,7 +349,7 @@ class TestJoinManifestDiff:
 
         assert result.parentManifestHash == "parent_hash_123"
 
-    def test_returns_rel_diff_manifest_with_rel_prefix(self) -> None:
+    def test_returns_rel_diff_snapshots_with_rel_prefix(self) -> None:
         """Joining SnapshotDiff with relative prefix returns SnapshotDiff."""
         manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
@@ -362,7 +362,7 @@ class TestJoinManifestDiff:
 
         assert isinstance(result, SnapshotDiff)
 
-    def test_returns_abs_diff_manifest_with_abs_prefix(self) -> None:
+    def test_returns_abs_diff_snapshots_with_abs_prefix(self) -> None:
         """Joining SnapshotDiff with absolute prefix returns AbsSnapshotDiff."""
         manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,

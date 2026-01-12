@@ -102,7 +102,7 @@ class TestSymlinkPassthrough:
         assert hashed.files[0].symlink_target == target_path
         assert hashed.files[0].hash is None
 
-    def test_diff_manifest_with_symlinks(self, tmp_path: Path) -> None:
+    def test_diff_snapshots_with_symlinks(self, tmp_path: Path) -> None:
         """Diff manifest with symlink entries passes them through unchanged."""
         diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
@@ -150,7 +150,7 @@ class TestDeletedEntryPassthrough:
         assert result.files[0].hash is None
         assert result.files[0].size is None
 
-    def test_diff_manifest_preserves_deleted_entries(self, tmp_path: Path) -> None:
+    def test_diff_snapshots_preserves_deleted_entries(self, tmp_path: Path) -> None:
         """Diff manifest deleted entries are passed through unchanged."""
         diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
@@ -172,7 +172,7 @@ class TestDeletedEntryPassthrough:
         assert hashed.files[0].path == "/some/deleted/file.txt"
         assert isinstance(hashed, AbsSnapshotDiff)
 
-    def test_diff_manifest_preserves_deleted_directories(self, tmp_path: Path) -> None:
+    def test_diff_snapshots_preserves_deleted_directories(self, tmp_path: Path) -> None:
         """Diff manifest deleted directory entries are passed through unchanged."""
         diff_manifest = AbsSnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,

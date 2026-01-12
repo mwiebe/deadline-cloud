@@ -220,7 +220,7 @@ The composable operations are implemented in separate modules under `src/deadlin
 | `_hash_upload_abs_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
 | `_download_abs_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
-| `_diff_manifest.py` | DIFF | Computes difference between two manifests |
+| `_diff_snapshots.py` | DIFF | Computes difference between two manifests |
 | `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
 | `_subtree_manifest.py` | SUBTREE | Extracts a subtree as a new manifest |
 | `_partition_manifest.py` | PARTITION | Partitions manifest into (root, RelSnapshot) pairs |
@@ -425,7 +425,7 @@ for entry in manifest.files:
 
 **Location:** `_hash_abs_manifest.py`
 
-Fills in hashes for a manifest that was created by `collect_abs_snapshot()` or `compute_diff_manifest()`. The input manifest must have absolute paths.
+Fills in hashes for a manifest that was created by `collect_abs_snapshot()` or `diff_snapshots()`. The input manifest must have absolute paths.
 
 ```python
 def hash_abs_manifest(
@@ -440,7 +440,7 @@ def hash_abs_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
+| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `diff_snapshots` with `ignore_hashes=True`) |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
@@ -539,12 +539,12 @@ Output:
 
 ```python
 from deadline.job_attachments._snapshots import (
-    compute_diff_manifest,
+    diff_snapshots,
     hash_abs_manifest,
 )
 
 # Compute a diff between two snapshots (with ignore_hashes=True for fast comparison)
-diff = compute_diff_manifest(
+diff = diff_snapshots(
     parent=parent_snapshot,
     current=current_snapshot,
     parent_manifest_hash="abc123...",
@@ -584,7 +584,7 @@ def hash_upload_abs_manifest(
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `compute_diff_manifest` with `ignore_hashes=True`) |
+| `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `diff_snapshots` with `ignore_hashes=True`) |
 | `data_cache` | Content-addressable data cache destination. Either `S3DataCache` for cloud storage or `FileSystemDataCache` for local/network storage. |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
@@ -1018,7 +1018,7 @@ local_baseline = result.manifest
 # Later, detect actual user changes reliably
 current_state = collect_abs_snapshot([download_dir], [])
 current_hashed = hash_abs_manifest(current_state)
-changes = compute_diff_manifest(parent=local_baseline, current=current_hashed)
+changes = diff_snapshots(parent=local_baseline, current=current_hashed)
 # 'changes' now correctly reflects only real user modifications,
 # not false positives from mtime precision differences
 ```
@@ -1481,14 +1481,14 @@ def python_files_only(entry):
 py_manifest = filter_manifest(manifest, python_files_only)
 ```
 
-### 6. DIFF: `compute_diff_manifest()`
+### 6. DIFF: `diff_snapshots()`
 
-**Location:** `_diff_manifest.py`
+**Location:** `_diff_snapshots.py`
 
 Computes the difference between two snapshot manifests:
 
 ```python
-def compute_diff_manifest(
+def diff_snapshots(
     parent: SnapshotManifest,
     current: SnapshotManifest,
     parent_manifest_hash: Optional[str] = None,
@@ -1566,7 +1566,7 @@ New files always use the current manifest's `runnable` value (which will be `Fal
 **Example:**
 
 ```python
-from deadline.job_attachments._snapshots import compute_diff_manifest
+from deadline.job_attachments._snapshots import diff_snapshots
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
 from deadline.job_attachments.asset_manifests.hash_algorithms import hash_data, HashAlgorithm
 
@@ -1577,7 +1577,7 @@ with open("previous.manifest") as f:
     parent_hash = hash_data(parent_str.encode("utf-8"), HashAlgorithm.XXH128)
 
 # Assume current_hashed is a collected and hashed manifest of the current directory
-diff = compute_diff_manifest(
+diff = diff_snapshots(
     parent=parent,
     current=current_hashed,
     parent_manifest_hash=parent_hash,
@@ -2215,7 +2215,7 @@ filtered_parent = filter_manifest(parent, filter)
 filtered_current = filter_manifest(current_unhashed, filter)
 
 # Compute diff (fast mode - compare by mtime/size)
-diff = compute_diff_manifest(
+diff = diff_snapshots(
     parent=filtered_parent,
     current=filtered_current,
     parent_manifest_hash=parent_hash,
@@ -2255,7 +2255,7 @@ filtered_parent = filter_manifest(parent, filter)
 filtered_current = filter_manifest(current_rel, filter)
 
 # Compute diff (full mode - compare by hash)
-diff = compute_diff_manifest(
+diff = diff_snapshots(
     parent=filtered_parent,
     current=filtered_current,
     parent_manifest_hash=parent_hash,

@@ -2,7 +2,7 @@
 
 """
 Module for filling in hashes for manifest objects that were created by collect_abs_snapshot
-or compute_diff_manifest.
+or diff_snapshots.
 
 This module implements the HASH operation from the composable manifest operations design:
     HASH: AbsManifest (with hash=None) → AbsManifest (with hashes filled in)
@@ -50,13 +50,13 @@ def hash_abs_manifest(
     Fill in hashes for a manifest structure with absolute paths.
 
     Given a manifest with hash=None for file entries (from collect_abs_snapshot or
-    compute_diff_manifest), computes and fills in the actual hashes.
+    diff_snapshots), computes and fills in the actual hashes.
 
     Args:
         manifest: Manifest with absolute paths and hash=None for unhashed files.
             Can be either:
             - AbsSnapshot (from collect_abs_snapshot)
-            - AbsSnapshotDiff (from compute_diff_manifest with ignore_hashes=True)
+            - AbsSnapshotDiff (from diff_snapshots with ignore_hashes=True)
         hash_cache: Optional hash cache for efficiency
         force_rehash: If True, ignore cache and recalculate all hashes
         file_chunk_size_bytes: Chunk size for output manifest.

@@ -13,7 +13,7 @@ The diff manifest contains:
 
 CRITICAL PRECONDITIONS:
 1. Both parent and current manifests MUST be filtered with the SAME filter
-   before calling compute_diff_manifest(). This ensures deletions are computed
+   before calling diff_snapshots(). This ensures deletions are computed
    correctly within the filtered view.
 
 2. If ignore_hashes=False (default), both manifests must have hashes computed
@@ -108,7 +108,7 @@ def _entries_differ(
     return False
 
 
-def compute_diff_manifest(
+def diff_snapshots(
     parent: AnySnapshot,
     current: AnySnapshot,
     parent_manifest_hash: Optional[str] = None,
@@ -161,7 +161,7 @@ def compute_diff_manifest(
             "(both absolute or both relative)"
         )
 
-    return _compute_diff_manifest(
+    return _diff_snapshots(
         parent=parent,
         current=current,
         parent_manifest_hash=parent_manifest_hash,
@@ -171,7 +171,7 @@ def compute_diff_manifest(
     )
 
 
-def _compute_diff_manifest(
+def _diff_snapshots(
     parent: AnySnapshot,
     current: AnySnapshot,
     parent_manifest_hash: Optional[str],

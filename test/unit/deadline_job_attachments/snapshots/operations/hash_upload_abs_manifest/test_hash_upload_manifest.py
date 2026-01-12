@@ -559,7 +559,7 @@ class TestManifestTypePreservation:
 
         assert isinstance(result.manifest, AbsSnapshot)
 
-    def test_returns_abs_diff_manifest_s3(self, tmp_path: Path) -> None:
+    def test_returns_abs_diff_snapshots_s3(self, tmp_path: Path) -> None:
         """Test that AbsSnapshotDiff input returns AbsSnapshotDiff (S3)."""
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
@@ -620,7 +620,7 @@ class TestManifestTypePreservation:
 
         assert isinstance(result.manifest, AbsSnapshot)
 
-    def test_returns_abs_diff_manifest_filesystem(self, tmp_path: Path) -> None:
+    def test_returns_abs_diff_snapshots_filesystem(self, tmp_path: Path) -> None:
         """Test that AbsSnapshotDiff input returns AbsSnapshotDiff (filesystem)."""
         cache_root = tmp_path / "cache"
 

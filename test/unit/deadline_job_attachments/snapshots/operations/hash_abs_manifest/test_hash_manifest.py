@@ -183,7 +183,7 @@ class TestGetOrComputeHash:
 class TestHashDiffManifest:
     """Tests for hashing diff manifests."""
 
-    def test_diff_manifest_hashes_new_files(self, tmp_path: Path) -> None:
+    def test_diff_snapshots_hashes_new_files(self, tmp_path: Path) -> None:
         """Diff manifest with new files gets hashes computed."""
         test_file = tmp_path / "new_file.txt"
         test_file.write_text("new content")
@@ -213,7 +213,7 @@ class TestHashDiffManifest:
         assert isinstance(hashed, AbsSnapshotDiff)
         assert hashed.parentManifestHash == "parent123"
 
-    def test_diff_manifest_mixed_entries(self, tmp_path: Path) -> None:
+    def test_diff_snapshots_mixed_entries(self, tmp_path: Path) -> None:
         """Diff manifest with new, modified, and deleted entries."""
         new_file = tmp_path / "new.txt"
         new_file.write_text("new content")
@@ -272,7 +272,7 @@ class TestHashDiffManifest:
         del_entry = next(p for p in hashed.files if p.path == "/old/deleted.txt")
         assert del_entry.deleted is True
 
-    def test_diff_manifest_parent_hash_none_preserved(self, tmp_path: Path) -> None:
+    def test_diff_snapshots_parent_hash_none_preserved(self, tmp_path: Path) -> None:
         """Diff manifest with no parent hash preserves None."""
         test_file = tmp_path / "file.txt"
         test_file.write_text("content")

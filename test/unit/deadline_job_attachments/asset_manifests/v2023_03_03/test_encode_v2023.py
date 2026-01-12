@@ -106,7 +106,7 @@ class TestEncodeV2023Basic:
         paths = [p["path"] for p in data["paths"]]
         assert paths == ["1", "a", "€"]
 
-    def test_encode_rel_diff_manifest(self) -> None:
+    def test_encode_rel_diff_snapshots(self) -> None:
         """Encodes SnapshotDiff (without deleted entries)."""
         manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,

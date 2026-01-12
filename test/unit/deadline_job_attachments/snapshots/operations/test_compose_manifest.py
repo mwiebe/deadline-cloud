@@ -778,7 +778,7 @@ class TestComposeManifestsDiffs:
 
         assert result.totalSize == 100
 
-    def test_returns_rel_diff_manifest(self) -> None:
+    def test_returns_rel_diff_snapshots(self) -> None:
         """Composing SnapshotDiffs returns SnapshotDiff."""
         diff1 = self._create_diff([{"path": "file1.txt", "hash": "h1", "size": 100, "mtime": 1000}])
         diff2 = self._create_diff([{"path": "file2.txt", "hash": "h2", "size": 200, "mtime": 2000}])
@@ -827,7 +827,7 @@ class TestComposeManifestsDiffsAbsolute:
         paths = {p.path for p in result.files if not p.deleted}
         assert paths == {"/project/file1.txt", "/project/file2.txt"}
 
-    def test_returns_abs_diff_manifest(self) -> None:
+    def test_returns_abs_diff_snapshots(self) -> None:
         """Composing AbsSnapshotDiffs returns AbsSnapshotDiff."""
         diff1 = self._create_diff(
             [{"path": "/file1.txt", "hash": "h1", "size": 100, "mtime": 1000}]
