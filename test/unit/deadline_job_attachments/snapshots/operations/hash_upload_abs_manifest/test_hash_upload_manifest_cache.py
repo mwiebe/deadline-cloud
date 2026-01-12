@@ -1094,3 +1094,133 @@ class TestHashCacheHitButObjectMissingFromS3:
 
             # Should NOT have uploaded (object already exists)
             assert len(put_calls) == 0, f"Should not upload when hash exists, but got {put_calls}"
+
+
+class TestAllFilesSkippedDueToCacheHits:
+    """Tests for the scenario where all files are skipped due to cache hits.
+
+    This reproduces a bug where calling hash_upload_abs_manifest with the same
+    unhashed manifest multiple times fails on the third pass when both hash cache
+    and s3 check cache have entries.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
+        """Create the test S3 bucket before each test."""
+        create_s3_bucket(TEST_BUCKET)
+        self.s3_client = s3
+
+    def _create_s3_data_cache(self, s3_check_cache: Optional[S3CheckCache] = None) -> S3DataCache:
+        """Create an S3DataCache for testing."""
+        return S3DataCache(
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+            s3_client=self.s3_client,
+            s3_check_cache=s3_check_cache,
+        )
+
+    def test_three_passes_with_same_unhashed_manifest(self, tmp_path: Path) -> None:
+        """Test calling hash_upload_abs_manifest three times with same unhashed manifest.
+
+        This reproduces a bug where:
+        - Pass 1: Cold upload (no caches) - works
+        - Pass 2: Warm with hash cache only (HeadObject path) - works
+        - Pass 3: Warm with hash cache + s3 check cache - FAILS with
+          "Internal error: file was not hashed"
+
+        The bug occurs because when all files are skipped due to cache hits,
+        the hash is retrieved from the cache but not properly stored in the
+        result manifest.
+        """
+        hash_cache_dir = tmp_path / "hash_cache"
+        hash_cache_dir.mkdir()
+        s3_check_cache_dir = tmp_path / "s3_check_cache"
+        s3_check_cache_dir.mkdir()
+
+        # Create test files
+        test_file1 = tmp_path / "file1.txt"
+        test_file1.write_text("Content for file 1")
+        file1_stat = test_file1.stat()
+
+        test_file2 = tmp_path / "file2.txt"
+        test_file2.write_text("Content for file 2")
+        file2_stat = test_file2.stat()
+
+        # Create unhashed manifest (same as what collect_abs_snapshot produces)
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=str(test_file1).replace("\\", "/"),
+                    hash=None,
+                    size=int(file1_stat.st_size),
+                    mtime=int(file1_stat.st_mtime_ns // 1000),
+                ),
+                ManifestFilePath(
+                    path=str(test_file2).replace("\\", "/"),
+                    hash=None,
+                    size=int(file2_stat.st_size),
+                    mtime=int(file2_stat.st_mtime_ns // 1000),
+                ),
+            ],
+            total_size=int(file1_stat.st_size) + int(file2_stat.st_size),
+        )
+
+        with HashCache(str(hash_cache_dir)) as hash_cache:
+            # PASS 1: Cold upload (no s3 check cache)
+            with S3CheckCache(str(s3_check_cache_dir)) as s3_check_cache:
+                data_cache = self._create_s3_data_cache(s3_check_cache=s3_check_cache)
+                result1 = hash_upload_abs_manifest(
+                    manifest=manifest,
+                    data_cache=data_cache,
+                    hash_cache=hash_cache,
+                )
+
+            # Verify pass 1 worked
+            assert len(result1.manifest.files) == 2
+            assert all(f.hash is not None for f in result1.manifest.files)
+            file1_hash = result1.manifest.files[0].hash
+            file2_hash = result1.manifest.files[1].hash
+
+            # PASS 2: Warm with hash cache only (fresh s3 check cache)
+            s3_check_cache_dir_fresh = tmp_path / "s3_check_cache_fresh"
+            s3_check_cache_dir_fresh.mkdir()
+            with S3CheckCache(str(s3_check_cache_dir_fresh)) as s3_check_cache_fresh:
+                data_cache = self._create_s3_data_cache(s3_check_cache=s3_check_cache_fresh)
+                result2 = hash_upload_abs_manifest(
+                    manifest=manifest,
+                    data_cache=data_cache,
+                    hash_cache=hash_cache,
+                )
+
+            # Verify pass 2 worked
+            assert len(result2.manifest.files) == 2
+            assert result2.manifest.files[0].hash == file1_hash
+            assert result2.manifest.files[1].hash == file2_hash
+
+            # PASS 3: Warm with hash cache + s3 check cache from pass 1
+            # This is where the bug manifests
+            with S3CheckCache(str(s3_check_cache_dir)) as s3_check_cache:
+                data_cache = self._create_s3_data_cache(s3_check_cache=s3_check_cache)
+                result3 = hash_upload_abs_manifest(
+                    manifest=manifest,
+                    data_cache=data_cache,
+                    hash_cache=hash_cache,
+                )
+
+            # Verify pass 3 worked
+            assert len(result3.manifest.files) == 2
+            assert result3.manifest.files[0].hash == file1_hash
+            assert result3.manifest.files[1].hash == file2_hash
+
+            # All three passes should produce identical results
+            assert (
+                result1.manifest.files[0].hash
+                == result2.manifest.files[0].hash
+                == result3.manifest.files[0].hash
+            )
+            assert (
+                result1.manifest.files[1].hash
+                == result2.manifest.files[1].hash
+                == result3.manifest.files[1].hash
+            )

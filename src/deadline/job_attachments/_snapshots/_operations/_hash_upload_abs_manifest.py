@@ -1227,8 +1227,21 @@ def hash_upload_abs_manifest(
     for idx, entry in file_entries_to_process:
         abs_path = Path(entry.path)
         cache_key = str(abs_path.resolve())
-        file_size = entry.size or 0
-        mtime = entry.mtime or 0
+
+        # Validate required fields for file entries
+        if entry.size is None:
+            raise ValueError(
+                f"File entry '{entry.path}' has size=None. "
+                f"File entries must have size set (symlinks and deletions are handled separately)."
+            )
+        if entry.mtime is None:
+            raise ValueError(
+                f"File entry '{entry.path}' has mtime=None. "
+                f"File entries must have mtime set (symlinks and deletions are handled separately)."
+            )
+
+        file_size = entry.size
+        mtime = entry.mtime
 
         entry_map[cache_key] = (idx, entry)
 
