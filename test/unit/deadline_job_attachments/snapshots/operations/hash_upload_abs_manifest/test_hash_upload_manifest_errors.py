@@ -521,18 +521,18 @@ class TestStreamingUploadErrors:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # Mock the streaming upload to simulate hash mismatch
-        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
-            _TaskBasedPipeline,
+        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest_file_system_pipeline import (
+            FileSystemHashUploadPipeline,
         )
 
-        original_stream_upload = _TaskBasedPipeline._stream_upload_to_filesystem
+        original_stream_upload = FileSystemHashUploadPipeline._upload_streaming
 
         def mock_stream_upload(self, item):
             # Modify the pre-computed hash to simulate mismatch
             item.file_hash = "wrong_hash_value_here"
             return original_stream_upload(self, item)
 
-        with patch.object(_TaskBasedPipeline, "_stream_upload_to_filesystem", mock_stream_upload):
+        with patch.object(FileSystemHashUploadPipeline, "_upload_streaming", mock_stream_upload):
             with pytest.raises(ValueError, match="Hash mismatch during streaming upload"):
                 hash_upload_abs_manifest(
                     manifest=manifest,
@@ -584,17 +584,17 @@ class TestStreamingUploadErrorsS3:
         data_cache = self._create_s3_data_cache()
 
         # Mock to simulate hash mismatch
-        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
-            _TaskBasedPipeline,
+        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest_s3_pipeline import (
+            S3HashUploadPipeline,
         )
 
-        original_stream_upload = _TaskBasedPipeline._stream_upload_to_s3
+        original_stream_upload = S3HashUploadPipeline._upload_streaming
 
         def mock_stream_upload(self, item):
             item.file_hash = "wrong_hash_value_here"
             return original_stream_upload(self, item)
 
-        with patch.object(_TaskBasedPipeline, "_stream_upload_to_s3", mock_stream_upload):
+        with patch.object(S3HashUploadPipeline, "_upload_streaming", mock_stream_upload):
             with pytest.raises(ValueError, match="Hash mismatch during streaming upload"):
                 hash_upload_abs_manifest(
                     manifest=manifest,
@@ -750,11 +750,11 @@ class TestUnsupportedHashAlgorithm:
         data_cache = self._create_filesystem_data_cache(cache_root)
 
         # Mock the pipeline to use an unsupported algorithm for streaming hash
-        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
-            _TaskBasedPipeline,
+        from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest_pipeline import (
+            HashUploadPipelineBase,
         )
 
-        original_stream_hash = _TaskBasedPipeline._stream_hash_file
+        original_stream_hash = HashUploadPipelineBase._stream_hash_file
 
         def mock_stream_hash(self, file_path):
             # Temporarily change the hash algorithm to trigger the error
@@ -768,7 +768,7 @@ class TestUnsupportedHashAlgorithm:
             finally:
                 self._hash_alg = original_alg
 
-        with patch.object(_TaskBasedPipeline, "_stream_hash_file", mock_stream_hash):
+        with patch.object(HashUploadPipelineBase, "_stream_hash_file", mock_stream_hash):
             with pytest.raises(ValueError, match="Unsupported hash algorithm"):
                 hash_upload_abs_manifest(
                     manifest=manifest,

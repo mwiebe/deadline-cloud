@@ -5,6 +5,8 @@ from ._hash_abs_manifest import hash_abs_manifest
 from ._hash_upload_abs_manifest import (
     hash_upload_abs_manifest,
     UploadResult,
+)
+from ._hash_upload_abs_manifest_pipeline import (
     HashUploadProgressMetadata,
     HashUploadProgressCallback,
 )

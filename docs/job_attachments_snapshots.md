@@ -217,7 +217,10 @@ The composable operations are implemented in separate modules under `src/deadlin
 |--------|-----------|-------------|
 | `_collect_abs_snapshot.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
 | `_hash_abs_manifest.py` | HASH | Fills in hashes for collected manifest |
-| `_hash_upload_abs_manifest.py` | HASH_UPLOAD | Fills in hashes AND uploads to a data cache in a pipelined manner |
+| `_hash_upload_abs_manifest.py` | HASH_UPLOAD | Main entry point for hash+upload pipeline |
+| `_hash_upload_abs_manifest_pipeline.py` | HASH_UPLOAD | Base pipeline class, progress state, work items, memory pool |
+| `_hash_upload_abs_manifest_s3_pipeline.py` | HASH_UPLOAD | S3-specific upload logic (multipart, streaming) |
+| `_hash_upload_abs_manifest_file_system_pipeline.py` | HASH_UPLOAD | FileSystem-specific upload logic |
 | `_download_abs_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_snapshots.py` | DIFF | Computes difference between two manifests |
@@ -565,7 +568,10 @@ for entry in hashed_diff.files:
 
 ### 3. HASH_UPLOAD: `hash_upload_abs_manifest()`
 
-**Location:** `_hash_upload_abs_manifest.py`
+**Location:** `_hash_upload_abs_manifest.py` (main entry point), with pipeline implementation split across:
+- `_hash_upload_abs_manifest_pipeline.py` - Base pipeline class, progress state, work items, memory pool
+- `_hash_upload_abs_manifest_s3_pipeline.py` - S3-specific upload logic (multipart, streaming)
+- `_hash_upload_abs_manifest_file_system_pipeline.py` - FileSystem-specific upload logic
 
 Fills in hashes for a manifest AND uploads file content to a data cache in a pipelined manner. This operation combines hashing and uploading into a single pass over the data, avoiding the need to read files twice (once for hashing, once for uploading).
 
@@ -695,63 +701,77 @@ Files are skipped when:
 
 **Pipelined Architecture:**
 
-The operation uses a multi-threaded pipeline with two stages and parallel multipart uploads:
+The operation uses two thread pools connected by a bounded memory pool:
 
 ```
-┌─────────────────┐     ┌─────────────────────────────┐
-│  READ + HASH    │────►│        UPLOAD POOL          │
-│     Thread      │     │  ┌─────────┐ ┌─────────┐    │
-│                 │     │  │ Part 1  │ │ Part 2  │    │
-│                 │     │  │ Upload  │ │ Upload  │    │
-│                 │     │  └─────────┘ └─────────┘    │
-│                 │     │  ┌─────────┐ ┌─────────┐    │
-│                 │     │  │ Part N  │ │Complete │    │
-│                 │     │  │ Upload  │ │Multipart│    │
-│                 │     │  └─────────┘ └─────────┘    │
-└─────────────────┘     └─────────────────────────────┘
-         │                           │
-         └───────────────────────────┘
-              Memory Pool
-         (bounded by max_memory_bytes)
+┌─────────────────────────────────────────────────────────────────┐
+│                    READ + HASH POOL                             │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐                           │
+│  │ Worker  │ │ Worker  │ │ Worker  │  (max_workers threads)    │
+│  │  1      │ │  2      │ │  N      │                           │
+│  └────┬────┘ └────┬────┘ └────┬────┘                           │
+└───────┼──────────┼──────────┼──────────────────────────────────┘
+        │          │          │
+        │    allocate(size)   │   ← blocks when pool is full
+        └──────────┼──────────┘
+                   ▼
+    ┌─────────────────────────────────┐
+    │  Memory Pool                    │
+    │  (bounded by max_memory_bytes)  │
+    │                                 │
+    │  READ+HASH fills ──► UPLOAD drains
+    └─────────────────────────────────┘
+                   │
+        release(size)   ← frees space for more reads
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      UPLOAD POOL                                │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐                           │
+│  │ Worker  │ │ Worker  │ │ Worker  │  (max_workers threads)    │
+│  │  1      │ │  2      │ │  N      │                           │
+│  └─────────┘ └─────────┘ └─────────┘                           │
+│                                                                 │
+│  For multipart uploads, each part is a separate upload task    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Key Changes for Parallel Multipart Upload:**
+**Key Design Points:**
 
-1. **READ+HASH stage:** Reads file parts sequentially and computes XXH128 hash incrementally across parts
-2. **UPLOAD stage:** Each part is submitted independently to the thread pool for parallel upload
-3. **Multipart Coordination:** Tracks completion of all parts and calls S3 CompleteMultipartUpload when done
-4. **Memory Management:** Allocates part buffers individually, blocking if allocation would exceed memory threshold
+1. **Two thread pools:** READ+HASH pool reads files and computes hashes; UPLOAD pool handles uploads
+2. **Memory pool as bounded buffer:** READ+HASH allocates memory before reading, blocks when full; UPLOAD releases memory after completing, unblocking readers
+3. **Parallel multipart:** For S3, large files use multipart upload with parts uploaded in parallel
+4. **Cache-specific pipelines:** `S3HashUploadPipeline` and `FileSystemHashUploadPipeline` implement cache-specific upload logic
 
-**Multipart Upload Conditions:**
+**Multipart Upload Conditions (S3 only):**
 
 Multipart upload is used when:
-- Uploading to S3DataCache (not FileSystemDataCache)  
-- File size > `2 * multipart_part_size` (default threshold: 64MB with 32MB parts)
-- Applies to both chunked files and whole files
+- Uploading to `S3DataCache` (not `FileSystemDataCache`)  
+- Chunk size >= `2 * multipart_part_size` (default threshold: 64MB with 32MB parts)
+- For streaming files (> `max_memory_bytes`), file size > multipart threshold
 
-**Part Scheduling:**
+**Part Scheduling (S3 only):**
 
-- **Chunked files:** Each chunk becomes a multipart part if it meets the size threshold
-- **Whole files ≤ max_memory_bytes:** File is divided into parts, each part gets its own upload task
-- **Whole files > max_memory_bytes:** Parts are submitted one-by-one with memory throttling
+- **Chunked files >= multipart threshold:** Read entire chunk into memory, hash incrementally, then submit all parts for parallel upload
+- **Streaming files (> max_memory_bytes):** Two-pass approach - first pass computes hash (discards data), second pass reads and submits parts one at a time with memory throttling
 
-**Chunking and Multipart Upload Behavior:**
+**Chunking and Multipart Upload Behavior (S3 only):**
 
 The multipart threshold is `2 * S3DataCache.multipart_part_size` (default: 64MB with 32MB parts).
 
 | `fileChunkSizeBytes` | File Size | vs Multipart Threshold | Processing |
 |---------------------|-----------|------------------------|------------|
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | ≤ threshold | Single chunk: read+hash → single PUT upload |
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | > threshold | Single chunk: read+hash → multipart upload |
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Any | Multiple chunks, each > threshold uses multipart |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | ≤ threshold | Single pass: read+hash → single PUT upload |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | > threshold | Single pass: read+hash → parallel multipart upload |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | Any | Two-pass: hash first (discard data), then parallel multipart with memory throttling |
-| Positive int (e.g., 64MB) | ≤ chunk size | ≤ threshold | Single chunk: read+hash → single PUT upload |
-| Positive int (e.g., 64MB) | ≤ chunk size | > threshold | Single chunk: read+hash → multipart upload |
-| Positive int (e.g., 64MB) | > chunk size | Any | Multiple chunks, each > threshold uses multipart |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | < threshold | Single chunk: read+hash → single PUT upload |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | >= threshold | Single chunk: read+hash → multipart upload |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Any | Multiple chunks, each >= threshold uses multipart |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | < threshold | Single pass: read+hash → single PUT upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | ≤ `max_memory_bytes` | >= threshold | Single pass: read+hash → parallel multipart upload |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | > `max_memory_bytes` | > threshold | Two-pass: hash first (discard data), then parallel multipart with memory throttling |
+| Positive int (e.g., 64MB) | ≤ chunk size | < threshold | Single chunk: read+hash → single PUT upload |
+| Positive int (e.g., 64MB) | ≤ chunk size | >= threshold | Single chunk: read+hash → multipart upload |
+| Positive int (e.g., 64MB) | > chunk size | Any | Multiple chunks, each >= threshold uses multipart |
 
-**Multipart Upload Coordination:**
+**Multipart Upload Coordination (S3 only):**
 
 For files using multipart upload, the system:
 1. Creates S3 multipart upload session
@@ -760,9 +780,17 @@ For files using multipart upload, the system:
 4. Last completing part calls `CompleteMultipartUpload` 
 5. On any error, calls `AbortMultipartUpload` for cleanup
 
+**Streaming File Handling:**
+
 When chunking is disabled (`WHOLE_FILE_CHUNK_SIZE`) and a file is larger than `max_memory_bytes`:
-- **Pass 1:** Stream through file computing hash as bytes are read (discard data to avoid OOM)
-- **Pass 2:** Stream through file again to upload
+
+For S3:
+- **Pass 1:** Stream through file computing hash (discard data to avoid OOM)
+- **Pass 2:** Stream through file again, submitting parts one at a time with memory throttling
+
+For FileSystem:
+- **Pass 1:** Stream through file computing hash (discard data)
+- **Pass 2:** Stream copy to destination while re-verifying hash
 
 When chunking is enabled (positive `fileChunkSizeBytes`):
 - `max_memory_bytes` must be >= `fileChunkSizeBytes` (raises `ValueError` otherwise)

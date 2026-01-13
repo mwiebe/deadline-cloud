@@ -15,12 +15,14 @@ from pathlib import Path
 import threading
 from typing import Optional
 
-from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest import (
+from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest_s3_pipeline import (
     _S3CacheValidationState,
-    _ChunkWorkItem,
-    _StreamingWorkItem,
     S3_CACHE_VALIDATION_INITIAL_COUNT,
     S3_CACHE_VALIDATION_SAMPLE_RATE,
+)
+from deadline.job_attachments._snapshots._operations._hash_upload_abs_manifest_pipeline import (
+    _ChunkWorkItem,
+    _StreamingWorkItem,
 )
 from deadline.job_attachments._snapshots import (
     hash_upload_abs_manifest,
