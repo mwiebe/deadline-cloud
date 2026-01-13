@@ -176,8 +176,8 @@ class S3DownloadPipeline(DownloadPipelineBase):
         """
         Setup parallel part downloads for a chunked file from S3.
 
-        For small chunks (< MIN_SIZE_FOR_MULTIPART_DOWNLOAD), downloads without Range header.
-        For large chunks, calculates all parts and submits them all to the executor.
+        For small chunks (< 2 * multipart_part_size), downloads in a single request.
+        For large chunks, uses parallel byte-range requests.
         The last part to complete triggers finalization.
         """
         if not isinstance(self._data_cache, S3DataCache):

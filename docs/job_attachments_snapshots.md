@@ -1385,32 +1385,26 @@ This architecture maximizes throughput by:
 
 **S3 Multi-Part Download:**
 
-For S3 downloads, files and chunks larger than `MIN_SIZE_FOR_MULTIPART_DOWNLOAD` (16MB) are
-downloaded using parallel byte-range requests:
-
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `DEFAULT_MULTIPART_DOWNLOAD_PART_SIZE` | 8MB | Size of each byte-range part |
-| `MIN_SIZE_FOR_MULTIPART_DOWNLOAD` | 16MB | Minimum size to use multi-part |
+For S3 downloads, files and chunks larger than `2 * multipart_part_size` are downloaded using
+parallel byte-range requests. With the default 32MB part size, this means files ≥64MB use
+multi-part download.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    S3 MULTI-PART DOWNLOAD                               │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  For a 50MB file with 8MB parts:                                        │
+│  For a 100MB file with 32MB parts:                                      │
 │                                                                         │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
-│  │ Part 0   │ │ Part 1   │ │ Part 2   │ │ Part 3   │ │ Part 4   │      │
-│  │ 0-8MB    │ │ 8-16MB   │ │ 16-24MB  │ │ 24-32MB  │ │ 32-40MB  │ ...  │
-│  │ Range:   │ │ Range:   │ │ Range:   │ │ Range:   │ │ Range:   │      │
-│  │ 0-8388607│ │ 8388608- │ │ 16777216-│ │ 25165824-│ │ 33554432-│      │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘      │
-│       │            │            │            │            │             │
-│       ▼            ▼            ▼            ▼            ▼             │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐                   │
+│  │ Part 0   │ │ Part 1   │ │ Part 2   │ │ Part 3   │                   │
+│  │ 0-32MB   │ │ 32-64MB  │ │ 64-96MB  │ │ 96-100MB │                   │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘                   │
+│       │            │            │            │                          │
+│       ▼            ▼            ▼            ▼                          │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │              Pre-allocated Temp File (50MB)                     │   │
-│  │  [part 0 region][part 1 region][part 2 region][...][part N]     │   │
+│  │              Pre-allocated Temp File (100MB)                    │   │
+│  │  [part 0 region][part 1 region][part 2 region][part 3]          │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  Each part uses S3 GetObject with Range header:                         │
