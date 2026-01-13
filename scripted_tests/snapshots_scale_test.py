@@ -111,9 +111,10 @@ def _get_default_max_memory_mb() -> int:
 
     mem = psutil.virtual_memory()
     min_memory = 256 * 1024 * 1024  # 256MB
+    max_memory = 16 * 1024 * 1024 * 1024  # 16GB
     quarter_of_total = mem.total // 4
     available_minus_1gb = mem.available - (1024 * 1024 * 1024)
-    return max(min_memory, quarter_of_total, available_minus_1gb) // (1024 * 1024)
+    return min(max_memory, max(min_memory, quarter_of_total, available_minus_1gb)) // (1024 * 1024)
 
 
 # =============================================================================

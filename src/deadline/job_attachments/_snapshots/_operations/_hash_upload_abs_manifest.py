@@ -51,6 +51,9 @@ logger = logging.getLogger("deadline.job_attachments.hash_upload")
 # Minimum memory limit: 256MB (one chunk)
 MIN_MEMORY_BYTES = 256 * 1024 * 1024
 
+# Maximum memory limit: 16GB
+MAX_MEMORY_BYTES = 16 * 1024 * 1024 * 1024
+
 # Default number of parallel workers
 DEFAULT_MAX_WORKERS = 10
 
@@ -101,9 +104,9 @@ def _get_default_max_memory_bytes() -> int:
         quarter_of_total = total_memory // 4
         available_minus_1gb = available_memory - (1024 * 1024 * 1024)
 
-        result = max(MIN_MEMORY_BYTES, quarter_of_total, available_minus_1gb)
+        result = min(MAX_MEMORY_BYTES, max(MIN_MEMORY_BYTES, quarter_of_total, available_minus_1gb))
         logger.debug(
-            f"Memory limit calculation: min=256MB, quarter_total={quarter_of_total // (1024 * 1024)}MB, "
+            f"Memory limit calculation: min=256MB, max=16GB, quarter_total={quarter_of_total // (1024 * 1024)}MB, "
             f"available-1GB={available_minus_1gb // (1024 * 1024)}MB, result={result // (1024 * 1024)}MB"
         )
         return result

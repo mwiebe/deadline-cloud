@@ -843,16 +843,17 @@ The pipeline constrains total memory usage across both stages:
 
 **Default Memory Limit Calculation:**
 
-When `max_memory_bytes` is not specified, the default is calculated as the maximum of:
+When `max_memory_bytes` is not specified, the default is calculated as:
 
 | Option | Value | Rationale |
 |--------|-------|-----------|
 | Minimum | 256MB | One chunk must fit for default 256MB chunk size; worst case processes one chunk at a time |
+| Maximum | 16GB | Cap to avoid excessive memory usage on high-memory systems |
 | Quarter of total | `total_memory / 4` | Use a reasonable portion of system resources |
 | Available minus 1GB | `available_memory - 1GB` | When lots of free memory exists (e.g., 60GB), use most of it |
 
 ```python
-default_limit = max(256MB, total_memory // 4, available_memory - 1GB)
+default_limit = min(16GB, max(256MB, total_memory // 4, available_memory - 1GB))
 ```
 
 **Example calculations:**
@@ -860,11 +861,11 @@ default_limit = max(256MB, total_memory // 4, available_memory - 1GB)
 | System | Total | Available | Quarter | Avail-1GB | Result |
 |--------|-------|-----------|---------|-----------|--------|
 | Low memory | 4GB | 2GB | 1GB | 1GB | 1GB |
-| Typical workstation | 32GB | 20GB | 8GB | 19GB | 19GB |
-| High memory server | 128GB | 100GB | 32GB | 99GB | 99GB |
+| Typical workstation | 32GB | 20GB | 8GB | 19GB | 16GB |
+| High memory server | 128GB | 100GB | 32GB | 99GB | 16GB |
 | Constrained (busy) | 32GB | 1.5GB | 8GB | 0.5GB | 8GB |
 
-This ensures the pipeline uses as much memory as safely available while maintaining a reasonable lower bound.
+This ensures the pipeline uses as much memory as safely available while maintaining a reasonable lower bound and capping at 16GB to avoid excessive memory usage.
 
 **Storage Key Format:**
 
