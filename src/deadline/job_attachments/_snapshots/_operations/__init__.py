@@ -8,7 +8,15 @@ from ._hash_upload_abs_manifest import (
     HashUploadProgressMetadata,
     HashUploadProgressCallback,
 )
-from ._download_abs_manifest import download_abs_manifest, DownloadResult
+from ._download_abs_manifest import (
+    download_abs_manifest,
+    DownloadResult,
+    DownloadSummaryStatistics,
+)
+from ._download_abs_manifest_pipeline import (
+    DownloadProgressMetadata,
+    DownloadProgressCallback,
+)
 from ._filter_manifest import filter_manifest, IncludeExcludePathsFilter
 from ._diff_snapshots import diff_snapshots
 from ._compose_manifest import compose_manifests
@@ -25,6 +33,9 @@ __all__ = [
     "HashUploadProgressCallback",
     "download_abs_manifest",
     "DownloadResult",
+    "DownloadProgressMetadata",
+    "DownloadProgressCallback",
+    "DownloadSummaryStatistics",
     "filter_manifest",
     "diff_snapshots",
     "compose_manifests",

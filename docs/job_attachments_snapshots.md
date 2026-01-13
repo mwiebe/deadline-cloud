@@ -1251,7 +1251,7 @@ def download_abs_manifest(
     apply_deletes: bool = True,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     max_workers: Optional[int] = None,
-    progress_tracker: Optional[ProgressTracker] = None,
+    on_progress: Optional[DownloadProgressCallback] = None,
 ) -> DownloadResult:
 ```
 
@@ -1265,8 +1265,73 @@ def download_abs_manifest(
 | `file_conflict_resolution` | How to handle existing files (see below). Default `OVERWRITE`. Note: When `hash_cache` is provided, files with matching hashes are skipped regardless of this setting. |
 | `apply_deletes` | If `True` (default), apply deletions from diff manifests. If `False`, skip deletions and only download new/modified files. |
 | `symlink_policy` | How to handle symlinks. Default `PRESERVE`. Only `PRESERVE` and `EXCLUDE_ALL` are supported. |
-| `max_workers` | Maximum parallel download workers. Default: auto-detect based on S3 pool connections. |
-| `progress_tracker` | Optional progress tracker for download progress and cancellation |
+| `max_workers` | Maximum parallel download workers. Default: 10. |
+| `on_progress` | Optional callback for progress reporting. Called periodically with `DownloadProgressMetadata`. Return `True` to continue, `False` to cancel. |
+
+**Progress Reporting:**
+
+The `on_progress` callback receives `DownloadProgressMetadata` with download progress tracking:
+
+```python
+@dataclass
+class DownloadProgressMetadata:
+    # Totals
+    total_file_chunks: int  # Total files + chunks to process
+    total_bytes: int
+
+    # Download progress
+    downloaded_file_chunks: int
+    downloaded_bytes: int
+    skipped_file_chunks: int  # Skipped due to hash cache hit or conflict resolution
+    skipped_bytes: int
+
+    # Overall progress
+    progress: float  # 0-100
+    progressMessage: str
+```
+
+The callback type is:
+```python
+DownloadProgressCallback = Callable[[DownloadProgressMetadata], bool]
+```
+
+**Progress Callback Behavior:**
+
+| Behavior | Description |
+|----------|-------------|
+| Invocation interval | Called at most every 0.2 seconds (5 times per second) |
+| Final callback | Always called at operation completion via `force_callback()` |
+| Cancellation | Return `False` from callback to cancel the operation |
+| Thread safety | Callback is invoked from worker threads; metadata is built under lock |
+
+**Progress Field Semantics:**
+
+For chunked files, each chunk is counted separately in `total_file_chunks`, `downloaded_file_chunks`, etc.
+
+| Field | When Incremented |
+|-------|------------------|
+| `downloaded_bytes` / `downloaded_file_chunks` | After download completes for a file or chunk |
+| `skipped_bytes` / `skipped_file_chunks` | When hash cache hit or conflict resolution skips the download |
+
+**Example - Progress callback:**
+
+```python
+from deadline.job_attachments._snapshots import (
+    download_abs_manifest,
+    DownloadProgressMetadata,
+)
+
+def on_progress(metadata: DownloadProgressMetadata) -> bool:
+    print(f"Progress: {metadata.progress:.1f}% - {metadata.progressMessage}")
+    # Return False to cancel, True to continue
+    return True
+
+result = download_abs_manifest(
+    manifest=abs_manifest,
+    data_cache=s3_cache,
+    on_progress=on_progress,
+)
+```
 
 **Hash Cache Skip Optimization:**
 
@@ -1292,11 +1357,13 @@ The hash cache is the same cache used by HASH and HASH_UPLOAD operations, so fil
 
 The `statistics` field contains:
 - `total_files`: Number of files in manifest
-- `processed_files`: Number of files successfully downloaded
-- `skipped_files`: Number of files skipped (hash cache match or SKIP resolution)
 - `total_bytes`: Total bytes to download
+- `processed_files`: Number of files successfully downloaded
 - `processed_bytes`: Bytes successfully downloaded
+- `skipped_files`: Number of files skipped (hash cache match or SKIP resolution)
+- `skipped_bytes`: Bytes skipped
 - `total_time`: Total operation time in seconds
+- `transfer_rate`: Download throughput in bytes/second
 
 **Why Return an Updated Manifest?**
 

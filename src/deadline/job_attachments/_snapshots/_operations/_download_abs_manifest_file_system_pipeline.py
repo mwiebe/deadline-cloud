@@ -65,8 +65,8 @@ class FileSystemDownloadPipeline(DownloadPipelineBase):
         shutil.copy2(source_path, temp_path)
         copied_size = temp_path.stat().st_size
 
-        if self._progress_tracker:
-            self._progress_tracker.track_progress_callback(copied_size)
+        if self._progress_state:
+            self._progress_state.record_download_complete(copied_size, skipped=False)
 
         return copied_size
 
@@ -145,8 +145,8 @@ class FileSystemDownloadPipeline(DownloadPipelineBase):
 
             bytes_written = len(chunk_data)
 
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(bytes_written)
+            if self._progress_state:
+                self._progress_state.record_download_complete(bytes_written, skipped=False)
 
             # Update state and check if all chunks are done
             with state.lock:

@@ -13,26 +13,152 @@ import concurrent.futures
 import logging
 import os
 import secrets
+import time
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
-from typing import DefaultDict, List, Optional, TYPE_CHECKING
+from typing import Callable, DefaultDict, List, Optional
 
 from .._manifest import ManifestFilePath
 from .._content_addressed_data_cache import ContentAddressedDataCache
 from ...asset_manifests.hash_algorithms import HashAlgorithm
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 from ...models import FileConflictResolution
-from ...progress_tracker import ProgressTracker
 from ..._utils import _get_long_path_compatible_path
+from ..._path_summarization import human_readable_file_size
 from ._sparse_file import preallocate_file
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger("deadline.job_attachments.download")
+
+# Default interval for progress callbacks (5 times per second)
+DEFAULT_PROGRESS_CALLBACK_INTERVAL = 0.2  # seconds
+
+
+@dataclass
+class DownloadProgressMetadata:
+    """
+    Progress metadata for download_abs_manifest operation.
+
+    Reports progress for the download phase. For chunked files, each chunk
+    is counted separately in the file/chunk counts.
+    """
+
+    # Totals
+    total_file_chunks: int  # Total files + chunks to process
+    total_bytes: int
+
+    # Download progress
+    downloaded_file_chunks: int
+    downloaded_bytes: int
+    skipped_file_chunks: int  # Skipped due to hash cache hit or conflict resolution
+    skipped_bytes: int
+
+    # Overall progress
+    progress: float  # 0-100
+    progressMessage: str
+
+
+# Callback type for download progress reporting
+# Return True to continue, False to cancel the operation
+DownloadProgressCallback = Callable[[DownloadProgressMetadata], bool]
+
+
+@dataclass
+class _DownloadProgressState:
+    """
+    Thread-safe progress state for download pipeline.
+
+    Tracks bytes and file/chunk counts. For chunked files, each chunk is counted separately.
+    """
+
+    # Totals (set once at initialization)
+    total_file_chunks: int = 0
+    total_bytes: int = 0
+
+    # Progress counters
+    downloaded_file_chunks: int = 0
+    downloaded_bytes: int = 0
+    skipped_file_chunks: int = 0
+    skipped_bytes: int = 0
+
+    # Callback and timing
+    on_progress: Optional[DownloadProgressCallback] = None
+    callback_interval: float = DEFAULT_PROGRESS_CALLBACK_INTERVAL
+    _last_callback_time: float = field(default_factory=time.perf_counter)
+    _cancelled: bool = False
+
+    # Thread safety
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def record_download_complete(self, chunk_bytes: int, skipped: bool) -> None:
+        """Record completion of downloading for a file or chunk."""
+        with self._lock:
+            if skipped:
+                self.skipped_bytes += chunk_bytes
+                self.skipped_file_chunks += 1
+            else:
+                self.downloaded_bytes += chunk_bytes
+                self.downloaded_file_chunks += 1
+            self._maybe_invoke_callback()
+
+    def _maybe_invoke_callback(self) -> None:
+        """Invoke callback if interval has elapsed. Must be called with lock held."""
+        if self.on_progress is None or self._cancelled:
+            return
+
+        now = time.perf_counter()
+        if now - self._last_callback_time < self.callback_interval:
+            return
+
+        self._last_callback_time = now
+        metadata = self._build_metadata()
+
+        # Release lock during callback to avoid deadlock
+        self._lock.release()
+        try:
+            should_continue = self.on_progress(metadata)
+            if not should_continue:
+                self._cancelled = True
+        finally:
+            self._lock.acquire()
+
+    def _build_metadata(self) -> DownloadProgressMetadata:
+        """Build progress metadata. Must be called with lock held."""
+        completed_bytes = self.downloaded_bytes + self.skipped_bytes
+        progress = (completed_bytes / self.total_bytes * 100) if self.total_bytes > 0 else 0.0
+
+        msg = (
+            f"Downloaded {human_readable_file_size(completed_bytes)} "
+            f"/ {human_readable_file_size(self.total_bytes)}"
+        )
+
+        return DownloadProgressMetadata(
+            total_file_chunks=self.total_file_chunks,
+            total_bytes=self.total_bytes,
+            downloaded_file_chunks=self.downloaded_file_chunks,
+            downloaded_bytes=self.downloaded_bytes,
+            skipped_file_chunks=self.skipped_file_chunks,
+            skipped_bytes=self.skipped_bytes,
+            progress=progress,
+            progressMessage=msg,
+        )
+
+    def is_cancelled(self) -> bool:
+        """Check if operation was cancelled via callback."""
+        with self._lock:
+            return self._cancelled
+
+    def force_callback(self) -> None:
+        """Force a callback invocation (e.g., at end of operation)."""
+        with self._lock:
+            if self.on_progress is None or self._cancelled:
+                return
+            metadata = self._build_metadata()
+
+        # Invoke without lock
+        self.on_progress(metadata)
 
 
 @dataclass
@@ -72,7 +198,7 @@ class DownloadPipelineBase(ABC):
         collision_lock: Lock,
         collision_file_dict: DefaultDict[str, int],
         file_conflict_resolution: FileConflictResolution,
-        progress_tracker: Optional[ProgressTracker],
+        progress_state: Optional[_DownloadProgressState],
     ) -> None:
         self._executor = executor
         self._data_cache = data_cache
@@ -83,7 +209,7 @@ class DownloadPipelineBase(ABC):
         self._collision_lock = collision_lock
         self._collision_file_dict = collision_file_dict
         self._file_conflict_resolution = file_conflict_resolution
-        self._progress_tracker = progress_tracker
+        self._progress_state = progress_state
 
         # Track completion
         self._pending_count = 0
@@ -187,8 +313,8 @@ class DownloadPipelineBase(ABC):
             # Check hash cache first
             can_skip, cached_mtime_us = self._check_hash_cache_for_skip(entry)
             if can_skip:
-                if self._progress_tracker:
-                    self._progress_tracker.track_progress_callback(file_size)
+                if self._progress_state:
+                    self._progress_state.record_download_complete(file_size, skipped=True)
                 self._record_result(
                     DownloadFileResult(
                         entry=entry,
@@ -307,8 +433,16 @@ class DownloadPipelineBase(ABC):
             # Check hash cache first
             can_skip, cached_mtime_us = self._check_hash_cache_for_chunked_skip(entry)
             if can_skip:
-                if self._progress_tracker:
-                    self._progress_tracker.track_progress_callback(file_size)
+                # Record progress for each chunk that was skipped
+                if self._progress_state:
+                    num_chunks = len(entry.chunkhashes)
+                    for chunk_idx in range(num_chunks):
+                        chunk_start = chunk_idx * self._chunk_size_bytes
+                        if chunk_idx == num_chunks - 1:
+                            chunk_bytes = file_size - chunk_start
+                        else:
+                            chunk_bytes = self._chunk_size_bytes
+                        self._progress_state.record_download_complete(chunk_bytes, skipped=True)
                 self._record_result(
                     DownloadFileResult(
                         entry=entry,

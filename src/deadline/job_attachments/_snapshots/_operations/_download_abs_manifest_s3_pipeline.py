@@ -101,8 +101,8 @@ class S3DownloadPipeline(DownloadPipelineBase):
             data = response["Body"].read()
             with open(temp_path, "wb") as f:
                 f.write(data)
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
+            if self._progress_state:
+                self._progress_state.record_download_complete(len(data), skipped=False)
             return len(data)
 
         except ClientError as exc:
@@ -283,8 +283,8 @@ class S3DownloadPipeline(DownloadPipelineBase):
                 f.seek(offset)
                 f.write(data)
 
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
+            if self._progress_state:
+                self._progress_state.record_download_complete(len(data), skipped=False)
 
             with state.lock:
                 state.total_bytes_downloaded += len(data)
@@ -358,8 +358,8 @@ class S3DownloadPipeline(DownloadPipelineBase):
                 f.seek(file_offset)
                 f.write(data)
 
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
+            if self._progress_state:
+                self._progress_state.record_download_complete(len(data), skipped=False)
 
             with state.lock:
                 state.total_bytes_downloaded += len(data)
@@ -438,8 +438,8 @@ class S3DownloadPipeline(DownloadPipelineBase):
                 f.seek(file_offset)
                 f.write(data)
 
-            if self._progress_tracker:
-                self._progress_tracker.track_progress_callback(len(data))
+            if self._progress_state:
+                self._progress_state.record_download_complete(len(data), skipped=False)
 
             with state.lock:
                 state.total_bytes_downloaded += len(data)

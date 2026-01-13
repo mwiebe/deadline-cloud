@@ -49,17 +49,16 @@ from .._content_addressed_data_cache import (
     S3DataCache,
 )
 from ...models import FileConflictResolution
-from ...progress_tracker import (
-    DownloadSummaryStatistics,
-    ProgressStatus,
-    ProgressTracker,
-)
 from ...exceptions import AssetSyncCancelledError
 from ..._utils import _get_long_path_compatible_path
 from ...caches.hash_cache import HashCache
 
-# Import pipeline classes
-from ._download_abs_manifest_pipeline import DownloadPipelineBase
+# Import pipeline classes and progress types
+from ._download_abs_manifest_pipeline import (
+    DownloadPipelineBase,
+    DownloadProgressCallback,
+    _DownloadProgressState,
+)
 from ._download_abs_manifest_s3_pipeline import S3DownloadPipeline
 from ._download_abs_manifest_file_system_pipeline import FileSystemDownloadPipeline
 
@@ -67,6 +66,20 @@ logger = logging.getLogger("deadline.job_attachments.download")
 
 # Default number of parallel download workers
 DEFAULT_MAX_WORKERS = 10
+
+
+@dataclass
+class DownloadSummaryStatistics:
+    """Summary statistics for a download operation."""
+
+    total_files: int = 0
+    total_bytes: int = 0
+    processed_files: int = 0
+    processed_bytes: int = 0
+    skipped_files: int = 0
+    skipped_bytes: int = 0
+    total_time: float = 0.0
+    transfer_rate: float = 0.0
 
 
 @dataclass
@@ -326,7 +339,7 @@ def download_abs_manifest(
     apply_deletes: bool = True,
     symlink_policy: SymlinkPolicy = SymlinkPolicy.PRESERVE,
     max_workers: Optional[int] = None,
-    progress_tracker: Optional[ProgressTracker] = None,
+    on_progress: Optional[DownloadProgressCallback] = None,
 ) -> DownloadResult:
     """
     Download files from a data cache to the local filesystem.
@@ -345,15 +358,16 @@ def download_abs_manifest(
         file_conflict_resolution: How to handle existing files. Default OVERWRITE.
         apply_deletes: If True (default), apply deletions from diff manifests.
         symlink_policy: How to handle symlinks. Default PRESERVE.
-        max_workers: Maximum parallel download workers. Default: auto-detect.
-        progress_tracker: Optional progress tracker for download progress and cancellation
+        max_workers: Maximum parallel download workers. Default: 10.
+        on_progress: Optional callback for progress reporting. Called periodically with
+            DownloadProgressMetadata. Return True to continue, False to cancel.
 
     Returns:
         DownloadResult containing statistics and updated manifest.
 
     Raises:
         ValueError: If the manifest contains relative paths or unsupported symlink_policy
-        AssetSyncCancelledError: If cancelled via progress tracker
+        AssetSyncCancelledError: If cancelled via on_progress callback returning False
     """
     _validate_absolute_paths(manifest)
 
@@ -390,28 +404,34 @@ def download_abs_manifest(
         if dir_entry.deleted:
             deleted_directories.append(dir_entry)
 
-    # Calculate totals for progress tracking
-    symlink_count = len(symlinks) if symlink_policy == SymlinkPolicy.PRESERVE else 0
-    total_files = len(regular_files) + len(chunked_files) + symlink_count
+    # Calculate totals - count chunks separately for chunked files
+    chunk_size_bytes = manifest.fileChunkSizeBytes
+    total_file_chunks = len(regular_files)
+    for entry in chunked_files:
+        if entry.chunkhashes:
+            total_file_chunks += len(entry.chunkhashes)
+    # DOWNLOAD only supports PRESERVE (create symlinks) or EXCLUDE_ALL (skip symlinks).
+    # Only count symlinks in progress when they'll actually be created.
+    if symlink_policy == SymlinkPolicy.PRESERVE:
+        total_file_chunks += len(symlinks)
+
     total_bytes = sum((e.size or 0) for e in regular_files) + sum(
         (e.size or 0) for e in chunked_files
     )
 
-    if progress_tracker is None:
-        progress_tracker = ProgressTracker(
-            status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
-            total_files=total_files,
+    # Set up progress state if callback provided
+    progress_state: Optional[_DownloadProgressState] = None
+    if on_progress is not None:
+        progress_state = _DownloadProgressState(
+            total_file_chunks=total_file_chunks,
             total_bytes=total_bytes,
+            on_progress=on_progress,
         )
-    else:
-        progress_tracker.total_files = total_files
-        progress_tracker.total_bytes = total_bytes
 
     start_time = time.perf_counter()
 
     collision_lock = Lock()
     collision_file_dict: DefaultDict[str, int] = defaultdict(int)
-    downloaded_files_by_root: DefaultDict[str, List[str]] = defaultdict(list)
     updated_mtimes: Dict[str, int] = {}
 
     processed_files = 0
@@ -439,8 +459,6 @@ def download_abs_manifest(
         all_files_to_download = regular_files + chunked_files
         sorted_dirs, dir_to_files = _collect_directories_with_files(manifest, all_files_to_download)
 
-        chunk_size_bytes = manifest.fileChunkSizeBytes
-
         # 3. Download files using callback-based pipeline
         # Interleave directory creation with file submission so the pipeline
         # can start processing files while directories are still being created
@@ -460,7 +478,7 @@ def download_abs_manifest(
                 collision_lock=collision_lock,
                 collision_file_dict=collision_file_dict,
                 file_conflict_resolution=file_conflict_resolution,
-                progress_tracker=progress_tracker,
+                progress_state=progress_state,
             )
 
             # Create each directory and immediately submit its files
@@ -480,7 +498,7 @@ def download_abs_manifest(
             has_files = len(regular_files) > 0 or len(chunked_files) > 0
             if has_files:
                 while not pipeline._done_event.wait(timeout=0.1):
-                    if progress_tracker and not progress_tracker.continue_reporting:
+                    if progress_state and progress_state.is_cancelled():
                         pipeline.cancel()
                         raise AssetSyncCancelledError("Download cancelled.")
 
@@ -491,21 +509,14 @@ def download_abs_manifest(
             if result.was_skipped:
                 skipped_files += 1
                 skipped_bytes += result.bytes_downloaded
-                progress_tracker.increase_skipped(1, result.bytes_downloaded)
                 logger.debug("Skipped: %s", result.entry.path)
             else:
                 processed_files += 1
                 processed_bytes += result.bytes_downloaded
-                progress_tracker.increase_processed(1, 0)
-                if result.local_path:
-                    root = str(result.local_path.parent)
-                    downloaded_files_by_root[root].append(str(result.local_path))
                 if result.actual_mtime_us is not None:
                     updated_mtimes[result.entry.path] = result.actual_mtime_us
                 file_type = "chunked file" if result.entry.chunkhashes else "file"
                 logger.debug("Downloaded %s: %s", file_type, result.entry.path)
-
-            progress_tracker.report_progress()
 
         # 5. Create symlinks (if policy is PRESERVE)
         if symlink_policy == SymlinkPolicy.PRESERVE:
@@ -513,8 +524,9 @@ def download_abs_manifest(
             for entry in sorted_symlinks:
                 _create_symlink(entry)
                 processed_files += 1
-                progress_tracker.increase_processed(1, 0)
-                progress_tracker.report_progress()
+                # Record symlink as downloaded (0 bytes)
+                if progress_state:
+                    progress_state.record_download_complete(0, skipped=False)
                 logger.debug("Created symlink: %s", entry.path)
 
     except AssetSyncCancelledError:
@@ -524,8 +536,22 @@ def download_abs_manifest(
             f"before cancellation.)"
         )
 
-    progress_tracker.total_time = time.perf_counter() - start_time
+    # Force final progress callback
+    if progress_state is not None:
+        progress_state.force_callback()
+
+    total_time = time.perf_counter() - start_time
+    transfer_rate = processed_bytes / total_time if total_time > 0 else 0.0
 
     updated_manifest = _build_updated_manifest(manifest, updated_mtimes)
-    statistics = progress_tracker.get_download_summary_statistics(dict(downloaded_files_by_root))
+    statistics = DownloadSummaryStatistics(
+        total_files=len(regular_files) + len(chunked_files) + len(symlinks),
+        total_bytes=total_bytes,
+        processed_files=processed_files,
+        processed_bytes=processed_bytes,
+        skipped_files=skipped_files,
+        skipped_bytes=skipped_bytes,
+        total_time=total_time,
+        transfer_rate=transfer_rate,
+    )
     return DownloadResult(statistics=statistics, manifest=updated_manifest)
