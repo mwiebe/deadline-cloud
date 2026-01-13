@@ -829,6 +829,126 @@ This handles the scenario:
 | Main thread (serial) | ~30 seconds | 1920 × 15ms = 28.8s |
 | Worker threads (8 workers) | ~4 seconds | Parallelized across workers |
 
+**Probabilistic S3 Cache Validation:**
+
+The S3 check cache can become stale if objects are deleted from S3 (e.g., by lifecycle policies,
+manual deletion, or bucket recreation). To detect this without sacrificing performance, the
+HASH_UPLOAD operation performs probabilistic validation during upload.
+
+Note: The legacy `upload.py` implementation performs a pre-upload check of 30 random cached
+entries before starting uploads. The new snapshots-based approach instead performs inline
+validation during the upload itself, which provides better coverage and automatic recovery.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              Probabilistic S3 Cache Validation                   │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  For each item where S3 check cache says "exists":               │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  Item 1-100:     Always verify with HeadObject          │    │
+│  │  Item 101+:      1% random sampling (HeadObject)        │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  If ANY verification fails (object missing from S3):            │
+│                                                                  │
+│  1. Mark cache as invalid (set invalidation flag)               │
+│  2. Close and delete the S3 check cache database                │
+│  3. Re-queue all previously skipped items for upload            │
+│  4. Continue processing remaining items without cache           │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Sampling Strategy:**
+
+| Item Number | Verification | Rationale |
+|-------------|--------------|-----------|
+| 1-100 | Always HeadObject | Catch stale cache early with high confidence |
+| 101+ | 1% random sample | Balance validation coverage vs. performance |
+
+The first 100 items provide early detection—if the cache is completely stale (e.g., bucket
+was recreated), we'll detect it within the first 100 items with near certainty. The 1%
+sampling for remaining items catches partial staleness (e.g., some objects deleted by
+lifecycle policy) while keeping HeadObject overhead minimal.
+
+**Expected HeadObject overhead for warm cache scenarios:**
+
+| Total Items | Verified Items | HeadObject Time (8 workers) |
+|-------------|----------------|----------------------------|
+| 100 | 100 | ~0.2 seconds |
+| 1,000 | 109 | ~0.2 seconds |
+| 10,000 | 199 | ~0.4 seconds |
+| 100,000 | 1,099 | ~2.1 seconds |
+
+**Recovery Flow:**
+
+When a cache miss is detected during validation:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     Cache Invalidation Recovery                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. DETECT: HeadObject returns 404 for cached item              │
+│     └─► Set cache_invalidated flag (atomic)                     │
+│                                                                  │
+│  2. INVALIDATE: Close and delete S3 check cache database        │
+│     └─► Prevents further cache hits                             │
+│                                                                  │
+│  3. RE-QUEUE: Collect all items that were skipped due to cache  │
+│     └─► These items trusted the now-invalid cache               │
+│                                                                  │
+│  4. RETRY: Re-submit skipped items to the pipeline              │
+│     └─► Items now go through HeadObject (no cache)              │
+│     └─► Upload if object truly missing, skip if exists          │
+│                                                                  │
+│  5. CONTINUE: Process remaining items without cache             │
+│     └─► All subsequent items use HeadObject directly            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Implementation Details:**
+
+The `_TaskBasedPipeline` class tracks validation state:
+
+```python
+@dataclass
+class _S3CacheValidationState:
+    """Tracks probabilistic S3 cache validation during upload."""
+    
+    # Counters for sampling decision
+    cache_hit_count: int = 0  # Total items where cache said "exists"
+    
+    # Validation results
+    cache_invalidated: bool = False  # Set True on first validation failure
+    
+    # Items to retry if cache is invalidated
+    skipped_items: List[PipelineWorkItem] = field(default_factory=list)
+    
+    # Lock for thread-safe updates
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    
+    def should_verify(self) -> bool:
+        """Determine if this cache hit should be verified with HeadObject."""
+        with self.lock:
+            self.cache_hit_count += 1
+            if self.cache_hit_count <= 100:
+                return True  # Always verify first 100
+            # 1% random sampling for items 101+
+            return random.random() < 0.01
+```
+
+**Why This Approach:**
+
+1. **Early detection:** First 100 checks catch completely stale caches quickly
+2. **Minimal overhead:** 1% sampling adds negligible latency for large uploads
+3. **Self-healing:** Automatic recovery without user intervention
+4. **No data loss:** Re-queued items are uploaded if truly missing
+5. **Graceful degradation:** After invalidation, falls back to HeadObject for all items
+
 **Entry Type Handling:**
 
 | Entry Type | Action |
