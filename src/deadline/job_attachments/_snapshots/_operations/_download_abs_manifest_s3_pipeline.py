@@ -91,10 +91,13 @@ class S3DownloadPipeline(DownloadPipelineBase):
         s3_key = self._data_cache.get_object_key(entry.hash, self._hash_alg)  # type: ignore
 
         try:
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-            )
+            get_kwargs = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+            }
+            if self._data_cache.expected_bucket_owner is not None:
+                get_kwargs["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
+            response = self._data_cache.s3_client.get_object(**get_kwargs)
             data = response["Body"].read()
             with open(temp_path, "wb") as f:
                 f.write(data)
@@ -266,11 +269,14 @@ class S3DownloadPipeline(DownloadPipelineBase):
 
             range_header = f"bytes={offset}-{end}"
 
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-                Range=range_header,
-            )
+            get_kwargs = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+                "Range": range_header,
+            }
+            if self._data_cache.expected_bucket_owner is not None:
+                get_kwargs["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
+            response = self._data_cache.s3_client.get_object(**get_kwargs)
             data = response["Body"].read()
 
             with open(state.temp_path, "r+b") as f:
@@ -339,10 +345,13 @@ class S3DownloadPipeline(DownloadPipelineBase):
             if not isinstance(self._data_cache, S3DataCache):
                 raise TypeError("Expected S3DataCache")
 
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-            )
+            get_kwargs = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+            }
+            if self._data_cache.expected_bucket_owner is not None:
+                get_kwargs["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
+            response = self._data_cache.s3_client.get_object(**get_kwargs)
             data = response["Body"].read()
 
             with open(state.temp_path, "r+b") as f:
@@ -415,11 +424,14 @@ class S3DownloadPipeline(DownloadPipelineBase):
 
             range_header = f"bytes={chunk_offset}-{end_in_chunk}"
 
-            response = self._data_cache.s3_client.get_object(
-                Bucket=self._data_cache.s3_bucket,
-                Key=s3_key,
-                Range=range_header,
-            )
+            get_kwargs = {
+                "Bucket": self._data_cache.s3_bucket,
+                "Key": s3_key,
+                "Range": range_header,
+            }
+            if self._data_cache.expected_bucket_owner is not None:
+                get_kwargs["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
+            response = self._data_cache.s3_client.get_object(**get_kwargs)
             data = response["Body"].read()
 
             with open(state.temp_path, "r+b") as f:

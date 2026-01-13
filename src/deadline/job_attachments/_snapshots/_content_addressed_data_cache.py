@@ -14,6 +14,7 @@ Classes:
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,8 +23,20 @@ from typing import Any, Optional
 from ..caches.s3_check_cache import S3CheckCache, S3CheckCacheEntry
 
 
+logger = logging.getLogger(__name__)
+
 # Default part size for S3 multipart uploads/downloads (32MB)
 DEFAULT_S3_MULTIPART_PART_SIZE = 32 * 1024 * 1024  # 32MB
+
+
+class _NoAccountIdCheck:
+    """Sentinel class to indicate that account ID checking should be disabled."""
+
+    pass
+
+
+# Sentinel value to disable ExpectedBucketOwner checks
+NO_ACCOUNT_ID_CHECK = _NoAccountIdCheck()
 
 
 @dataclass
@@ -85,6 +98,9 @@ class S3DataCache(ContentAddressedDataCache):
         s3_check_cache: Optional cache to avoid redundant S3 existence checks
         multipart_part_size: Part size for multipart uploads/downloads (default: 32MB)
         force_s3_check: If True, skip the s3_check_cache and always make HeadObject calls
+        account_id: AWS account ID for ExpectedBucketOwner. By default, auto-detected
+            from credentials. Set to NO_ACCOUNT_ID_CHECK to disable the check, or
+            provide a specific account ID string.
     """
 
     s3_bucket: str
@@ -93,6 +109,33 @@ class S3DataCache(ContentAddressedDataCache):
     s3_check_cache: Optional[S3CheckCache] = field(default=None)
     multipart_part_size: int = field(default=DEFAULT_S3_MULTIPART_PART_SIZE)
     force_s3_check: bool = field(default=False)
+    account_id: Any = field(default=None)  # None = auto-detect, NO_ACCOUNT_ID_CHECK = disable
+
+    _resolved_account_id: Optional[str] = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Resolve account_id after initialization."""
+        if isinstance(self.account_id, _NoAccountIdCheck):
+            self._resolved_account_id = None
+        elif self.account_id is not None:
+            self._resolved_account_id = self.account_id
+        else:
+            # Auto-detect from credentials
+            from .._aws.aws_clients import get_account_id, get_boto3_session
+
+            try:
+                session = get_boto3_session()
+                self._resolved_account_id = get_account_id(session=session)
+            except Exception as e:
+                raise ValueError(
+                    f"Could not determine AWS account ID from credentials: {e}. "
+                    f"Either provide an explicit account_id or use NO_ACCOUNT_ID_CHECK to disable."
+                ) from e
+
+    @property
+    def expected_bucket_owner(self) -> Optional[str]:
+        """Returns the account ID to use for ExpectedBucketOwner, or None if disabled."""
+        return self._resolved_account_id
 
     def get_object_key(self, hash_value: str, algorithm: str) -> str:
         """Returns the S3 key for a given hash."""
@@ -112,16 +155,15 @@ class S3DataCache(ContentAddressedDataCache):
             return None
         return self.s3_check_cache.get_entry(self.get_cache_key(hash_value, algorithm))
 
-    def head_object_exists(
-        self, hash_value: str, algorithm: str, expected_bucket_owner: Optional[str] = None
-    ) -> bool:
+    def head_object_exists(self, hash_value: str, algorithm: str) -> bool:
         """
         Check if object exists in S3 using HeadObject (bypassing cache).
+
+        Uses the resolved account_id for ExpectedBucketOwner if available.
 
         Args:
             hash_value: The hash of the content
             algorithm: The hash algorithm used (e.g., "xxh128")
-            expected_bucket_owner: Optional AWS account ID for ExpectedBucketOwner
 
         Returns:
             True if the object exists, False if not found
@@ -131,9 +173,9 @@ class S3DataCache(ContentAddressedDataCache):
         """
         key = self.get_object_key(hash_value, algorithm)
         try:
-            head_kwargs = {"Bucket": self.s3_bucket, "Key": key}
-            if expected_bucket_owner is not None:
-                head_kwargs["ExpectedBucketOwner"] = expected_bucket_owner
+            head_kwargs: dict[str, Any] = {"Bucket": self.s3_bucket, "Key": key}
+            if self._resolved_account_id is not None:
+                head_kwargs["ExpectedBucketOwner"] = self._resolved_account_id
             self.s3_client.head_object(**head_kwargs)
             return True
         except self.s3_client.exceptions.ClientError as e:

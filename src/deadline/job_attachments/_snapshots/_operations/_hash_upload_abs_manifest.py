@@ -388,7 +388,6 @@ class _TaskBasedPipeline:
         memory_pool: _MemoryPool,
         hash_alg: HashAlgorithm,
         data_cache: ContentAddressedDataCache,
-        account_id: Optional[str],
         progress_tracker: Optional[ProgressTracker],
         hash_cache: Optional[HashCache] = None,
         force_rehash: bool = False,
@@ -398,7 +397,6 @@ class _TaskBasedPipeline:
         self._memory_pool = memory_pool
         self._hash_alg = hash_alg
         self._data_cache = data_cache
-        self._account_id = account_id
         self._progress_tracker = progress_tracker
         self._hash_cache = hash_cache
         self._force_rehash = force_rehash
@@ -580,9 +578,7 @@ class _TaskBasedPipeline:
     def _head_object_exists(self, hash_value: str) -> bool:
         """Check if object exists using HeadObject (bypassing cache)."""
         if isinstance(self._data_cache, S3DataCache):
-            return self._data_cache.head_object_exists(
-                hash_value, self._hash_alg.value, self._account_id
-            )
+            return self._data_cache.head_object_exists(hash_value, self._hash_alg.value)
         return self._data_cache.object_exists(hash_value, self._hash_alg.value)
 
     def _handle_cache_invalidation(self, hash_value: str) -> None:
@@ -1189,8 +1185,8 @@ class _TaskBasedPipeline:
                 "Bucket": self._data_cache.s3_bucket,
                 "Key": s3_key,
             }
-            if self._account_id is not None:
-                head_kwargs["ExpectedBucketOwner"] = self._account_id
+            if self._data_cache.expected_bucket_owner is not None:
+                head_kwargs["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
             self._data_cache.s3_client.head_object(**head_kwargs)
             # Object exists, skip upload
@@ -1227,8 +1223,8 @@ class _TaskBasedPipeline:
                 "Key": s3_key,
                 "Body": data,
             }
-            if self._account_id is not None:
-                put_kwargs["ExpectedBucketOwner"] = self._account_id
+            if self._data_cache.expected_bucket_owner is not None:
+                put_kwargs["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
             self._data_cache.s3_client.put_object(**put_kwargs)
             return True
@@ -1280,8 +1276,8 @@ class _TaskBasedPipeline:
 
         try:
             extra_args: Dict[str, Any] = {}
-            if self._account_id is not None:
-                extra_args["ExpectedBucketOwner"] = self._account_id
+            if self._data_cache.expected_bucket_owner is not None:
+                extra_args["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
             # Read entire file and verify hash
             with open(item.file_path, "rb") as f:
@@ -1347,8 +1343,8 @@ class _TaskBasedPipeline:
 
         try:
             extra_args: Dict[str, Any] = {}
-            if self._account_id is not None:
-                extra_args["ExpectedBucketOwner"] = self._account_id
+            if self._data_cache.expected_bucket_owner is not None:
+                extra_args["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
             response = self._data_cache.s3_client.upload_part(
                 Bucket=self._data_cache.s3_bucket,
@@ -1430,8 +1426,8 @@ class _TaskBasedPipeline:
 
         try:
             extra_args: Dict[str, Any] = {}
-            if self._account_id is not None:
-                extra_args["ExpectedBucketOwner"] = self._account_id
+            if self._data_cache.expected_bucket_owner is not None:
+                extra_args["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
             self._data_cache.s3_client.complete_multipart_upload(
                 Bucket=self._data_cache.s3_bucket,
@@ -1461,8 +1457,8 @@ class _TaskBasedPipeline:
 
         try:
             extra_args: Dict[str, Any] = {}
-            if self._account_id is not None:
-                extra_args["ExpectedBucketOwner"] = self._account_id
+            if self._data_cache.expected_bucket_owner is not None:
+                extra_args["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
             self._data_cache.s3_client.abort_multipart_upload(
                 Bucket=self._data_cache.s3_bucket,
@@ -1480,8 +1476,8 @@ class _TaskBasedPipeline:
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
 
         extra_args: Dict[str, Any] = {}
-        if self._account_id is not None:
-            extra_args["ExpectedBucketOwner"] = self._account_id
+        if self._data_cache.expected_bucket_owner is not None:
+            extra_args["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
 
         response = self._data_cache.s3_client.create_multipart_upload(
             Bucket=self._data_cache.s3_bucket,
@@ -1628,7 +1624,6 @@ def _run_pipeline(
     work_items: List[PipelineWorkItem],
     hash_alg: HashAlgorithm,
     data_cache: ContentAddressedDataCache,
-    account_id: Optional[str],
     max_memory_bytes: int,
     max_workers: int,
     progress_tracker: Optional[ProgressTracker],
@@ -1652,7 +1647,6 @@ def _run_pipeline(
         work_items: List of work items to process (chunks and/or streaming items)
         hash_alg: Hash algorithm to use
         data_cache: Content-addressable data cache for writes
-        account_id: AWS account ID (for S3DataCache ExpectedBucketOwner)
         max_memory_bytes: Maximum memory for buffering
         max_workers: Maximum number of parallel workers per pool
         progress_tracker: Optional progress tracker
@@ -1678,7 +1672,6 @@ def _run_pipeline(
                 memory_pool=memory_pool,
                 hash_alg=hash_alg,
                 data_cache=data_cache,
-                account_id=account_id,
                 progress_tracker=progress_tracker,
                 hash_cache=hash_cache,
                 force_rehash=force_rehash,
@@ -1783,20 +1776,6 @@ def hash_upload_abs_manifest(
             f"The pipeline needs at least one chunk's worth of memory to operate."
         )
 
-    # Get account_id for S3DataCache (used for ExpectedBucketOwner)
-    account_id: Optional[str] = None
-    if isinstance(data_cache, S3DataCache):
-        from ..._aws.aws_clients import get_account_id, get_boto3_session
-
-        try:
-            session = get_boto3_session()
-            account_id = get_account_id(session=session)
-        except Exception:
-            logger.warning(
-                "Could not determine AWS account ID, proceeding without ExpectedBucketOwner"
-            )
-            account_id = None
-
     # Separate entries by type
     file_entries_to_process: List[Tuple[int, ManifestFilePath]] = []
     symlink_entries: List[Tuple[int, ManifestFilePath]] = []
@@ -1898,7 +1877,6 @@ def hash_upload_abs_manifest(
             work_items=all_work_items,
             hash_alg=manifest.hashAlg,
             data_cache=data_cache,
-            account_id=account_id,
             max_memory_bytes=max_memory_bytes,
             max_workers=max_workers,
             progress_tracker=progress_tracker,

@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 from deadline.job_attachments._snapshots import (
     download_abs_manifest,
     AbsSnapshot,
+    NO_ACCOUNT_ID_CHECK,
 )
 from deadline.job_attachments._snapshots._manifest import ManifestFilePath
 from deadline.job_attachments._snapshots._content_addressed_data_cache import S3DataCache
@@ -31,7 +32,9 @@ class TestMultipartDownloadRegularFiles:
         """Create a mock S3 client that returns specified content for byte-range requests."""
         mock_client = MagicMock()
 
-        def mock_get_object(Bucket: str, Key: str, Range: Optional[str] = None) -> Dict[str, Any]:
+        def mock_get_object(
+            Bucket: str, Key: str, Range: Optional[str] = None, **kwargs: Any
+        ) -> Dict[str, Any]:
             content = file_contents.get(Key, b"")
             if Range:
                 # Parse Range header: "bytes=start-end"
@@ -62,6 +65,7 @@ class TestMultipartDownloadRegularFiles:
             s3_key_prefix="Data",
             s3_client=mock_client,
             multipart_part_size=32,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
         target_path = download_dir / "large_file.bin"
@@ -115,6 +119,7 @@ class TestMultipartDownloadRegularFiles:
             s3_key_prefix="Data",
             s3_client=mock_client,
             multipart_part_size=32,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
         target_path = download_dir / "small_file.bin"
@@ -185,6 +190,7 @@ class TestMultipartDownloadChunkedFiles:
             s3_key_prefix="Data",
             s3_client=mock_client,
             multipart_part_size=32,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
         target_path = download_dir / "chunked_file.bin"
@@ -232,6 +238,7 @@ class TestMultipartDownloadChunkedFiles:
             s3_key_prefix="Data",
             s3_client=mock_client,
             multipart_part_size=32,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
         target_path = download_dir / "chunked_file.bin"
@@ -288,6 +295,7 @@ class TestMultipartDownloadChunkedFiles:
             s3_key_prefix="Data",
             s3_client=mock_client,
             multipart_part_size=32,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
         target_path = download_dir / "multi_chunk_file.bin"
@@ -374,6 +382,7 @@ class TestMultipartDownloadMixedFiles:
             s3_key_prefix="Data",
             s3_client=mock_client,
             multipart_part_size=32,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
         small_path = download_dir / "small.bin"

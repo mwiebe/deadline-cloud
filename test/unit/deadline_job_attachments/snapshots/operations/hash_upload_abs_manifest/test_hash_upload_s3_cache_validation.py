@@ -27,6 +27,7 @@ from deadline.job_attachments._snapshots import (
     S3DataCache,
     AbsSnapshot,
     ManifestFilePath,
+    NO_ACCOUNT_ID_CHECK,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments.caches.hash_cache import HashCache
@@ -262,6 +263,7 @@ class TestS3CacheValidationIntegration:
             s3_key_prefix=TEST_KEY_PREFIX,
             s3_client=self.s3_client,
             s3_check_cache=s3_check_cache,
+            account_id=NO_ACCOUNT_ID_CHECK,
         )
 
     def _create_test_manifest(self, tmp_path: Path, content: str = "Test content") -> AbsSnapshot:
