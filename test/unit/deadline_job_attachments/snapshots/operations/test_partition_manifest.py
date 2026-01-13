@@ -216,6 +216,32 @@ class TestCollectAllDirs:
 
         assert "/" in dirs
 
+    def test_empty_dir_included_in_root_determination_absolute(self) -> None:
+        """Empty directories affect root determination for absolute manifests."""
+        # Files under /a/b, empty dir at /a/c - root should be /a, not /a/b
+        manifest = self._create_abs_manifest(
+            files=[{"path": "/a/b/file.txt", "hash": "h1", "size": 100, "mtime": 1000}],
+            dirs=[{"path": "/a/c"}],
+        )
+
+        dirs = _collect_all_dirs(manifest)
+
+        assert "/a/b" in dirs  # parent of file
+        assert "/a/c" in dirs  # explicit empty dir
+
+    def test_empty_dir_included_in_root_determination_relative(self) -> None:
+        """Empty directories affect root determination for relative manifests."""
+        # Files under a/b, empty dir at a/c - root should be a, not a/b
+        manifest = self._create_rel_manifest(
+            files=[{"path": "a/b/file.txt", "hash": "h1", "size": 100, "mtime": 1000}],
+            dirs=[{"path": "a/c"}],
+        )
+
+        dirs = _collect_all_dirs(manifest)
+
+        assert "a/b" in dirs  # parent of file
+        assert "a/c" in dirs  # explicit empty dir
+
 
 class TestPartitionManifestRelative:
     """Tests for partitioning with relative paths."""
@@ -336,6 +362,29 @@ class TestPartitionManifestV2025:
         assert root == "project"
         assert len(subtree.files) == 3
 
+    def test_empty_dir_affects_auto_root_relative(self) -> None:
+        """Empty directories affect auto-root determination for relative manifests."""
+        # Files only under a/b, but empty dir at a/c means root should be "a" not "a/b"
+        manifest = self._create_manifest(
+            files=[
+                {"path": "a/b/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+            dirs=[
+                {"path": "a/c"},  # empty dir
+            ],
+        )
+
+        result = partition_manifest(manifest)
+
+        assert len(result) == 1
+        root, subtree = result[0]
+        assert root == "a"  # not "a/b"
+        assert len(subtree.files) == 1
+        assert subtree.files[0].path == "b/file.txt"
+        # Empty dir should be in the subtree
+        dir_paths = {d.path for d in subtree.dirs}
+        assert "c" in dir_paths
+
     def test_preserves_directories(self) -> None:
         """Directories are preserved in partitions."""
         manifest = self._create_manifest(
@@ -430,6 +479,30 @@ class TestPartitionManifestAutoRoots:
         assert len(result) == 1
         root, _ = result[0]
         assert root == "/projects/scene"
+
+    def test_empty_dir_affects_auto_root_absolute(self) -> None:
+        """Empty directories affect auto-root determination for absolute manifests."""
+        # Files only under /a/b, but empty dir at /a/c means root should be "/a" not "/a/b"
+        manifest = self._create_manifest(
+            files=[
+                {"path": "/a/b/file.txt", "hash": "h1", "size": 100, "mtime": 1000},
+            ],
+            dirs=[
+                {"path": "/a/c"},  # empty dir
+            ],
+        )
+
+        with patch.object(os, "name", "posix"):
+            result = partition_manifest(manifest)
+
+        assert len(result) == 1
+        root, subtree = result[0]
+        assert root == "/a"  # not "/a/b"
+        assert len(subtree.files) == 1
+        assert subtree.files[0].path == "b/file.txt"
+        # Empty dir should be in the subtree
+        dir_paths = {d.path for d in subtree.dirs}
+        assert "c" in dir_paths
 
     def test_posix_explicit_roots_with_remainder(self) -> None:
         """POSIX explicit roots with remaining paths creates additional roots."""

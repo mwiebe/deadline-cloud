@@ -2400,6 +2400,19 @@ The `referenced_paths` parameter influences root determination by treating each 
 
 This typically results in more roots than the empty-roots case, since the provided roots may not align with the natural grouping of entries.
 
+**Empty Directory Handling:**
+
+Empty directories (entries in `manifest.dirs`) are included in root determination alongside file parent directories. This ensures that manifests containing empty directories are partitioned correctly:
+
+```
+# Files only under /a/b, but empty dir at /a/c
+# Auto-root will be /a (not /a/b) to include both
+/a/b/file.txt
+/a/c/           (empty directory)
+```
+
+Without this, a manifest with files under `/a/b` and an empty directory at `/a/c` would incorrectly compute `/a/b` as the root, excluding the empty directory from the partition.
+
 **Symlink Handling:**
 
 Symlinks are handled per-partition using the same logic as SUBTREE:
