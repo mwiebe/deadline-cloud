@@ -360,6 +360,41 @@ def collect_abs_snapshot(
 | `EXCLUDE_ALL` | Skip all symlinks entirely. |
 | `EXCLUDE_ESCAPING` | Preserve symlinks whose targets are within the collected paths; exclude symlinks whose targets are outside (escaping symlinks). |
 
+**Symlink Cycle Handling:**
+
+Symlink cycles occur when following symlinks leads back to a previously visited path. Examples:
+- Self-referential: `A -> A` (length 1)
+- Direct cycle: `A -> B -> A` (length 2)
+- Longer cycles: `A -> B -> C -> A` (length 3+)
+
+Cycles can also be revealed during collapsing when symlinks point to intermediate directories:
+```
+/root/                          # Being collected
+├── link_to_external -> /ext    # Escaping symlink, will be collapsed
+/ext/
+└── link_back -> /root          # Points back to collected root - cycle!
+```
+In this case, `/root` is being collected, `link_to_external` escapes so it's collapsed (contents
+inlined), and when processing `link_back` inside `/ext`, the cycle is detected because `/root`
+is already being visited.
+
+The COLLECT operation detects symlink cycles and handles them gracefully:
+
+| Policy | Cycle Behavior |
+|--------|----------------|
+| `PRESERVE` | No recursion needed; symlinks are recorded as-is with their targets |
+| `EXCLUDE_ALL` | No recursion needed; all symlinks are skipped |
+| `EXCLUDE_ESCAPING` | Cycles in escaping symlinks are skipped (non-escaping preserved) |
+| `COLLAPSE_ALL` | Cycles detected during traversal; cyclic symlink skipped with warning |
+| `COLLAPSE_ESCAPING` | Cycles detected when collapsing escaping symlinks; cyclic symlink skipped with warning |
+| `TRANSITIVE_INCLUDE_TARGETS` | Cycles detected during transitive collection; cyclic target skipped with warning |
+
+When a cycle is detected:
+1. A warning is logged identifying the cyclic symlink
+2. The cyclic symlink is skipped to prevent infinite recursion
+3. Collection continues with non-cyclic parts of the directory tree
+4. Files and directories already collected before the cycle are preserved
+
 **Validation Rules:**
 
 | Condition | Behavior |
