@@ -864,7 +864,9 @@ def test_hash_upload_s3(
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
-            with profile_operation("upload", config.cprofile_operation, print_fn, suffix=profile_suffix):
+            with profile_operation(
+                "upload", config.cprofile_operation, print_fn, suffix=profile_suffix
+            ):
                 upload_result = hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
@@ -1068,14 +1070,16 @@ def test_download_s3(
     try:
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
-            with profile_operation("download", config.cprofile_operation, print_fn, suffix=profile_suffix):
+            with profile_operation(
+                "download", config.cprofile_operation, print_fn, suffix=profile_suffix
+            ):
                 result = download_abs_manifest(
                     manifest=download_manifest_abs,
                     data_cache=data_cache,
                     hash_cache=hash_cache,
-                max_workers=config.max_workers,
-                progress_tracker=progress_tracker,
-            )
+                    max_workers=config.max_workers,
+                    progress_tracker=progress_tracker,
+                )
             duration = time.perf_counter() - start
     finally:
         stop_heartbeat.set()

@@ -271,6 +271,7 @@ class S3DataCache(ContentAddressedDataCache):
     s3_key_prefix: str
     s3_client: Any  # boto3 S3 client with permissions for GetObject, PutObject, HeadObject
     s3_check_cache: Optional[S3CheckCache] = field(default=None)
+    force_s3_check: bool = field(default=False)
 
     def get_object_key(self, hash_value: str, algorithm: str) -> str:
         return f"{self.s3_key_prefix}/{hash_value}.{algorithm}"
@@ -278,8 +279,8 @@ class S3DataCache(ContentAddressedDataCache):
     def object_exists(self, hash_value: str, algorithm: str) -> bool:
         key = self.get_object_key(hash_value, algorithm)
         cache_key = f"{self.s3_bucket}/{key}"
-        # Check local cache first
-        if self.s3_check_cache is not None:
+        # Check local cache first (unless force_s3_check is True)
+        if not self.force_s3_check and self.s3_check_cache is not None:
             cache_entry = self.s3_check_cache.get_entry(cache_key)
             if cache_entry is not None:
                 return True

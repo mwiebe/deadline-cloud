@@ -84,6 +84,7 @@ class S3DataCache(ContentAddressedDataCache):
         s3_client: A boto3 S3 client with permissions for GetObject, PutObject, HeadObject
         s3_check_cache: Optional cache to avoid redundant S3 existence checks
         multipart_part_size: Part size for multipart uploads/downloads (default: 32MB)
+        force_s3_check: If True, skip the s3_check_cache and always make HeadObject calls
     """
 
     s3_bucket: str
@@ -91,6 +92,7 @@ class S3DataCache(ContentAddressedDataCache):
     s3_client: Any  # boto3 S3 client
     s3_check_cache: Optional[S3CheckCache] = field(default=None)
     multipart_part_size: int = field(default=DEFAULT_S3_MULTIPART_PART_SIZE)
+    force_s3_check: bool = field(default=False)
 
     def get_object_key(self, hash_value: str, algorithm: str) -> str:
         """Returns the S3 key for a given hash."""
@@ -100,8 +102,8 @@ class S3DataCache(ContentAddressedDataCache):
         """
         Checks if an object with the given hash exists in S3.
 
-        First checks the local s3_check_cache if available, then falls back
-        to an S3 HeadObject call.
+        First checks the local s3_check_cache if available (unless force_s3_check
+        is True), then falls back to an S3 HeadObject call.
 
         Args:
             hash_value: The hash of the content
@@ -113,8 +115,8 @@ class S3DataCache(ContentAddressedDataCache):
         key = self.get_object_key(hash_value, algorithm)
         cache_key = f"{self.s3_bucket}/{key}"
 
-        # Check local cache first
-        if self.s3_check_cache is not None:
+        # Check local cache first (unless force_s3_check is True)
+        if not self.force_s3_check and self.s3_check_cache is not None:
             cache_entry = self.s3_check_cache.get_entry(cache_key)
             if cache_entry is not None:
                 return True

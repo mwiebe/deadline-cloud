@@ -1224,3 +1224,182 @@ class TestAllFilesSkippedDueToCacheHits:
                 == result2.manifest.files[1].hash
                 == result3.manifest.files[1].hash
             )
+
+
+class TestForceS3Check:
+    """Tests for the force_s3_check option on S3DataCache."""
+
+    @pytest.fixture(autouse=True)
+    def setup_s3_bucket(self, s3, create_s3_bucket) -> None:
+        """Create the test S3 bucket before each test."""
+        create_s3_bucket(TEST_BUCKET)
+        self.s3_client = s3
+
+    def _create_s3_data_cache(
+        self, s3_check_cache: Optional[S3CheckCache] = None, force_s3_check: bool = False
+    ) -> S3DataCache:
+        """Create an S3DataCache for testing."""
+        return S3DataCache(
+            s3_bucket=TEST_BUCKET,
+            s3_key_prefix=TEST_KEY_PREFIX,
+            s3_client=self.s3_client,
+            s3_check_cache=s3_check_cache,
+            force_s3_check=force_s3_check,
+        )
+
+    def test_force_s3_check_skips_s3_check_cache(self, tmp_path: Path) -> None:
+        """Test that force_s3_check=True skips the s3_check_cache and always makes HeadObject calls."""
+        cache_dir = tmp_path / "s3_cache"
+        cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test content for force_s3_check")
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        # Track head_object calls
+        head_object_calls = []
+        original_head_object = self.s3_client.head_object
+
+        def tracking_head_object(*args, **kwargs):
+            head_object_calls.append(kwargs.get("Key", args[1] if len(args) > 1 else None))
+            return original_head_object(*args, **kwargs)
+
+        self.s3_client.head_object = tracking_head_object
+
+        # First upload - populates S3 check cache
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache, force_s3_check=False)
+            result1 = hash_upload_abs_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+            first_run_head_calls = len(head_object_calls)
+
+        # Second upload WITHOUT force_s3_check - should use S3 check cache (no HeadObject)
+        head_object_calls.clear()
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache, force_s3_check=False)
+            result2 = hash_upload_abs_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+            second_run_head_calls = len(head_object_calls)
+
+        # Third upload WITH force_s3_check - should skip S3 check cache and make HeadObject call
+        head_object_calls.clear()
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache, force_s3_check=True)
+            result3 = hash_upload_abs_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+            third_run_head_calls = len(head_object_calls)
+
+        # All results should have the same hash
+        assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
+        assert result2.manifest.files[0].hash == result3.manifest.files[0].hash
+
+        # First run: HeadObject called (cache miss, then upload)
+        assert first_run_head_calls >= 1, "First run should make HeadObject call"
+
+        # Second run: No HeadObject (S3 check cache hit)
+        assert second_run_head_calls == 0, "Second run should skip HeadObject due to S3 check cache"
+
+        # Third run: HeadObject called (force_s3_check bypasses S3 check cache)
+        assert third_run_head_calls >= 1, (
+            "Third run with force_s3_check should make HeadObject call"
+        )
+
+    def test_force_s3_check_detects_deleted_s3_object(self, tmp_path: Path) -> None:
+        """Test that force_s3_check=True detects when an object was deleted from S3.
+
+        This tests the scenario where:
+        1. File is uploaded and S3 check cache is populated
+        2. Object is deleted from S3 (but S3 check cache still has entry)
+        3. Without force_s3_check: S3 check cache hit, file not re-uploaded
+        4. With force_s3_check: HeadObject detects missing object, file is re-uploaded
+        """
+        cache_dir = tmp_path / "s3_cache"
+        cache_dir.mkdir()
+
+        test_file = tmp_path / "test.txt"
+        test_content = "Test content for deleted object detection"
+        test_file.write_text(test_content)
+        file_stat = test_file.stat()
+
+        abs_path = str(test_file).replace("\\", "/")
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(
+                    path=abs_path,
+                    hash=None,
+                    size=int(file_stat.st_size),
+                    mtime=int(file_stat.st_mtime_ns // 1000),
+                )
+            ],
+            total_size=int(file_stat.st_size),
+        )
+
+        # First upload - populates S3 check cache
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache, force_s3_check=False)
+            result1 = hash_upload_abs_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+            file_hash = result1.manifest.files[0].hash
+
+        # Delete the object from S3
+        s3_key = f"{TEST_KEY_PREFIX}/{file_hash}.xxh128"
+        self.s3_client.delete_object(Bucket=TEST_BUCKET, Key=s3_key)
+
+        # Verify object is gone
+        try:
+            self.s3_client.head_object(Bucket=TEST_BUCKET, Key=s3_key)
+            assert False, "Object should have been deleted"
+        except self.s3_client.exceptions.ClientError as e:
+            assert e.response["Error"]["Code"] == "404"
+
+        # Track put_object calls
+        put_object_calls = []
+        original_put_object = self.s3_client.put_object
+
+        def tracking_put_object(*args, **kwargs):
+            put_object_calls.append(kwargs.get("Key"))
+            return original_put_object(*args, **kwargs)
+
+        self.s3_client.put_object = tracking_put_object
+
+        # Second upload WITH force_s3_check - should detect missing object and re-upload
+        with S3CheckCache(str(cache_dir)) as s3_cache:
+            data_cache = self._create_s3_data_cache(s3_check_cache=s3_cache, force_s3_check=True)
+            hash_upload_abs_manifest(
+                manifest=manifest,
+                data_cache=data_cache,
+            )
+
+        # Should have re-uploaded the file
+        assert len(put_object_calls) == 1, (
+            "Should re-upload when force_s3_check detects missing object"
+        )
+
+        # Verify object is back in S3
+        response = self.s3_client.head_object(Bucket=TEST_BUCKET, Key=s3_key)
+        assert response["ContentLength"] == int(file_stat.st_size)

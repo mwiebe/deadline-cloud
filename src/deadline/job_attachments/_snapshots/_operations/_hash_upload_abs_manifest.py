@@ -977,8 +977,8 @@ class _TaskBasedPipeline:
         s3_key = self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value)
         cache_key = f"{self._data_cache.s3_bucket}/{s3_key}"
 
-        # Check S3 cache first
-        if self._data_cache.s3_check_cache is not None:
+        # Check S3 cache first (unless force_s3_check is True)
+        if not self._data_cache.force_s3_check and self._data_cache.s3_check_cache is not None:
             cache_entry = self._data_cache.s3_check_cache.get_entry(cache_key)
             if cache_entry is not None:
                 item.skipped = True
