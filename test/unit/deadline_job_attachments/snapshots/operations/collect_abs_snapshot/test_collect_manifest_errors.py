@@ -361,7 +361,7 @@ class TestWindowsLongPathPrefix:
 
     def test_longpath_prefix_removal_mocked(self, tmp_path: Path) -> None:
         """Test that Windows long path prefix is handled (mocked for cross-platform)."""
-        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot import (
+        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot_symlinks import (
             _remove_longpath_prefix,
         )
 
@@ -375,7 +375,7 @@ class TestWindowsLongPathPrefix:
 
     def test_normal_path_unchanged(self, tmp_path: Path) -> None:
         """Normal paths are unchanged by _remove_longpath_prefix."""
-        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot import (
+        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot_symlinks import (
             _remove_longpath_prefix,
         )
 
