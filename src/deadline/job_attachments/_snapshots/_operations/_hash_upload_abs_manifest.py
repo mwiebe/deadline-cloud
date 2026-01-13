@@ -36,7 +36,7 @@ import time
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import logging
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -50,7 +50,6 @@ from .._manifest import (
 from ...asset_manifests.hash_algorithms import HashAlgorithm, hash_data
 from ...caches.hash_cache import HashCache, HashCacheEntry, WHOLE_FILE_RANGE_END
 from ...caches.s3_check_cache import S3CheckCacheEntry
-from ...progress_tracker import ProgressTracker
 from ...exceptions import (
     JobAttachmentsS3ClientError,
     JobAttachmentS3BotoCoreError,
@@ -62,6 +61,7 @@ from .._content_addressed_data_cache import (
     FileSystemDataCache,
 )
 from ...progress_tracker import SummaryStatistics
+from ..._path_summarization import human_readable_file_size
 
 logger = logging.getLogger("deadline.job_attachments.hash_upload")
 
@@ -73,6 +73,44 @@ DEFAULT_STREAM_BUFFER_SIZE = 64 * 1024 * 1024  # 64MB
 
 # Default number of parallel workers
 DEFAULT_MAX_WORKERS = 10
+
+# Default interval for progress callbacks (5 times per second)
+DEFAULT_PROGRESS_CALLBACK_INTERVAL = 0.2  # seconds
+
+
+@dataclass
+class HashUploadProgressMetadata:
+    """
+    Progress metadata for hash_upload_abs_manifest operation.
+
+    Reports separate progress for hashing and uploading phases of the pipeline.
+    For chunked files, each chunk is counted separately in the file/chunk counts.
+    """
+
+    # Totals
+    total_file_chunks: int  # Total files + chunks to process
+    total_bytes: int
+
+    # Hashing phase progress
+    hashed_file_chunks: int
+    hashed_bytes: int
+    hash_skipped_file_chunks: int  # Skipped due to hash cache hit
+    hash_skipped_bytes: int
+
+    # Upload phase progress
+    uploaded_file_chunks: int
+    uploaded_bytes: int
+    upload_skipped_file_chunks: int  # Skipped because already in data cache
+    upload_skipped_bytes: int
+
+    # Overall progress (based on upload completion, which is the final stage)
+    progress: float  # 0-100
+    progressMessage: str
+
+
+# Callback type for hash_upload progress reporting
+# Return True to continue, False to cancel the operation
+HashUploadProgressCallback = Callable[[HashUploadProgressMetadata], bool]
 
 
 @dataclass
@@ -209,6 +247,7 @@ class _MultipartUploadState:
     upload_id: str  # S3 multipart upload ID
     parts_remaining: int  # Number of parts still being uploaded
     completed_parts: List[Dict[str, Any]]  # List of {"PartNumber": int, "ETag": str}
+    file_size: int = 0  # Total file size for progress tracking
     total_bytes_uploaded: int = 0
     part_errors: List[Exception] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -300,6 +339,126 @@ class _S3CacheValidationState:
             return self.cache_invalidated
 
 
+@dataclass
+class _HashUploadProgressState:
+    """
+    Thread-safe progress state for hash_upload pipeline.
+
+    Tracks bytes and file/chunk counts. For chunked files, each chunk is counted separately.
+    """
+
+    # Totals (set once at initialization)
+    total_file_chunks: int = 0
+    total_bytes: int = 0
+
+    # Byte-level progress
+    hashed_bytes: int = 0
+    hash_skipped_bytes: int = 0
+    uploaded_bytes: int = 0
+    upload_skipped_bytes: int = 0
+
+    # File/chunk-level progress (incremented when each file or chunk completes)
+    hashed_file_chunks: int = 0
+    hash_skipped_file_chunks: int = 0
+    uploaded_file_chunks: int = 0
+    upload_skipped_file_chunks: int = 0
+
+    # Callback and timing
+    on_progress: Optional[HashUploadProgressCallback] = None
+    callback_interval: float = DEFAULT_PROGRESS_CALLBACK_INTERVAL
+    _last_callback_time: float = field(default_factory=time.perf_counter)
+    _cancelled: bool = False
+
+    # Thread safety
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def record_hash_complete(self, chunk_bytes: int, skipped: bool) -> None:
+        """Record completion of hashing for a file or chunk."""
+        with self._lock:
+            if skipped:
+                self.hash_skipped_bytes += chunk_bytes
+                self.hash_skipped_file_chunks += 1
+            else:
+                self.hashed_bytes += chunk_bytes
+                self.hashed_file_chunks += 1
+            self._maybe_invoke_callback()
+
+    def record_upload_complete(self, chunk_bytes: int, skipped: bool) -> None:
+        """Record completion of uploading for a file or chunk."""
+        with self._lock:
+            if skipped:
+                self.upload_skipped_bytes += chunk_bytes
+                self.upload_skipped_file_chunks += 1
+            else:
+                self.uploaded_bytes += chunk_bytes
+                self.uploaded_file_chunks += 1
+            self._maybe_invoke_callback()
+
+    def _maybe_invoke_callback(self) -> None:
+        """Invoke callback if interval has elapsed. Must be called with lock held."""
+        if self.on_progress is None or self._cancelled:
+            return
+
+        now = time.perf_counter()
+        if now - self._last_callback_time < self.callback_interval:
+            return
+
+        self._last_callback_time = now
+        metadata = self._build_metadata()
+
+        # Release lock during callback to avoid deadlock
+        self._lock.release()
+        try:
+            should_continue = self.on_progress(metadata)
+            if not should_continue:
+                self._cancelled = True
+        finally:
+            self._lock.acquire()
+
+    def _build_metadata(self) -> HashUploadProgressMetadata:
+        """Build progress metadata. Must be called with lock held."""
+        completed_upload_bytes = self.uploaded_bytes + self.upload_skipped_bytes
+        progress = (
+            (completed_upload_bytes / self.total_bytes * 100) if self.total_bytes > 0 else 0.0
+        )
+
+        msg = (
+            f"Hashed {human_readable_file_size(self.hashed_bytes + self.hash_skipped_bytes)}, "
+            f"Uploaded {human_readable_file_size(completed_upload_bytes)} "
+            f"/ {human_readable_file_size(self.total_bytes)}"
+        )
+
+        return HashUploadProgressMetadata(
+            total_file_chunks=self.total_file_chunks,
+            total_bytes=self.total_bytes,
+            hashed_file_chunks=self.hashed_file_chunks,
+            hashed_bytes=self.hashed_bytes,
+            hash_skipped_file_chunks=self.hash_skipped_file_chunks,
+            hash_skipped_bytes=self.hash_skipped_bytes,
+            uploaded_file_chunks=self.uploaded_file_chunks,
+            uploaded_bytes=self.uploaded_bytes,
+            upload_skipped_file_chunks=self.upload_skipped_file_chunks,
+            upload_skipped_bytes=self.upload_skipped_bytes,
+            progress=progress,
+            progressMessage=msg,
+        )
+
+    def is_cancelled(self) -> bool:
+        """Check if operation was cancelled via callback."""
+        with self._lock:
+            return self._cancelled
+
+    def force_callback(self) -> None:
+        """Force a callback invocation (e.g., at end of operation)."""
+        with self._lock:
+            if self.on_progress is None or self._cancelled:
+                return
+            metadata = self._build_metadata()
+
+        # Invoke without lock
+        self.on_progress(metadata)
+
+
 # Union type for work items that go through the full pipeline
 PipelineWorkItem = Union[_ChunkWorkItem, _StreamingWorkItem]
 
@@ -388,7 +547,7 @@ class _TaskBasedPipeline:
         memory_pool: _MemoryPool,
         hash_alg: HashAlgorithm,
         data_cache: ContentAddressedDataCache,
-        progress_tracker: Optional[ProgressTracker],
+        progress_state: Optional[_HashUploadProgressState],
         hash_cache: Optional[HashCache] = None,
         force_rehash: bool = False,
     ) -> None:
@@ -397,7 +556,7 @@ class _TaskBasedPipeline:
         self._memory_pool = memory_pool
         self._hash_alg = hash_alg
         self._data_cache = data_cache
-        self._progress_tracker = progress_tracker
+        self._progress_state = progress_state
         self._hash_cache = hash_cache
         self._force_rehash = force_rehash
 
@@ -654,14 +813,14 @@ class _TaskBasedPipeline:
                 if was_s3_cache_hit and self._s3_cache_validation is not None:
                     self._s3_cache_validation.record_skipped_item(item)
 
-                # Track progress for skipped items
-                if self._progress_tracker is not None:
+                # Track progress - both hash and upload are skipped
+                if self._progress_state is not None:
                     if isinstance(item, _StreamingWorkItem):
-                        self._progress_tracker.track_progress_callback(item.file_size)
+                        chunk_bytes = item.file_size
                     else:
-                        self._progress_tracker.track_progress_callback(
-                            item.chunk_end - item.chunk_start
-                        )
+                        chunk_bytes = item.chunk_end - item.chunk_start
+                    self._progress_state.record_hash_complete(chunk_bytes, skipped=True)
+                    self._progress_state.record_upload_complete(chunk_bytes, skipped=True)
                 self._record_result(item)
                 self._decrement_pending()
                 logger.debug(f"Skipped (cache hit): {item.file_path}")
@@ -679,13 +838,20 @@ class _TaskBasedPipeline:
                 # Small file or non-S3: hash first, then upload in UPLOAD stage
                 item.file_hash = self._stream_hash_file(item.file_path)
 
+                # Track hash completion
+                if self._progress_state is not None:
+                    self._progress_state.record_hash_complete(item.file_size, skipped=False)
+
                 # If hash changed from cached, check if new hash exists in S3
                 if cached_hash is not None and item.file_hash != cached_hash:
                     if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
                         item.skipped = True
                         item.uploaded = False
-                        if self._progress_tracker is not None:
-                            self._progress_tracker.track_progress_callback(item.file_size)
+                        # Hash was processed, upload is skipped
+                        if self._progress_state is not None:
+                            self._progress_state.record_upload_complete(
+                                item.file_size, skipped=True
+                            )
                         self._record_result(item)
                         self._decrement_pending()
                         logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
@@ -720,6 +886,10 @@ class _TaskBasedPipeline:
                     if item.data is not None:
                         item.chunk_hash = hash_data(item.data, self._hash_alg)
 
+                        # Track hash completion
+                        if self._progress_state is not None:
+                            self._progress_state.record_hash_complete(chunk_size, skipped=False)
+
                         # If hash changed from cached, check if new hash exists in S3
                         if cached_hash is not None and item.chunk_hash != cached_hash:
                             if self._data_cache.object_exists(
@@ -730,8 +900,11 @@ class _TaskBasedPipeline:
                                 item.data = None
                                 item.skipped = True
                                 item.uploaded = False
-                                if self._progress_tracker is not None:
-                                    self._progress_tracker.track_progress_callback(chunk_size)
+                                # Hash was processed, upload is skipped
+                                if self._progress_state is not None:
+                                    self._progress_state.record_upload_complete(
+                                        chunk_size, skipped=True
+                                    )
                                 self._record_result(item)
                                 self._decrement_pending()
                                 logger.debug(
@@ -796,14 +969,19 @@ class _TaskBasedPipeline:
             # Now we have the final hash
             item.chunk_hash = hasher.hexdigest()
 
+            # Track hash completion
+            if self._progress_state is not None:
+                self._progress_state.record_hash_complete(chunk_size, skipped=False)
+
             # Check if object already exists in S3
             if self._data_cache.object_exists(item.chunk_hash, self._hash_alg.value):
                 # Release memory - we're not uploading
                 self._memory_pool.release(chunk_size)
                 item.skipped = True
                 item.uploaded = False
-                if self._progress_tracker is not None:
-                    self._progress_tracker.track_progress_callback(chunk_size)
+                # Hash was processed, upload is skipped
+                if self._progress_state is not None:
+                    self._progress_state.record_upload_complete(chunk_size, skipped=True)
                 self._record_result(item)
                 self._decrement_pending()
                 logger.debug(f"Skipped multipart (exists): {item.file_path}")
@@ -820,6 +998,7 @@ class _TaskBasedPipeline:
                 upload_id=upload_id,
                 parts_remaining=len(part_buffers),
                 completed_parts=[],
+                file_size=chunk_size,
             )
 
             # Track that we need to wait for all parts to complete
@@ -882,12 +1061,17 @@ class _TaskBasedPipeline:
 
         item.file_hash = hasher.hexdigest()
 
+        # Track hash completion
+        if self._progress_state is not None:
+            self._progress_state.record_hash_complete(item.file_size, skipped=False)
+
         # Check if object already exists in S3
         if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
             item.skipped = True
             item.uploaded = False
-            if self._progress_tracker is not None:
-                self._progress_tracker.track_progress_callback(item.file_size)
+            # Hash was processed, upload is skipped
+            if self._progress_state is not None:
+                self._progress_state.record_upload_complete(item.file_size, skipped=True)
             self._record_result(item)
             self._decrement_pending()
             logger.debug(f"Skipped multipart streaming (exists): {item.file_path}")
@@ -907,6 +1091,7 @@ class _TaskBasedPipeline:
             upload_id=upload_id,
             parts_remaining=num_parts,
             completed_parts=[],
+            file_size=item.file_size,
         )
 
         # Increment pending for additional parts (we already have 1 for this item)
@@ -1077,9 +1262,9 @@ class _TaskBasedPipeline:
             else:
                 raise ValueError(f"Unsupported data cache type: {type(self._data_cache)}")
 
-            # Update progress
-            if self._progress_tracker is not None:
-                self._progress_tracker.track_progress_callback(chunk_size)
+            # Track upload completion
+            if self._progress_state is not None:
+                self._progress_state.record_upload_complete(chunk_size, skipped=item.skipped)
 
         finally:
             # Release memory after write completes
@@ -1101,9 +1286,9 @@ class _TaskBasedPipeline:
             item.skipped = True
             item.uploaded = False
             logger.debug(f"Skipping streaming upload (exists): {item.file_path}")
-            # Still report progress for skipped files
-            if self._progress_tracker is not None:
-                self._progress_tracker.track_progress_callback(item.file_size)
+            # Track upload skip
+            if self._progress_state is not None:
+                self._progress_state.record_upload_complete(item.file_size, skipped=True)
             return True
 
         # Stream upload
@@ -1116,9 +1301,6 @@ class _TaskBasedPipeline:
             return True
         else:
             raise ValueError(f"Unsupported data cache type: {type(self._data_cache)}")
-
-        item.uploaded = True
-        item.skipped = False
 
     # =========================================================================
     # S3 Upload Methods
@@ -1303,8 +1485,9 @@ class _TaskBasedPipeline:
             put_kwargs.update(extra_args)
             self._data_cache.s3_client.put_object(**put_kwargs)
 
-            if self._progress_tracker is not None:
-                self._progress_tracker.track_progress_callback(len(data))
+            # Track upload completion
+            if self._progress_state is not None:
+                self._progress_state.record_upload_complete(len(data), skipped=False)
 
             item.uploaded = True
             item.skipped = False
@@ -1334,6 +1517,9 @@ class _TaskBasedPipeline:
         On error, triggers AbortMultipartUpload.
 
         This method handles its own pending count management.
+
+        Note: Progress tracking for multipart uploads is handled at the file level
+        when the multipart upload completes, not per-part.
         """
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
@@ -1356,10 +1542,6 @@ class _TaskBasedPipeline:
             )
             item.etag = response["ETag"]
             item.uploaded = True
-
-            # Update progress
-            if self._progress_tracker is not None:
-                self._progress_tracker.track_progress_callback(part_size)
 
             # Track completion
             with state.lock:
@@ -1444,6 +1626,10 @@ class _TaskBasedPipeline:
                 self._data_cache.s3_check_cache.put_entry(
                     S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
                 )
+
+            # Track upload completion
+            if self._progress_state is not None:
+                self._progress_state.record_upload_complete(state.file_size, skipped=False)
 
         except (ClientError, BotoCoreError) as e:
             logger.error(f"Failed to complete multipart upload: {e}")
@@ -1567,9 +1753,9 @@ class _TaskBasedPipeline:
                 item.skipped = True
                 item.uploaded = False
                 logger.debug(f"Skipping streaming write (exists): {dest_path}")
-                # Still report progress for skipped files
-                if self._progress_tracker is not None:
-                    self._progress_tracker.track_progress_callback(item.file_size)
+                # Track upload skip
+                if self._progress_state is not None:
+                    self._progress_state.record_upload_complete(item.file_size, skipped=True)
                 return
 
             # Ensure parent directory exists
@@ -1579,6 +1765,7 @@ class _TaskBasedPipeline:
             temp_suffix = secrets.token_hex(8)
             temp_path = dest_path.parent / f"{dest_path.name}.tmp.{temp_suffix}"
             hasher = xxhash.xxh128()
+            bytes_written = 0
 
             try:
                 with open(item.file_path, "rb") as src, open(temp_path, "wb") as dst:
@@ -1588,8 +1775,7 @@ class _TaskBasedPipeline:
                             break
                         hasher.update(chunk)
                         dst.write(chunk)
-                        if self._progress_tracker is not None:
-                            self._progress_tracker.track_progress_callback(len(chunk))
+                        bytes_written += len(chunk)
 
                 upload_hash = hasher.hexdigest()
 
@@ -1602,6 +1788,11 @@ class _TaskBasedPipeline:
                     )
 
                 os.replace(temp_path, dest_path)
+
+                # Track upload completion
+                if self._progress_state is not None:
+                    self._progress_state.record_upload_complete(bytes_written, skipped=False)
+
                 logger.debug(f"Streamed write (verified): {dest_path}")
             except Exception:
                 try:
@@ -1626,7 +1817,7 @@ def _run_pipeline(
     data_cache: ContentAddressedDataCache,
     max_memory_bytes: int,
     max_workers: int,
-    progress_tracker: Optional[ProgressTracker],
+    progress_state: Optional[_HashUploadProgressState],
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
 ) -> _PipelineResult:
@@ -1672,7 +1863,7 @@ def _run_pipeline(
                 memory_pool=memory_pool,
                 hash_alg=hash_alg,
                 data_cache=data_cache,
-                progress_tracker=progress_tracker,
+                progress_state=progress_state,
                 hash_cache=hash_cache,
                 force_rehash=force_rehash,
             )
@@ -1697,7 +1888,7 @@ def hash_upload_abs_manifest(
     max_memory_bytes: Optional[int] = None,
     max_workers: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
-    progress_tracker: Optional[ProgressTracker] = None,
+    on_progress: Optional[HashUploadProgressCallback] = None,
 ) -> UploadResult:
     """
     Fill in hashes for a manifest AND write file content to a data cache in a pipelined manner.
@@ -1718,7 +1909,9 @@ def hash_upload_abs_manifest(
             - None: Preserve the chunk size from the input manifest
             - WHOLE_FILE_CHUNK_SIZE (-1): Hash files as a whole, no chunking
             - Positive int: Chunk size in bytes for large files
-        progress_tracker: Optional progress tracker for upload progress
+        on_progress: Optional callback for progress reporting. Called periodically with
+            HashUploadProgressMetadata containing separate progress for hashing and
+            uploading phases. Return True to continue, False to cancel the operation.
 
     Returns:
         UploadResult containing:
@@ -1865,6 +2058,15 @@ def hash_upload_abs_manifest(
     # Track statistics
     start_time = time.perf_counter()
 
+    # Set up progress state if callback provided
+    progress_state: Optional[_HashUploadProgressState] = None
+    if on_progress is not None:
+        progress_state = _HashUploadProgressState(
+            total_file_chunks=len(all_work_items),
+            total_bytes=sum(entry.size or 0 for _, entry in entry_map.values()),
+            on_progress=on_progress,
+        )
+
     # Results from pipeline (cache checks happen in worker threads)
     cached_results: Dict[
         str, Union[str, Dict[int, str]]
@@ -1879,10 +2081,14 @@ def hash_upload_abs_manifest(
             data_cache=data_cache,
             max_memory_bytes=max_memory_bytes,
             max_workers=max_workers,
-            progress_tracker=progress_tracker,
+            progress_state=progress_state,
             hash_cache=hash_cache,
             force_rehash=force_rehash,
         )
+
+    # Force final progress callback
+    if progress_state is not None:
+        progress_state.force_callback()
 
     # If S3 cache was invalidated during pipeline, delete the cache database now
     if pipeline_result.cache_invalidated:
