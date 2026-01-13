@@ -80,6 +80,8 @@ class ManifestDirectoryPath:
     Supports empty directories and directory deletion markers (for diff manifests).
     """
 
+    __slots__ = ("path", "deleted")
+
     path: str
     deleted: bool
 
@@ -116,6 +118,17 @@ class ManifestFilePath:
         - If chunkhashes is provided, size must be > 256MB and len(chunkhashes) must match
           ceil(size / CHUNK_SIZE).
     """
+
+    __slots__ = (
+        "path",
+        "hash",
+        "size",
+        "mtime",
+        "runnable",
+        "chunkhashes",
+        "symlink_target",
+        "deleted",
+    )
 
     path: str
     hash: Optional[str]
