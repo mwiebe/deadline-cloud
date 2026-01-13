@@ -255,6 +255,8 @@ class _MultipartUploadState:
     total_bytes_uploaded: int = 0
     part_errors: List[Exception] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    # Per-part hashes for verification (indexed by part_number - 1)
+    part_hashes: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -271,6 +273,9 @@ class _MultipartPartWorkItem:
 
     # Part data
     data: bytes  # Part content to upload
+
+    # Expected hash for verification (computed during first pass)
+    expected_hash: Optional[str] = None
 
     # Upload status
     uploaded: bool = False

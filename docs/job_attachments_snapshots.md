@@ -785,12 +785,15 @@ For files using multipart upload, the system:
 When chunking is disabled (`WHOLE_FILE_CHUNK_SIZE`) and a file is larger than `max_memory_bytes`:
 
 For S3:
-- **Pass 1:** Stream through file computing hash (discard data to avoid OOM)
-- **Pass 2:** Stream through file again, submitting parts one at a time with memory throttling
+- **Pass 1:** Stream through file computing full file hash AND per-part hashes (discard data to avoid OOM)
+- **Pass 2:** Stream through file again, submitting parts one at a time with memory throttling; each part verifies its hash before upload
+- If any part's hash doesn't match, the multipart upload is aborted and a `ValueError` is raised
 
 For FileSystem:
 - **Pass 1:** Stream through file computing hash (discard data)
-- **Pass 2:** Stream copy to destination while re-verifying hash
+- **Pass 2:** Stream copy to destination while re-verifying full file hash
+
+This verification ensures that if a file is modified between passes, the error is detected and the upload fails cleanly rather than uploading corrupted data.
 
 When chunking is enabled (positive `fileChunkSizeBytes`):
 - `max_memory_bytes` must be >= `fileChunkSizeBytes` (raises `ValueError` otherwise)

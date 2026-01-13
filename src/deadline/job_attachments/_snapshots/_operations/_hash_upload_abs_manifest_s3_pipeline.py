@@ -321,16 +321,18 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
 
         part_size = self._data_cache.multipart_part_size
 
-        # First pass: compute hash by streaming (discard data)
-        hasher = xxhash.xxh128()
+        # First pass: compute full file hash AND per-part hashes (discard data)
+        file_hasher = xxhash.xxh128()
+        part_hashes: List[str] = []
         with open(item.file_path, "rb") as f:
             while True:
                 chunk = f.read(part_size)
                 if not chunk:
                     break
-                hasher.update(chunk)
+                file_hasher.update(chunk)
+                part_hashes.append(xxhash.xxh128(chunk).hexdigest())
 
-        item.file_hash = hasher.hexdigest()
+        item.file_hash = file_hasher.hexdigest()
 
         if self._progress_state is not None:
             self._progress_state.record_hash_complete(item.file_size, skipped=False)
@@ -348,7 +350,7 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
         s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
         upload_id = self._create_multipart_upload(s3_key)
 
-        num_parts = (item.file_size + part_size - 1) // part_size
+        num_parts = len(part_hashes)
 
         state = _MultipartUploadState(
             file_hash=item.file_hash,
@@ -357,6 +359,7 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
             parts_remaining=num_parts,
             completed_parts=[],
             file_size=item.file_size,
+            part_hashes=part_hashes,
         )
 
         for _ in range(num_parts - 1):
@@ -366,7 +369,7 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
         item.skipped = False
         self._record_result(item)
 
-        # Second pass: read and submit parts one at a time
+        # Second pass: read and submit parts one at a time (with expected hash for verification)
         parts_submitted = 0
         try:
             with open(item.file_path, "rb") as f:
@@ -395,6 +398,7 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                             multipart_state=state,
                             part_number=part_number,
                             data=part_data,
+                            expected_hash=part_hashes[part_number - 1],
                         )
                         try:
                             self._upload_executor.submit(self._do_upload, part_item)
@@ -536,6 +540,8 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
 
     def _upload_multipart_part(self, item: _MultipartPartWorkItem) -> None:
         """Upload a single part of a multipart upload."""
+        import xxhash
+
         if not isinstance(self._data_cache, S3DataCache):
             raise TypeError(f"Expected S3DataCache, got {type(self._data_cache).__name__}")
 
@@ -543,6 +549,16 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
         part_size = len(item.data)
 
         try:
+            # Verify part hash if expected (for streaming uploads where file may have changed)
+            if item.expected_hash is not None:
+                actual_hash = xxhash.xxh128(item.data).hexdigest()
+                if actual_hash != item.expected_hash:
+                    raise ValueError(
+                        f"Hash mismatch during multipart upload: part {item.part_number} "
+                        f"expected {item.expected_hash}, got {actual_hash}. "
+                        f"File may have been modified during processing."
+                    )
+
             extra_args: Dict[str, Any] = {}
             if self._data_cache.expected_bucket_owner is not None:
                 extra_args["ExpectedBucketOwner"] = self._data_cache.expected_bucket_owner
@@ -571,6 +587,17 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                     self._record_error(state.part_errors[0])
                 else:
                     self._complete_multipart_upload(state)
+
+        except ValueError as ve:
+            # Hash mismatch - abort the multipart upload
+            with state.lock:
+                state.part_errors.append(ve)
+                state.parts_remaining -= 1
+                first_error = len(state.part_errors) == 1
+
+            if first_error:
+                self._abort_multipart_upload(state)
+                self._record_error(ve)
 
         except (ClientError, BotoCoreError) as e:
             wrapped_error: Exception
