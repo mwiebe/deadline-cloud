@@ -155,6 +155,7 @@ def profile_operation(
     operation: str,
     enabled_operation: Optional[str],
     print_fn=print,
+    suffix: str = "",
 ) -> Iterator[None]:
     """
     Context manager for profiling a specific operation.
@@ -163,9 +164,10 @@ def profile_operation(
         operation: Name of the current operation (e.g., "download", "upload")
         enabled_operation: Which operation to profile (from --cprofile arg), or None
         print_fn: Function for printing status messages
+        suffix: Optional suffix for the output file (e.g., "-cold", "-warm")
 
     Usage:
-        with profile_operation("download", config.cprofile_operation):
+        with profile_operation("download", config.cprofile_operation, suffix="-cold"):
             # code to profile
     """
     if enabled_operation is None or operation != enabled_operation:
@@ -173,8 +175,8 @@ def profile_operation(
         return
 
     profiler = cProfile.Profile()
-    output_file = f"{operation}.prof"
-    print_fn(f"  [cProfile] Profiling '{operation}' operation...")
+    output_file = f"{operation}{suffix}.prof"
+    print_fn(f"  [cProfile] Profiling '{operation}{suffix}' operation...")
 
     profiler.enable()
     try:
@@ -812,6 +814,7 @@ def test_hash_upload_s3(
     s3_check_cache_dir: Path,
     config: TestConfig,
     print_fn=print,
+    profile_suffix: str = "",
 ) -> Tuple[AbsSnapshot, TimingResult]:
     """Test the HASH_UPLOAD operation with S3DataCache."""
     import boto3
@@ -861,7 +864,7 @@ def test_hash_upload_s3(
 
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
-            with profile_operation("upload", config.cprofile_operation, print_fn):
+            with profile_operation("upload", config.cprofile_operation, print_fn, suffix=profile_suffix):
                 upload_result = hash_upload_abs_manifest(
                     manifest=manifest,
                     data_cache=data_cache,
@@ -988,6 +991,7 @@ def test_download_s3(
     hash_cache_dir: Path,
     config: TestConfig,
     print_fn=print,
+    profile_suffix: str = "",
 ) -> TimingResult:
     """Test the DOWNLOAD operation with S3DataCache."""
     import boto3
@@ -1064,10 +1068,11 @@ def test_download_s3(
     try:
         with HashCache(str(hash_cache_dir)) as hash_cache:
             start = time.perf_counter()
-            result = download_abs_manifest(
-                manifest=download_manifest_abs,
-                data_cache=data_cache,
-                hash_cache=hash_cache,
+            with profile_operation("download", config.cprofile_operation, print_fn, suffix=profile_suffix):
+                result = download_abs_manifest(
+                    manifest=download_manifest_abs,
+                    data_cache=data_cache,
+                    hash_cache=hash_cache,
                 max_workers=config.max_workers,
                 progress_tracker=progress_tracker,
             )
@@ -1272,6 +1277,7 @@ def run_s3_upload_passes(
         s3_check_cache_dir=s3_check_cache_dir,
         config=config,
         print_fn=print_fn,
+        profile_suffix="-cold",
     )
     results.append(
         TimingResult(
@@ -1294,6 +1300,7 @@ def run_s3_upload_passes(
         s3_check_cache_dir=s3_check_cache_dir_fresh,
         config=config,
         print_fn=print_fn,
+        profile_suffix="-warm-head",
     )
     results.append(
         TimingResult(
@@ -1315,6 +1322,7 @@ def run_s3_upload_passes(
         s3_check_cache_dir=s3_check_cache_dir,  # Original cache from pass 1
         config=config,
         print_fn=print_fn,
+        profile_suffix="-warm-all",
     )
     results.append(
         TimingResult(
@@ -1363,6 +1371,7 @@ def run_s3_download_passes(
         hash_cache_dir=download_hash_cache_dir,
         config=config,
         print_fn=print_fn,
+        profile_suffix="-cold",
     )
     results.append(
         TimingResult(
@@ -1385,6 +1394,7 @@ def run_s3_download_passes(
         hash_cache_dir=download_hash_cache_dir,
         config=config,
         print_fn=print_fn,
+        profile_suffix="-warm",
     )
     results.append(
         TimingResult(
