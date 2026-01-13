@@ -201,5 +201,6 @@ def filter_manifest(
             files=filtered_paths,
             total_size=total_size,
             parent_manifest_hash=manifest.parentManifestHash,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         ),
     )

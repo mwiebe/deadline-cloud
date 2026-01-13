@@ -26,6 +26,7 @@ from deadline.job_attachments._snapshots import (
     Snapshot,
     SnapshotDiff,
     IncludeExcludePathsFilter,
+    WHOLE_FILE_CHUNK_SIZE,
 )
 from deadline.job_attachments._snapshots._operations._filter_manifest import (
     _matches_patterns,
@@ -254,6 +255,31 @@ class TestFilterManifestAbsSnapshot:
         filtered = filter_manifest(manifest, filter_obj)
 
         assert filtered.hashAlg == HashAlgorithm.XXH128
+
+    def test_filter_preserves_file_chunk_size_bytes(self) -> None:
+        """Filtered manifest preserves fileChunkSizeBytes."""
+        # Test WHOLE_FILE_CHUNK_SIZE
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            files=[ManifestFilePath(path="/a.txt", hash="hash1", size=10, mtime=1000)],
+            total_size=10,
+            file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
+        )
+        filtered = filter_manifest(manifest, IncludeExcludePathsFilter())
+        assert filtered.fileChunkSizeBytes == WHOLE_FILE_CHUNK_SIZE
+
+        # Test custom chunk size
+        custom_chunk_size = 128 * 1024 * 1024  # 128MB
+        manifest2 = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            files=[ManifestFilePath(path="/a.txt", hash="hash1", size=10, mtime=1000)],
+            total_size=10,
+            file_chunk_size_bytes=custom_chunk_size,
+        )
+        filtered2 = filter_manifest(manifest2, IncludeExcludePathsFilter())
+        assert filtered2.fileChunkSizeBytes == custom_chunk_size
 
     def test_filter_preserves_entry_metadata(self) -> None:
         """Filtered entries preserve all metadata."""
