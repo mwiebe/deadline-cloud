@@ -582,9 +582,12 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                 has_errors = len(state.part_errors) > 0
 
             if all_done:
-                if has_errors:
+                with self._error_lock:
+                    pipeline_aborted = self._error is not None
+                if has_errors or pipeline_aborted:
                     self._abort_multipart_upload(state)
-                    self._record_error(state.part_errors[0])
+                    if has_errors:
+                        self._record_error(state.part_errors[0])
                 else:
                     self._complete_multipart_upload(state)
 
