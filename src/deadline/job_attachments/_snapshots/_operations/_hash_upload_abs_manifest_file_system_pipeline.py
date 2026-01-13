@@ -9,7 +9,6 @@ from __future__ import annotations
 import os
 import secrets
 import threading
-import logging
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -22,8 +21,6 @@ from ._hash_upload_abs_manifest_pipeline import (
     _MultipartPartWorkItem,
     DEFAULT_STREAM_BUFFER_SIZE,
 )
-
-logger = logging.getLogger("deadline.job_attachments.hash_upload")
 
 
 class FileSystemHashUploadPipeline(HashUploadPipelineBase):
@@ -58,7 +55,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
                     self._progress_state.record_upload_complete(item.file_size, skipped=True)
                 self._record_result(item)
                 self._decrement_pending()
-                logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
                 return
 
         self._upload_executor.submit(self._do_upload, item)
@@ -90,7 +86,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
                             self._progress_state.record_upload_complete(chunk_size, skipped=True)
                         self._record_result(item)
                         self._decrement_pending()
-                        logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
                         return
         except Exception:
             self._memory_pool.release(chunk_size)
@@ -116,7 +111,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
                 if file_path.exists():
                     item.skipped = True
                     item.uploaded = False
-                    logger.debug(f"Skipping write (exists): {file_path}")
                     if self._progress_state is not None:
                         self._progress_state.record_upload_complete(chunk_size, skipped=True)
                     return
@@ -131,7 +125,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
                     os.replace(temp_path, file_path)
                     item.uploaded = True
                     item.skipped = False
-                    logger.debug(f"Wrote: {file_path}")
                     if self._progress_state is not None:
                         self._progress_state.record_upload_complete(chunk_size, skipped=False)
                 except Exception:
@@ -160,7 +153,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
         if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
             item.skipped = True
             item.uploaded = False
-            logger.debug(f"Skipping streaming write (exists): {item.file_path}")
             if self._progress_state is not None:
                 self._progress_state.record_upload_complete(item.file_size, skipped=True)
             return True
@@ -173,7 +165,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
             if dest_path.exists():
                 item.skipped = True
                 item.uploaded = False
-                logger.debug(f"Skipping streaming write (exists): {dest_path}")
                 if self._progress_state is not None:
                     self._progress_state.record_upload_complete(item.file_size, skipped=True)
                 return True
@@ -211,7 +202,6 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
 
                 item.uploaded = True
                 item.skipped = False
-                logger.debug(f"Streamed write (verified): {dest_path}")
                 return True
             except Exception:
                 try:

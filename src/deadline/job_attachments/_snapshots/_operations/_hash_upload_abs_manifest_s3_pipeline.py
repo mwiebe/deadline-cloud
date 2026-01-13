@@ -151,7 +151,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
             else:
                 item.chunk_hash = None
             self.submit(item)
-            logger.debug(f"Re-queued item after cache invalidation: {item.file_path}")
 
     def _get_stream_buffer_size(self) -> int:
         """Use S3 multipart part size for streaming buffer."""
@@ -183,7 +182,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                     self._progress_state.record_upload_complete(item.file_size, skipped=True)
                 self._record_result(item)
                 self._decrement_pending()
-                logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
                 return
 
         self._upload_executor.submit(self._do_upload, item)
@@ -224,7 +222,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                                 )
                             self._record_result(item)
                             self._decrement_pending()
-                            logger.debug(f"Skipped (hash changed, but exists): {item.file_path}")
                             return
             except Exception:
                 self._memory_pool.release(chunk_size)
@@ -276,7 +273,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                     self._progress_state.record_upload_complete(chunk_size, skipped=True)
                 self._record_result(item)
                 self._decrement_pending()
-                logger.debug(f"Skipped multipart (exists): {item.file_path}")
                 return
 
             s3_key = self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value)
@@ -344,7 +340,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                 self._progress_state.record_upload_complete(item.file_size, skipped=True)
             self._record_result(item)
             self._decrement_pending()
-            logger.debug(f"Skipped multipart streaming (exists): {item.file_path}")
             return
 
         s3_key = self._data_cache.get_object_key(item.file_hash, self._hash_alg.value)
@@ -446,7 +441,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                 if cache_entry is not None:
                     item.skipped = True
                     item.uploaded = False
-                    logger.debug(f"Skipping upload (cached): {s3_key}")
                     if self._progress_state is not None:
                         self._progress_state.record_upload_complete(chunk_size, skipped=True)
                     return
@@ -481,7 +475,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
         if self._data_cache.object_exists(item.file_hash, self._hash_alg.value):
             item.skipped = True
             item.uploaded = False
-            logger.debug(f"Skipping streaming upload (exists): {item.file_path}")
             if self._progress_state is not None:
                 self._progress_state.record_upload_complete(item.file_size, skipped=True)
             return True
@@ -520,7 +513,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
 
             item.uploaded = True
             item.skipped = False
-            logger.debug(f"Streamed upload (verified): {s3_key}")
             return True
 
         except ClientError as exc:
@@ -740,7 +732,6 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                 MultipartUpload={"Parts": sorted_parts},
                 **extra_args,
             )
-            logger.debug(f"Completed multipart upload: {state.s3_key}")
 
             if self._data_cache.s3_check_cache is not None:
                 cache_key = f"{self._data_cache.s3_bucket}/{state.s3_key}"
@@ -772,6 +763,5 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
                 UploadId=state.upload_id,
                 **extra_args,
             )
-            logger.debug(f"Aborted multipart upload: {state.s3_key}")
         except Exception:
             pass  # Best effort cleanup

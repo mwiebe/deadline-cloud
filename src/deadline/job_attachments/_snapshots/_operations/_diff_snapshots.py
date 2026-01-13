@@ -27,7 +27,6 @@ deletions, and other v2025-only features.
 
 from __future__ import annotations
 
-import logging
 from typing import Dict, List, Optional, Set
 
 from .._manifest import (
@@ -59,9 +58,6 @@ def _manifest_is_hashed(manifest: AnySnapshot) -> bool | None:
         if entry.hash is None and entry.chunkhashes is None:
             return False
     return True if has_regular_files else None
-
-
-logger = logging.getLogger(__name__)
 
 
 def _entries_differ(
@@ -333,15 +329,9 @@ def _diff_snapshots(
         if entry.symlink_target is None and entry.size is not None:
             total_size += entry.size
 
-        if path in new_files:
-            logger.debug("New: %s", path)
-        else:
-            logger.debug("Modified: %s", path)
-
     # Add deletion markers for deleted files
     for path in sorted(deleted_files):
         file_entries.append(ManifestFilePath(path=path, deleted=True))
-        logger.debug("Deleted: %s", path)
 
     # Build directory entries
     dir_entries: List[ManifestDirectoryPath] = []
@@ -354,7 +344,6 @@ def _diff_snapshots(
     # Sort by path length descending so subdirectories come before parents
     for path in sorted(deleted_dirs, key=lambda p: (-len(p), p)):
         dir_entries.append(ManifestDirectoryPath(path=path, deleted=True))
-        logger.debug("Deleted dir: %s", path)
 
     # Return the appropriate diff manifest type
     output_type = AbsSnapshotDiff if is_absolute else SnapshotDiff

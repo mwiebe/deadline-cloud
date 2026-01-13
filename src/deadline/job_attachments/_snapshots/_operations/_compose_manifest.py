@@ -402,8 +402,7 @@ def _compose_snapshot_diffs(
             components = _split_path(entry.path)
             if entry.deleted:
                 # Delete the file node
-                if root.delete_subtree(components):
-                    logger.debug("Diff %d: deleted %s", diff_index, entry.path)
+                root.delete_subtree(components)
 
         # Apply directory deletions (empty directories only)
         # Sort by path length descending so subdirectories are deleted before parents
@@ -411,8 +410,7 @@ def _compose_snapshot_diffs(
         deleted_dirs.sort(key=lambda d: len(d.path), reverse=True)
         for dir_entry in deleted_dirs:
             components = _split_path(dir_entry.path)
-            if root.delete_if_empty(components):
-                logger.debug("Diff %d: deleted empty dir %s", diff_index, dir_entry.path)
+            root.delete_if_empty(components)
 
         # Apply file additions/modifications
         for entry in diff_manifest.files:
@@ -421,7 +419,6 @@ def _compose_snapshot_diffs(
                 # Add or update entry
                 node = root.insert_path(components)
                 node.file_entry = entry
-                logger.debug("Diff %d: added/updated %s", diff_index, entry.path)
 
         # Apply directory additions
         for dir_entry in diff_manifest.dirs:
@@ -513,7 +510,6 @@ def _compose_diffs(
             if entry.deleted:
                 # Mark as deleted
                 root.mark_deleted(components)
-                logger.debug("Diff %d: deleted %s", diff_index, entry.path)
 
         # Apply directory deletions (empty directories only)
         for dir_entry in diff_manifest.dirs:
@@ -521,7 +517,6 @@ def _compose_diffs(
             if dir_entry.deleted:
                 # Mark directory as deleted
                 root.mark_deleted(components)
-                logger.debug("Diff %d: deleted empty dir %s", diff_index, dir_entry.path)
 
         # Apply file additions/modifications
         for entry in diff_manifest.files:
@@ -531,7 +526,6 @@ def _compose_diffs(
                 node = root.insert_path(components)
                 node.deleted = False
                 node.file_entry = entry
-                logger.debug("Diff %d: added/updated %s", diff_index, entry.path)
 
         # Apply directory additions
         for dir_entry in diff_manifest.dirs:

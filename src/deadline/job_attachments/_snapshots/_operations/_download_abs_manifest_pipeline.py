@@ -402,7 +402,6 @@ class DownloadPipelineBase(ABC):
                 )
             )
 
-        logger.debug(f"Downloaded {entry.path} to {local_path}")
         self._record_result(
             DownloadFileResult(
                 entry=entry,
@@ -562,7 +561,6 @@ class DownloadPipelineBase(ABC):
             return (False, None)
 
         actual_mtime_us = current_mtime_ns // 1_000
-        logger.debug(f"Skipping download of {entry.path} - hash cache indicates file is up to date")
         return (True, actual_mtime_us)
 
     def _check_hash_cache_for_chunked_skip(
@@ -612,10 +610,6 @@ class DownloadPipelineBase(ABC):
                 return (False, None)
 
         actual_mtime_us = current_mtime_ns // 1_000
-        logger.debug(
-            f"Skipping download of chunked file {entry.path} - "
-            f"hash cache indicates all {num_chunks} chunks are up to date"
-        )
         return (True, actual_mtime_us)
 
     # =========================================================================

@@ -72,12 +72,10 @@ def _handle_symlink(
     entry_path = full_path.absolute().as_posix()
 
     if symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
-        logger.debug("Excluding symlink: %s", entry_path)
         return None
 
     elif symlink_policy == SymlinkPolicy.COLLAPSE_ALL:
         if is_directory:
-            logger.debug("Following symlink dir: %s", entry_path)
             return (None, True, None)
         return (None, True, None)
 
@@ -87,8 +85,6 @@ def _handle_symlink(
             path=entry_path,
             symlink_target=target.as_posix(),
         )
-        kind = "symlink dir" if is_directory else "symlink"
-        logger.debug("Collected %s: %s", kind, entry_path)
         return (entry, False, None)
 
     elif symlink_policy == SymlinkPolicy.TRANSITIVE_INCLUDE_TARGETS:
@@ -97,8 +93,6 @@ def _handle_symlink(
             path=entry_path,
             symlink_target=target.as_posix(),
         )
-        kind = "symlink dir" if is_directory else "symlink"
-        logger.debug("Collected %s: %s", kind, entry_path)
         return (entry, False, target)
 
     elif symlink_policy == SymlinkPolicy.COLLAPSE_ESCAPING:
@@ -154,22 +148,17 @@ def process_deferred_symlink(
         )
         file_entries.append(entry)
         collected_paths.add(entry_path)
-        kind = "symlink dir" if is_directory else "symlink"
-        logger.debug("Collected %s (non-escaping): %s", kind, entry_path)
         return 0
 
     # Target is outside collected paths - handle based on policy
     if symlink_policy == SymlinkPolicy.EXCLUDE_ESCAPING:
         # Exclude escaping symlinks entirely
-        kind = "dir symlink" if is_directory else "symlink"
-        logger.debug("Excluding escaping %s: %s", kind, entry_path)
         return 0
 
     # COLLAPSE_ESCAPING: Collapse escaping symlinks
     if is_directory:
         # Queue for directory symlink collection
         escaping_dir_symlinks.append((entry_path, target))
-        logger.debug("Collapsing escaping dir symlink: %s", entry_path)
         return 0
 
     # Collapse file symlink
@@ -179,10 +168,9 @@ def process_deferred_symlink(
         file_entries.append(file_entry)
         collected_paths.add(entry_path)
         size = file_entry.size or 0
-        logger.debug("Collected (collapsed escaping symlink): %s", entry_path)
         return size
     except OSError as e:
-        logger.debug("Skipping broken symlink %s: %s", entry_path, e)
+        logger.warning("Skipping broken symlink %s: %s", entry_path, e)
         return 0
 
 
@@ -219,7 +207,7 @@ def _collect_transitive_target(
     nested_transitive_targets: List[Path] = []
 
     if not target_path.exists():
-        logger.debug("Skipping broken symlink target: %s", target_path)
+        logger.warning("Skipping broken symlink target: %s", target_path)
         return (file_entries, dir_entries, total_size)
 
     # Normalize path for cycle detection
@@ -245,7 +233,6 @@ def _collect_transitive_target(
                 )
                 file_entries.append(entry)
                 collected_paths.add(entry_path)
-                logger.debug("Collected transitive symlink target: %s", entry_path)
                 # Queue the symlink's target for transitive collection
                 nested_transitive_targets.append(symlink_target)
 
@@ -257,9 +244,8 @@ def _collect_transitive_target(
                     file_entries.append(entry)
                     collected_paths.add(entry_path)
                     total_size += entry.size or 0
-                    logger.debug("Collected transitive target: %s", entry_path)
                 except OSError as e:
-                    logger.debug("Skipping inaccessible transitive target %s: %s", entry_path, e)
+                    logger.warning("Skipping inaccessible transitive target %s: %s", entry_path, e)
 
         elif target_path.is_dir():
             for dirpath, dirnames, filenames in os.walk(target_path, followlinks=False):
@@ -269,7 +255,6 @@ def _collect_transitive_target(
                     if dir_path not in collected_paths:
                         dir_entries.append(ManifestDirectoryPath(path=dir_path))
                         collected_paths.add(dir_path)
-                        logger.debug("Collected transitive dir: %s", dir_path)
 
                 for name in list(dirnames):
                     full_path = Path(dirpath) / name
@@ -284,7 +269,6 @@ def _collect_transitive_target(
                             )
                             file_entries.append(entry)
                             collected_paths.add(entry_path)
-                            logger.debug("Collected transitive symlink dir: %s", entry_path)
                             # Queue the target for transitive collection
                             nested_transitive_targets.append(symlink_target)
                         # Don't follow directory symlinks in os.walk
@@ -304,7 +288,6 @@ def _collect_transitive_target(
                         )
                         file_entries.append(entry)
                         collected_paths.add(entry_path)
-                        logger.debug("Collected transitive symlink: %s", entry_path)
                         # Queue the target for transitive collection
                         nested_transitive_targets.append(symlink_target)
                         continue
@@ -314,9 +297,10 @@ def _collect_transitive_target(
                         file_entries.append(entry)
                         collected_paths.add(entry_path)
                         total_size += entry.size or 0
-                        logger.debug("Collected transitive: %s", entry_path)
                     except OSError as e:
-                        logger.debug("Skipping inaccessible transitive file %s: %s", entry_path, e)
+                        logger.warning(
+                            "Skipping inaccessible transitive file %s: %s", entry_path, e
+                        )
 
         # Recursively collect nested transitive targets
         for nested_target in nested_transitive_targets:
@@ -384,11 +368,11 @@ def _collect_escaping_dir_symlink(
     total_size = 0
 
     if not target_abs_path.exists():
-        logger.debug("Skipping broken escaping symlink: %s", symlink_path)
+        logger.warning("Skipping broken escaping symlink: %s", symlink_path)
         return (file_entries, dir_entries, total_size)
 
     if not target_abs_path.is_dir():
-        logger.debug("Skipping non-directory escaping symlink target: %s", symlink_path)
+        logger.warning("Skipping non-directory escaping symlink target: %s", symlink_path)
         return (file_entries, dir_entries, total_size)
 
     # Normalize path for cycle detection
@@ -429,7 +413,6 @@ def _collect_escaping_dir_symlink(
             if dir_entry_path not in collected_paths:
                 dir_entries.append(ManifestDirectoryPath(path=dir_entry_path))
                 collected_paths.add(dir_entry_path)
-                logger.debug("Collected dir (escaping): %s", dir_entry_path)
 
             for name in list(dirnames):
                 full_path = Path(dirpath) / name
@@ -448,9 +431,6 @@ def _collect_escaping_dir_symlink(
                             )
                             file_entries.append(entry)
                             collected_paths.add(entry_path)
-                            logger.debug(
-                                "Collected symlink dir (internal, translated): %s", entry_path
-                            )
                     else:
                         try:
                             nested_target = full_path.resolve()
@@ -467,13 +447,10 @@ def _collect_escaping_dir_symlink(
                                 file_entries.extend(nested_files)
                                 dir_entries.extend(nested_dirs)
                                 total_size += nested_size
-                                logger.debug(
-                                    "Collapsed nested escaping dir symlink: %s", entry_path
-                                )
                             else:
-                                logger.debug("Skipping broken nested dir symlink: %s", entry_path)
+                                logger.warning("Skipping broken nested dir symlink: %s", entry_path)
                         except OSError as e:
-                            logger.debug(
+                            logger.warning(
                                 "Skipping inaccessible nested dir symlink %s: %s", entry_path, e
                             )
                     dirnames.remove(name)
@@ -497,7 +474,6 @@ def _collect_escaping_dir_symlink(
                         )
                         file_entries.append(entry)
                         collected_paths.add(entry_path)
-                        logger.debug("Collected symlink (internal, translated): %s", entry_path)
                     else:
                         try:
                             target_stat = full_path.stat(follow_symlinks=True)
@@ -505,9 +481,8 @@ def _collect_escaping_dir_symlink(
                             file_entries.append(file_entry)
                             collected_paths.add(entry_path)
                             total_size += file_entry.size or 0
-                            logger.debug("Collapsed nested escaping symlink: %s", entry_path)
                         except OSError as e:
-                            logger.debug("Skipping broken nested symlink %s: %s", entry_path, e)
+                            logger.warning("Skipping broken nested symlink %s: %s", entry_path, e)
                     continue
 
                 try:
@@ -516,9 +491,8 @@ def _collect_escaping_dir_symlink(
                     file_entries.append(entry)
                     collected_paths.add(entry_path)
                     total_size += entry.size or 0
-                    logger.debug("Collected (escaping): %s", entry_path)
                 except OSError as e:
-                    logger.debug(
+                    logger.warning(
                         "Skipping inaccessible file in escaping target %s: %s", entry_path, e
                     )
 

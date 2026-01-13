@@ -9,7 +9,6 @@ files from a local filesystem cache to the target locations.
 
 from __future__ import annotations
 
-import logging
 import os
 import shutil
 import threading
@@ -20,8 +19,6 @@ from typing import List, Optional
 from .._manifest import ManifestFilePath
 from .._content_addressed_data_cache import FileSystemDataCache
 from ._download_abs_manifest_pipeline import DownloadPipelineBase, DownloadFileResult
-
-logger = logging.getLogger("deadline.job_attachments.download")
 
 
 @dataclass
@@ -192,9 +189,6 @@ class FileSystemDownloadPipeline(DownloadPipelineBase):
 
             self._update_hash_cache_for_chunked_file(entry, local_path, actual_mtime_ns)
 
-            logger.debug(
-                f"Downloaded chunked file {entry.path} ({len(entry.chunkhashes)} chunks)"  # type: ignore
-            )
             self._record_result(
                 DownloadFileResult(
                     entry=entry,

@@ -289,7 +289,6 @@ def _subtree_manifest(
             )
             if not entry.deleted and entry.size is not None:
                 total_size += entry.size
-            logger.debug("Included: %s", rebased_path)
 
     # Determine output type: always relative, preserve snapshot/diff
     # Note: parentManifestHash is NOT preserved because the subtree operation
@@ -391,7 +390,7 @@ def _identity_subtree_manifest(
                 total_size += new_size
             elif symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
                 # Exclude all symlinks
-                logger.debug("Excluded symlink: %s", entry.path)
+                pass
             else:
                 # COLLAPSE_ESCAPING: For identity subtree, no symlinks "escape"
                 # since there's no subtree boundary. Preserve all symlinks.
@@ -401,7 +400,6 @@ def _identity_subtree_manifest(
                         symlink_target=symlink_target,
                     )
                 )
-                logger.debug("Preserved symlink: %s -> %s", entry.path, symlink_target)
         else:
             # Regular file or deleted marker - copy unchanged
             result_paths.append(
@@ -418,7 +416,6 @@ def _identity_subtree_manifest(
             )
             if not entry.deleted and entry.size is not None:
                 total_size += entry.size
-            logger.debug("Included: %s", entry.path)
 
     # Determine output type: preserve snapshot/diff
     is_snapshot = isinstance(manifest, (AbsSnapshot, Snapshot))
@@ -480,7 +477,6 @@ def _handle_symlink_in_subtree(
 
     # EXCLUDE_ALL policy: exclude ALL symlinks regardless of whether they escape
     if symlink_policy == SymlinkPolicy.EXCLUDE_ALL:
-        logger.debug("Excluded symlink: %s", rebased_path)
         return ([], 0)
 
     # For COLLAPSE_ESCAPING and EXCLUDE_ESCAPING, preserve symlinks within subtree
@@ -488,7 +484,6 @@ def _handle_symlink_in_subtree(
         # Target is within subtree - symlink doesn't escape, preserve it
         # Rebase the symlink target relative to the new root
         rebased_target = _rebase_path(symlink_target, subtree)
-        logger.debug("Preserved symlink: %s -> %s", rebased_path, rebased_target)
         return (
             [
                 ManifestFilePath(
@@ -501,7 +496,6 @@ def _handle_symlink_in_subtree(
 
     # Target escapes the subtree - handle according to policy
     if symlink_policy == SymlinkPolicy.EXCLUDE_ESCAPING:
-        logger.debug("Excluded escaping symlink: %s", rebased_path)
         return ([], 0)
 
     # COLLAPSE_ESCAPING - collapse the escaping symlink
@@ -566,7 +560,6 @@ def _collapse_symlink(
                 )
 
             # Target is a regular file - copy its content
-            logger.debug("Collapsed symlink to file: %s", rebased_path)
             size = target_entry.size if target_entry.size is not None else 0
             return (
                 [
@@ -625,15 +618,9 @@ def _collapse_symlink(
                         if not entry.deleted and entry.size is not None:
                             total_size += entry.size
 
-            logger.debug(
-                "Collapsed symlink to directory: %s (%d entries)", rebased_path, len(result_entries)
-            )
             return (result_entries, total_size)
 
         # Target doesn't exist in manifest - exclude with warning
-        logger.debug(
-            "Warning: Excluded symlink '%s' - target '%s' not in manifest", rebased_path, target
-        )
         return ([], 0)
     finally:
         # Unmark as visiting when done
