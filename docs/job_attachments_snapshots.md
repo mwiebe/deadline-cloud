@@ -576,8 +576,9 @@ def hash_upload_abs_manifest(
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     max_memory_bytes: Optional[int] = None,
+    max_workers: Optional[int] = None,
     file_chunk_size_bytes: Optional[int] = None,
-    progress_tracker: Optional[ProgressTracker] = None,
+    on_progress: Optional[HashUploadProgressCallback] = None,
 ) -> UploadResult:
 ```
 
@@ -590,8 +591,82 @@ def hash_upload_abs_manifest(
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `max_memory_bytes` | Maximum memory to use for buffering (default: auto-detect) |
+| `max_workers` | Maximum number of parallel workers (default: 10) |
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
-| `progress_tracker` | Optional progress tracker for upload progress |
+| `on_progress` | Optional callback for progress reporting. Called periodically with `HashUploadProgressMetadata`. Return `True` to continue, `False` to cancel. |
+
+**Progress Reporting:**
+
+The `on_progress` callback receives `HashUploadProgressMetadata` with separate tracking for hashing and uploading phases:
+
+```python
+@dataclass
+class HashUploadProgressMetadata:
+    # Totals
+    total_file_chunks: int  # Total files + chunks to process
+    total_bytes: int
+
+    # Hashing phase progress
+    hashed_file_chunks: int
+    hashed_bytes: int
+    hash_skipped_file_chunks: int  # Skipped due to hash cache hit
+    hash_skipped_bytes: int
+
+    # Upload phase progress
+    uploaded_file_chunks: int
+    uploaded_bytes: int
+    upload_skipped_file_chunks: int  # Skipped because already in data cache
+    upload_skipped_bytes: int
+
+    # Overall progress (based on upload completion, which is the final stage)
+    progress: float  # 0-100
+    progressMessage: str
+```
+
+The callback type is:
+```python
+HashUploadProgressCallback = Callable[[HashUploadProgressMetadata], bool]
+```
+
+**Progress Callback Behavior:**
+
+| Behavior | Description |
+|----------|-------------|
+| Invocation interval | Called at most every 0.2 seconds (5 times per second) |
+| Final callback | Always called at operation completion via `force_callback()` |
+| Cancellation | Return `False` from callback to cancel the operation |
+| Thread safety | Callback is invoked from worker threads; metadata is built under lock |
+
+**Progress Field Semantics:**
+
+For chunked files, each chunk is counted separately in `total_file_chunks`, `hashed_file_chunks`, etc.
+
+| Field | When Incremented |
+|-------|------------------|
+| `hashed_bytes` / `hashed_file_chunks` | After hash computation completes for a file or chunk |
+| `hash_skipped_bytes` / `hash_skipped_file_chunks` | When hash cache hit allows skipping hash computation |
+| `uploaded_bytes` / `uploaded_file_chunks` | After upload completes for a file or chunk |
+| `upload_skipped_bytes` / `upload_skipped_file_chunks` | When data cache already contains the content |
+
+**Example - Progress callback:**
+
+```python
+from deadline.job_attachments._snapshots import (
+    hash_upload_abs_manifest,
+    HashUploadProgressMetadata,
+)
+
+def on_progress(metadata: HashUploadProgressMetadata) -> bool:
+    print(f"Progress: {metadata.progress:.1f}% - {metadata.progressMessage}")
+    # Return False to cancel, True to continue
+    return True
+
+result = hash_upload_abs_manifest(
+    manifest=abs_manifest,
+    data_cache=s3_cache,
+    on_progress=on_progress,
+)
+```
 
 **Returns:** `UploadResult` containing:
 - `statistics`: `SummaryStatistics` with upload metrics (see below)
