@@ -31,6 +31,7 @@ deletions, and other v2025-only features.
 from __future__ import annotations
 
 import concurrent.futures
+import random
 import time
 import threading
 from dataclasses import dataclass, field
@@ -233,6 +234,72 @@ class _MultipartPartWorkItem:
     etag: Optional[str] = None
 
 
+# Constants for probabilistic S3 cache validation
+S3_CACHE_VALIDATION_INITIAL_COUNT = 100  # Always verify first N cache hits
+S3_CACHE_VALIDATION_SAMPLE_RATE = 0.01  # 1% sampling after initial count
+
+
+@dataclass
+class _S3CacheValidationState:
+    """
+    Tracks probabilistic S3 cache validation during upload.
+
+    Performs HeadObject verification on a sample of S3 check cache hits to detect
+    stale cache entries (objects deleted from S3). If any verification fails,
+    the cache is invalidated and all previously skipped items are re-queued.
+
+    Sampling strategy:
+    - First 100 cache hits: Always verify with HeadObject
+    - Subsequent cache hits: 1% random sampling
+    """
+
+    # Counter for sampling decision
+    cache_hit_count: int = 0
+
+    # Validation results
+    cache_invalidated: bool = False
+
+    # Items skipped due to cache (to re-queue if cache is invalidated)
+    skipped_items: List[PipelineWorkItem] = field(default_factory=list)
+
+    # Lock for thread-safe updates
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def should_verify(self) -> bool:
+        """Determine if this cache hit should be verified with HeadObject."""
+        with self.lock:
+            self.cache_hit_count += 1
+            if self.cache_hit_count <= S3_CACHE_VALIDATION_INITIAL_COUNT:
+                return True
+            return random.random() < S3_CACHE_VALIDATION_SAMPLE_RATE
+
+    def record_skipped_item(self, item: PipelineWorkItem) -> None:
+        """Record an item that was skipped due to cache hit."""
+        with self.lock:
+            if not self.cache_invalidated:
+                self.skipped_items.append(item)
+
+    def invalidate(self) -> List[PipelineWorkItem]:
+        """
+        Mark cache as invalid and return items to re-queue.
+
+        Returns the list of skipped items that need to be re-processed.
+        Subsequent calls return empty list.
+        """
+        with self.lock:
+            if self.cache_invalidated:
+                return []
+            self.cache_invalidated = True
+            items = self.skipped_items
+            self.skipped_items = []
+            return items
+
+    def is_invalidated(self) -> bool:
+        """Check if cache has been invalidated."""
+        with self.lock:
+            return self.cache_invalidated
+
+
 # Union type for work items that go through the full pipeline
 PipelineWorkItem = Union[_ChunkWorkItem, _StreamingWorkItem]
 
@@ -309,6 +376,9 @@ class _TaskBasedPipeline:
 
     Cache checks (hash cache, S3 check cache, HeadObject) are performed in the
     READ+HASH worker threads to parallelize S3 API calls.
+
+    Probabilistic S3 cache validation is performed to detect stale cache entries.
+    If validation fails, the cache is invalidated and skipped items are re-queued.
     """
 
     def __init__(
@@ -350,6 +420,15 @@ class _TaskBasedPipeline:
         # when multiple chunks with the same hash are uploaded concurrently
         self._fs_write_locks: Dict[str, threading.Lock] = {}
         self._fs_write_locks_lock = threading.Lock()
+
+        # S3 cache validation state (only used for S3DataCache with s3_check_cache)
+        self._s3_cache_validation: Optional[_S3CacheValidationState] = None
+        if (
+            isinstance(data_cache, S3DataCache)
+            and data_cache.s3_check_cache is not None
+            and not data_cache.force_s3_check
+        ):
+            self._s3_cache_validation = _S3CacheValidationState()
 
     def submit(self, item: PipelineWorkItem) -> None:
         """Submit a work item to start processing through the pipeline."""
@@ -409,23 +488,29 @@ class _TaskBasedPipeline:
     # READ+HASH Stage (Combined for CPU cache efficiency)
     # =========================================================================
 
-    def _check_cache_and_skip(self, item: PipelineWorkItem) -> tuple[Optional[str], bool]:
+    def _check_cache_and_skip(self, item: PipelineWorkItem) -> tuple[Optional[str], bool, bool]:
         """
         Check hash cache and data cache to see if this item can be skipped.
 
-        Returns (cached_hash, can_skip):
-        - (hash, True): Hash found and object exists in data cache - skip entirely
-        - (hash, False): Hash found but object not in data cache - need to verify
-        - (None, False): No cached hash - need to read and hash
+        Returns (cached_hash, can_skip, was_s3_cache_hit):
+        - (hash, True, True): Hash found, S3 cache hit, object verified or sampled - skip
+        - (hash, True, False): Hash found, HeadObject confirmed exists - skip
+        - (hash, False, False): Hash found but object not in data cache - need to upload
+        - (None, False, False): No cached hash - need to read and hash
 
         When can_skip is False but cached_hash is not None, the caller should
         compare the computed hash with cached_hash. If they match, no need to
         re-check HeadObject. If they differ, should check HeadObject with new hash.
 
         This is called from worker threads to parallelize cache checks.
+
+        Probabilistic S3 cache validation:
+        - First 100 S3 cache hits: Always verify with HeadObject
+        - Subsequent S3 cache hits: 1% random sampling
+        - If verification fails (404), cache is invalidated
         """
         if self._hash_cache is None or self._force_rehash:
-            return None, False
+            return None, False, False
 
         mtime_str = str(item.mtime) if item.mtime is not None else ""
 
@@ -453,15 +538,87 @@ class _TaskBasedPipeline:
                 )
 
         if hash_cache_entry is None or hash_cache_entry.last_modified_time != mtime_str:
-            return None, False
+            return None, False, False
 
         cached_hash = hash_cache_entry.file_hash
 
-        # Check if object exists in data cache (may call HeadObject for S3)
-        if self._data_cache.object_exists(cached_hash, self._hash_alg.value):
-            return cached_hash, True  # Can skip entirely
+        # Check if S3 cache validation has been invalidated
+        if self._s3_cache_validation is not None and self._s3_cache_validation.is_invalidated():
+            # Cache invalidated - skip S3 check cache, go directly to HeadObject
+            if self._head_object_exists(cached_hash):
+                return cached_hash, True, False
+            return cached_hash, False, False
 
-        return cached_hash, False  # Have cached hash but need to verify
+        # For S3DataCache with validation enabled, check cache and HeadObject separately
+        # so we know which path was taken
+        if self._s3_cache_validation is not None and isinstance(self._data_cache, S3DataCache):
+            if (
+                self._data_cache.get_check_cache_entry(cached_hash, self._hash_alg.value)
+                is not None
+            ):
+                # S3 check cache hit - perform probabilistic validation
+                if self._s3_cache_validation.should_verify():
+                    if not self._head_object_exists(cached_hash):
+                        # Cache is stale! Invalidate and signal re-queue needed
+                        self._handle_cache_invalidation(cached_hash)
+                        return cached_hash, False, False
+                return cached_hash, True, True  # S3 cache hit, trusted or verified
+
+            # No cache hit, fall through to HeadObject
+            if self._head_object_exists(cached_hash):
+                return cached_hash, True, False
+            return cached_hash, False, False
+
+        # For non-S3 or no validation, use standard object_exists
+        if self._data_cache.object_exists(cached_hash, self._hash_alg.value):
+            return cached_hash, True, False
+
+        return cached_hash, False, False  # Have cached hash but need to verify
+
+    def _head_object_exists(self, hash_value: str) -> bool:
+        """Check if object exists using HeadObject (bypassing cache)."""
+        if isinstance(self._data_cache, S3DataCache):
+            return self._data_cache.head_object_exists(
+                hash_value, self._hash_alg.value, self._account_id
+            )
+        return self._data_cache.object_exists(hash_value, self._hash_alg.value)
+
+    def _handle_cache_invalidation(self, hash_value: str) -> None:
+        """Handle S3 cache invalidation when a cached object is found missing."""
+        if self._s3_cache_validation is None:
+            return
+
+        logger.warning(
+            f"S3 check cache validation failed: object with hash {hash_value[:16]}... "
+            f"not found in S3. Invalidating cache and re-queuing skipped items."
+        )
+
+        # Get items to re-queue before invalidation
+        items_to_requeue = self._s3_cache_validation.invalidate()
+
+        # Delete the S3 check cache database
+        if (
+            isinstance(self._data_cache, S3DataCache)
+            and self._data_cache.s3_check_cache is not None
+        ):
+            try:
+                self._data_cache.s3_check_cache.remove_cache()
+                logger.info("S3 check cache database deleted due to stale entries")
+            except Exception as e:
+                logger.warning(f"Failed to delete S3 check cache: {e}")
+
+        # Re-queue skipped items
+        for item in items_to_requeue:
+            # Reset item state
+            item.skipped = False
+            item.uploaded = False
+            if isinstance(item, _StreamingWorkItem):
+                item.file_hash = None
+            else:
+                item.chunk_hash = None
+            # Re-submit to pipeline
+            self.submit(item)
+            logger.debug(f"Re-queued item after cache invalidation: {item.file_path}")
 
     def _do_read_and_hash(self, item: PipelineWorkItem) -> None:
         """
@@ -486,7 +643,7 @@ class _TaskBasedPipeline:
 
             # Check caches first (before allocating memory)
             # This parallelizes HeadObject calls across worker threads
-            cached_hash, can_skip = self._check_cache_and_skip(item)
+            cached_hash, can_skip, was_s3_cache_hit = self._check_cache_and_skip(item)
             if can_skip:
                 # Item is fully cached - mark as skipped and record result
                 if isinstance(item, _StreamingWorkItem):
@@ -495,6 +652,11 @@ class _TaskBasedPipeline:
                     item.chunk_hash = cached_hash
                 item.skipped = True
                 item.uploaded = False
+
+                # Record for potential re-queue if S3 cache is later invalidated
+                if was_s3_cache_hit and self._s3_cache_validation is not None:
+                    self._s3_cache_validation.record_skipped_item(item)
+
                 # Track progress for skipped items
                 if self._progress_tracker is not None:
                     if isinstance(item, _StreamingWorkItem):

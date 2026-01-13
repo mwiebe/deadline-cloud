@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ..caches.s3_check_cache import S3CheckCache
+from ..caches.s3_check_cache import S3CheckCache, S3CheckCacheEntry
 
 
 # Default part size for S3 multipart uploads/downloads (32MB)
@@ -98,6 +98,49 @@ class S3DataCache(ContentAddressedDataCache):
         """Returns the S3 key for a given hash."""
         return f"{self.s3_key_prefix}/{hash_value}.{algorithm}"
 
+    def get_cache_key(self, hash_value: str, algorithm: str) -> str:
+        """Returns the cache key for a given hash (bucket/key format)."""
+        return f"{self.s3_bucket}/{self.get_object_key(hash_value, algorithm)}"
+
+    def get_check_cache_entry(self, hash_value: str, algorithm: str) -> Optional[S3CheckCacheEntry]:
+        """
+        Check if hash exists in the S3 check cache (without HeadObject).
+
+        Returns the cache entry if found, None otherwise.
+        """
+        if self.s3_check_cache is None or self.force_s3_check:
+            return None
+        return self.s3_check_cache.get_entry(self.get_cache_key(hash_value, algorithm))
+
+    def head_object_exists(
+        self, hash_value: str, algorithm: str, expected_bucket_owner: Optional[str] = None
+    ) -> bool:
+        """
+        Check if object exists in S3 using HeadObject (bypassing cache).
+
+        Args:
+            hash_value: The hash of the content
+            algorithm: The hash algorithm used (e.g., "xxh128")
+            expected_bucket_owner: Optional AWS account ID for ExpectedBucketOwner
+
+        Returns:
+            True if the object exists, False if not found
+
+        Raises:
+            ClientError: For S3 errors other than 404
+        """
+        key = self.get_object_key(hash_value, algorithm)
+        try:
+            head_kwargs = {"Bucket": self.s3_bucket, "Key": key}
+            if expected_bucket_owner is not None:
+                head_kwargs["ExpectedBucketOwner"] = expected_bucket_owner
+            self.s3_client.head_object(**head_kwargs)
+            return True
+        except self.s3_client.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            raise
+
     def object_exists(self, hash_value: str, algorithm: str) -> bool:
         """
         Checks if an object with the given hash exists in S3.
@@ -112,23 +155,12 @@ class S3DataCache(ContentAddressedDataCache):
         Returns:
             True if the object exists, False otherwise
         """
-        key = self.get_object_key(hash_value, algorithm)
-        cache_key = f"{self.s3_bucket}/{key}"
-
         # Check local cache first (unless force_s3_check is True)
-        if not self.force_s3_check and self.s3_check_cache is not None:
-            cache_entry = self.s3_check_cache.get_entry(cache_key)
-            if cache_entry is not None:
-                return True
+        if self.get_check_cache_entry(hash_value, algorithm) is not None:
+            return True
 
         # Fall back to S3 HeadObject
-        try:
-            self.s3_client.head_object(Bucket=self.s3_bucket, Key=key)
-            return True
-        except self.s3_client.exceptions.ClientError as e:
-            if e.response["Error"]["Code"] == "404":
-                return False
-            raise
+        return self.head_object_exists(hash_value, algorithm)
 
 
 @dataclass
