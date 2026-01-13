@@ -1538,3 +1538,149 @@ class TestSubtreeFileChunkSizePreservation:
         result = subtree_manifest(manifest, "subdir")
 
         assert result.fileChunkSizeBytes == 64 * 1024 * 1024
+
+
+class TestSubtreeSymlinkCycles:
+    """Tests for symlink cycle detection in subtree_manifest."""
+
+    def test_self_referential_symlink_cycle(self) -> None:
+        """Self-referential symlink (A -> A) is detected and skipped."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="subdir/self_link", symlink_target="subdir/self_link"),
+            ],
+            dirs=[ManifestDirectoryPath(path="subdir")],
+            total_size=100,
+        )
+
+        result = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+
+        # Regular file should be present
+        paths = {p.path for p in result.files}
+        assert "file.txt" in paths
+        # Self-referential symlink should be skipped (cycle detected)
+        assert "self_link" not in paths
+
+    def test_two_symlink_cycle(self) -> None:
+        """Two-symlink cycle (A -> B -> A) is detected and skipped."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="subdir/link_a", symlink_target="subdir/link_b"),
+                ManifestFilePath(path="subdir/link_b", symlink_target="subdir/link_a"),
+            ],
+            dirs=[ManifestDirectoryPath(path="subdir")],
+            total_size=100,
+        )
+
+        result = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+
+        # Regular file should be present
+        paths = {p.path for p in result.files}
+        assert "file.txt" in paths
+        # Cyclic symlinks should be skipped
+        assert "link_a" not in paths
+        assert "link_b" not in paths
+
+    def test_three_symlink_cycle(self) -> None:
+        """Three-symlink cycle (A -> B -> C -> A) is detected and skipped."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="subdir/link_a", symlink_target="subdir/link_b"),
+                ManifestFilePath(path="subdir/link_b", symlink_target="subdir/link_c"),
+                ManifestFilePath(path="subdir/link_c", symlink_target="subdir/link_a"),
+            ],
+            dirs=[ManifestDirectoryPath(path="subdir")],
+            total_size=100,
+        )
+
+        result = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+
+        paths = {p.path for p in result.files}
+        assert "file.txt" in paths
+        # All cyclic symlinks should be skipped
+        assert "link_a" not in paths
+        assert "link_b" not in paths
+        assert "link_c" not in paths
+
+    def test_cycle_with_collapse_escaping(self) -> None:
+        """Cycle detection works with COLLAPSE_ESCAPING policy."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000),
+                # Escaping symlink that points to a cycle outside subtree
+                ManifestFilePath(path="subdir/escape_link", symlink_target="outside/link_a"),
+                ManifestFilePath(path="outside/link_a", symlink_target="outside/link_b"),
+                ManifestFilePath(path="outside/link_b", symlink_target="outside/link_a"),
+            ],
+            dirs=[
+                ManifestDirectoryPath(path="subdir"),
+                ManifestDirectoryPath(path="outside"),
+            ],
+            total_size=100,
+        )
+
+        result = subtree_manifest(
+            manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING
+        )
+
+        paths = {p.path for p in result.files}
+        assert "file.txt" in paths
+        # Escaping symlink to cycle should be skipped
+        assert "escape_link" not in paths
+
+    def test_symlink_chain_no_cycle(self) -> None:
+        """Symlink chain without cycle is collapsed correctly."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(path="subdir/target.txt", hash="h1", size=100, mtime=1000),
+                ManifestFilePath(path="subdir/link_a", symlink_target="subdir/link_b"),
+                ManifestFilePath(path="subdir/link_b", symlink_target="subdir/target.txt"),
+            ],
+            dirs=[ManifestDirectoryPath(path="subdir")],
+            total_size=100,
+        )
+
+        result = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+
+        # All entries should be present (chain resolves to target.txt)
+        paths = {p.path for p in result.files}
+        assert "target.txt" in paths
+        assert "link_a" in paths
+        assert "link_b" in paths
+
+        # link_a and link_b should be collapsed to target.txt's content
+        link_a = next(p for p in result.files if p.path == "link_a")
+        assert link_a.hash == "h1"
+        assert link_a.symlink_target is None
+
+    def test_cycle_in_directory_symlink(self) -> None:
+        """Cycle involving directory symlink is detected."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[
+                ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000),
+                # Symlink to directory that contains a symlink back
+                ManifestFilePath(path="subdir/dir_link", symlink_target="other"),
+                ManifestFilePath(path="other/back_link", symlink_target="subdir/dir_link"),
+            ],
+            dirs=[
+                ManifestDirectoryPath(path="subdir"),
+                ManifestDirectoryPath(path="other"),
+            ],
+            total_size=100,
+        )
+
+        result = subtree_manifest(manifest, "subdir", symlink_policy=SymlinkPolicy.COLLAPSE_ALL)
+
+        paths = {p.path for p in result.files}
+        assert "file.txt" in paths
+        # dir_link should be skipped due to cycle in nested symlink
+        # (or partially collapsed before cycle detected)

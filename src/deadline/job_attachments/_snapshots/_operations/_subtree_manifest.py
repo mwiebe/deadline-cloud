@@ -518,6 +518,7 @@ def _collapse_symlink(
     target: str,
     file_lookup: Dict[str, ManifestFilePath],
     dir_lookup: Set[str],
+    _visiting: Optional[Set[str]] = None,
 ) -> Tuple[List[ManifestFilePath], int]:
     """
     Collapse a symlink by replacing it with its target's content.
@@ -527,89 +528,113 @@ def _collapse_symlink(
         target: The symlink target path (relative to original manifest root)
         file_lookup: Lookup table of file entries by path
         dir_lookup: Set of directory paths
+        _visiting: Internal parameter for cycle detection - targets currently being visited
+
+    Symlink Cycle Handling:
+        Symlink cycles (e.g., A -> B -> A) are detected and logged as warnings.
+        When a cycle is detected, the cyclic symlink is skipped to prevent
+        infinite recursion.
 
     Returns:
         A tuple of (list of entries to add, total size added).
     """
-    # Check if target is a file
-    if target in file_lookup:
-        target_entry = file_lookup[target]
+    # Initialize visiting set for cycle detection
+    if _visiting is None:
+        _visiting = set()
 
-        # If target is itself a symlink, we need to follow the chain
-        if target_entry.symlink_target is not None:
-            return _collapse_symlink(
-                rebased_path=rebased_path,
-                target=target_entry.symlink_target,
-                file_lookup=file_lookup,
-                dir_lookup=dir_lookup,
+    # Check for cycle
+    if target in _visiting:
+        logger.warning("Symlink cycle detected, skipping: %s -> %s", rebased_path, target)
+        return ([], 0)
+
+    # Mark as visiting
+    _visiting.add(target)
+
+    try:
+        # Check if target is a file
+        if target in file_lookup:
+            target_entry = file_lookup[target]
+
+            # If target is itself a symlink, we need to follow the chain
+            if target_entry.symlink_target is not None:
+                return _collapse_symlink(
+                    rebased_path=rebased_path,
+                    target=target_entry.symlink_target,
+                    file_lookup=file_lookup,
+                    dir_lookup=dir_lookup,
+                    _visiting=_visiting,
+                )
+
+            # Target is a regular file - copy its content
+            logger.debug("Collapsed symlink to file: %s", rebased_path)
+            size = target_entry.size if target_entry.size is not None else 0
+            return (
+                [
+                    ManifestFilePath(
+                        path=rebased_path,
+                        hash=target_entry.hash,
+                        size=target_entry.size,
+                        mtime=target_entry.mtime,
+                        runnable=target_entry.runnable,
+                        chunkhashes=target_entry.chunkhashes,
+                        symlink_target=None,
+                        deleted=False,
+                    )
+                ],
+                size,
             )
 
-        # Target is a regular file - copy its content
-        logger.debug("Collapsed symlink to file: %s", rebased_path)
-        size = target_entry.size if target_entry.size is not None else 0
-        return (
-            [
-                ManifestFilePath(
-                    path=rebased_path,
-                    hash=target_entry.hash,
-                    size=target_entry.size,
-                    mtime=target_entry.mtime,
-                    runnable=target_entry.runnable,
-                    chunkhashes=target_entry.chunkhashes,
-                    symlink_target=None,
-                    deleted=False,
-                )
-            ],
-            size,
-        )
+        # Check if target is a directory
+        if target in dir_lookup:
+            # Collect all entries under this directory
+            result_entries: List[ManifestFilePath] = []
+            total_size = 0
+            target_prefix = target + "/"
 
-    # Check if target is a directory
-    if target in dir_lookup:
-        # Collect all entries under this directory
-        result_entries: List[ManifestFilePath] = []
-        total_size = 0
-        target_prefix = target + "/"
+            for path, entry in file_lookup.items():
+                if path.startswith(target_prefix):
+                    # Compute the path relative to the target directory
+                    relative_to_target = path[len(target_prefix) :]
+                    # New path is symlink path + relative path
+                    new_path = rebased_path + "/" + relative_to_target
 
-        for path, entry in file_lookup.items():
-            if path.startswith(target_prefix):
-                # Compute the path relative to the target directory
-                relative_to_target = path[len(target_prefix) :]
-                # New path is symlink path + relative path
-                new_path = rebased_path + "/" + relative_to_target
-
-                if entry.symlink_target is not None:
-                    # Nested symlink - recursively collapse it
-                    nested_entries, nested_size = _collapse_symlink(
-                        rebased_path=new_path,
-                        target=entry.symlink_target,
-                        file_lookup=file_lookup,
-                        dir_lookup=dir_lookup,
-                    )
-                    result_entries.extend(nested_entries)
-                    total_size += nested_size
-                else:
-                    result_entries.append(
-                        ManifestFilePath(
-                            path=new_path,
-                            hash=entry.hash,
-                            size=entry.size,
-                            mtime=entry.mtime,
-                            runnable=entry.runnable,
-                            chunkhashes=entry.chunkhashes,
-                            symlink_target=None,
-                            deleted=entry.deleted,
+                    if entry.symlink_target is not None:
+                        # Nested symlink - recursively collapse it
+                        nested_entries, nested_size = _collapse_symlink(
+                            rebased_path=new_path,
+                            target=entry.symlink_target,
+                            file_lookup=file_lookup,
+                            dir_lookup=dir_lookup,
+                            _visiting=_visiting,
                         )
-                    )
-                    if not entry.deleted and entry.size is not None:
-                        total_size += entry.size
+                        result_entries.extend(nested_entries)
+                        total_size += nested_size
+                    else:
+                        result_entries.append(
+                            ManifestFilePath(
+                                path=new_path,
+                                hash=entry.hash,
+                                size=entry.size,
+                                mtime=entry.mtime,
+                                runnable=entry.runnable,
+                                chunkhashes=entry.chunkhashes,
+                                symlink_target=None,
+                                deleted=entry.deleted,
+                            )
+                        )
+                        if not entry.deleted and entry.size is not None:
+                            total_size += entry.size
 
+            logger.debug(
+                "Collapsed symlink to directory: %s (%d entries)", rebased_path, len(result_entries)
+            )
+            return (result_entries, total_size)
+
+        # Target doesn't exist in manifest - exclude with warning
         logger.debug(
-            "Collapsed symlink to directory: %s (%d entries)", rebased_path, len(result_entries)
+            "Warning: Excluded symlink '%s' - target '%s' not in manifest", rebased_path, target
         )
-        return (result_entries, total_size)
-
-    # Target doesn't exist in manifest - exclude with warning
-    logger.debug(
-        "Warning: Excluded symlink '%s' - target '%s' not in manifest", rebased_path, target
-    )
-    return ([], 0)
+        return ([], 0)
+    finally:
+        # Unmark as visiting when done
+        _visiting.discard(target)

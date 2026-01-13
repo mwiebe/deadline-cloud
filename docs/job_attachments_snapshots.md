@@ -2254,6 +2254,27 @@ When collapsing a symlink, the operation looks up the target path in the origina
 - **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current` with target `assets/shared/v2` containing `assets/shared/v2/a.txt` and `assets/shared/v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
 - **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT), the symlink is excluded with a warning
 
+**Symlink Cycle Handling:**
+
+Symlink cycles occur when following symlinks leads back to a previously visited target. Examples:
+- Self-referential: `A -> A` (length 1)
+- Direct cycle: `A -> B -> A` (length 2)
+- Longer cycles: `A -> B -> C -> A` (length 3+)
+
+When collapsing symlinks, SUBTREE detects cycles and handles them gracefully:
+
+| Policy | Cycle Behavior |
+|--------|----------------|
+| `COLLAPSE_ALL` | Cycles detected during collapse; cyclic symlink skipped with warning |
+| `COLLAPSE_ESCAPING` | Cycles detected when collapsing escaping symlinks; cyclic symlink skipped with warning |
+| `EXCLUDE_ALL` | No collapse needed; all symlinks excluded |
+| `EXCLUDE_ESCAPING` | Cycles detected when collapsing escaping symlinks; cyclic symlink skipped with warning |
+
+When a cycle is detected:
+1. A warning is logged identifying the cyclic symlink
+2. The cyclic symlink is skipped (produces no output entries)
+3. Processing continues with remaining entries
+
 **Preserved Symlink Target Rebasing:**
 
 Symlinks that are preserved (not collapsed) must have their `symlink_target` rebased relative to the new subtree root. Since targets are stored relative to the manifest root, rebasing simply strips the subtree prefix from the target path. For example:
