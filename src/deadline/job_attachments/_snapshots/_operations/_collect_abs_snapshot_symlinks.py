@@ -362,6 +362,14 @@ def _collect_escaping_dir_symlink(
         create_file_entry: Function to create an unhashed file entry.
         _visiting: Internal parameter for cycle detection - target paths currently being visited.
 
+    Returns:
+        A tuple of (file_entries, dir_entries, total_size).
+
+    Note:
+        OSError exceptions from filesystem operations (e.g., permission denied,
+        broken symlinks) are caught internally and logged. Inaccessible entries
+        are skipped rather than raising exceptions.
+
     Symlink Cycle Handling:
         Symlink cycles (e.g., A -> B -> A) are detected and logged as warnings.
         When a cycle is detected, the cyclic symlink is skipped to prevent

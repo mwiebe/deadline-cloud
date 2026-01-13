@@ -207,6 +207,11 @@ def hash_upload_abs_manifest(
     Raises:
         ValueError: If the manifest contains relative paths (paths must be absolute)
         ValueError: If effective chunk size is positive and max_memory_bytes is less than chunk size
+        JobAttachmentsS3ClientError: If an S3 API call fails (when using S3DataCache).
+            Wraps boto3 ClientError with additional context about the operation.
+        JobAttachmentS3BotoCoreError: If a low-level AWS SDK error occurs (when using S3DataCache).
+            Wraps botocore.exceptions.BotoCoreError.
+        OSError: If a file cannot be read from the filesystem.
     """
     _validate_absolute_paths(manifest)
 
