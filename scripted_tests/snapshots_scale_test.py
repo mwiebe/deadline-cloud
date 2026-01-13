@@ -80,7 +80,6 @@ from deadline.job_attachments._snapshots._manifest import (
 )
 from deadline.job_attachments.caches.hash_cache import HashCache
 from deadline.job_attachments.caches.s3_check_cache import S3CheckCache
-from deadline.job_attachments.progress_tracker import ProgressTracker, ProgressStatus
 
 
 # =============================================================================
@@ -751,13 +750,6 @@ def test_hash_upload_filesystem(
             progress_state["last_print"] = now
         return True
 
-    progress_tracker = ProgressTracker(
-        status=ProgressStatus.UPLOAD_IN_PROGRESS,
-        total_files=total_files,
-        total_bytes=total_bytes,
-        on_progress_callback=on_progress,
-    )
-
     print_fn(
         f"  Starting hash_upload_abs_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
@@ -775,7 +767,7 @@ def test_hash_upload_filesystem(
                 force_rehash=not config.use_hash_cache,
                 max_memory_bytes=config.max_memory_mb * 1024 * 1024,
                 max_workers=config.max_workers,
-                progress_tracker=progress_tracker,
+                on_progress=on_progress,
             )
         duration = time.perf_counter() - start
 
@@ -848,13 +840,6 @@ def test_hash_upload_s3(
             progress_state["last_print"] = now
         return True
 
-    progress_tracker = ProgressTracker(
-        status=ProgressStatus.UPLOAD_IN_PROGRESS,
-        total_files=total_files,
-        total_bytes=total_bytes,
-        on_progress_callback=on_progress,
-    )
-
     with S3CheckCache(str(s3_check_cache_dir)) as s3_check_cache:
         data_cache = S3DataCache(
             s3_bucket=s3_bucket,
@@ -875,7 +860,7 @@ def test_hash_upload_s3(
                     force_rehash=not config.use_hash_cache,
                     max_memory_bytes=config.max_memory_mb * 1024 * 1024,
                     max_workers=config.max_workers,
-                    progress_tracker=progress_tracker,
+                    on_progress=on_progress,
                 )
             duration = time.perf_counter() - start
 
@@ -943,13 +928,6 @@ def test_download_filesystem(
             progress_state["last_print"] = now
         return True
 
-    progress_tracker = ProgressTracker(
-        status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
-        total_files=total_files,
-        total_bytes=total_bytes,
-        on_progress_callback=on_progress,
-    )
-
     print_fn(
         f"  Starting download_abs_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
@@ -962,7 +940,7 @@ def test_download_filesystem(
                 data_cache=data_cache,
                 hash_cache=hash_cache,
                 max_workers=config.max_workers,
-                progress_tracker=progress_tracker,
+                on_progress=on_progress,
             )
         duration = time.perf_counter() - start
 
@@ -1033,13 +1011,6 @@ def test_download_s3(
             progress_state["last_print"] = now
         return True
 
-    progress_tracker = ProgressTracker(
-        status=ProgressStatus.DOWNLOAD_IN_PROGRESS,
-        total_files=total_files,
-        total_bytes=total_bytes,
-        on_progress_callback=on_progress,
-    )
-
     print_fn(
         f"  Starting download_abs_manifest with {total_files} files, {total_bytes / (1024 * 1024):.1f} MB..."
     )
@@ -1079,7 +1050,7 @@ def test_download_s3(
                     data_cache=data_cache,
                     hash_cache=hash_cache,
                     max_workers=config.max_workers,
-                    progress_tracker=progress_tracker,
+                    on_progress=on_progress,
                 )
             duration = time.perf_counter() - start
     finally:
