@@ -2088,11 +2088,22 @@ For v2025-12-04-beta (with deletion markers):
 **Key implementation details:**
 
 - All manifests must be the same version
+- All manifests must have the same `fileChunkSizeBytes` value
 - Entries are keyed by path; later entries replace earlier ones
 - Deleted markers remove the entry entirely from the result (v2025)
 - Total size is recomputed from the final entry set
 - For v2025 snapshot+diffs: first must be snapshot, rest must be diffs
 - For v2025 diff composition: all must be diffs, `parentManifestHash` from first diff
+
+**Validation Rules:**
+
+| Condition | Behavior |
+|-----------|----------|
+| Empty manifest list | Raises `ValueError` |
+| Manifests have different `fileChunkSizeBytes` | Raises `ValueError` |
+| Snapshot+diffs: non-snapshot first | Raises `ValueError` |
+| Snapshot+diffs: non-diff after first | Raises `ValueError` |
+| Diff composition: non-diff in list | Raises `ValueError` |
 
 **Example:**
 

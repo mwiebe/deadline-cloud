@@ -370,6 +370,15 @@ def _compose_snapshot_diffs(
                 f"got {type(manifest).__name__}"
             )
 
+    # Validate all manifests have the same fileChunkSizeBytes
+    chunk_size = first.fileChunkSizeBytes
+    for i, manifest in enumerate(manifests[1:], start=1):
+        if manifest.fileChunkSizeBytes != chunk_size:
+            raise ValueError(
+                f"All manifests must have the same fileChunkSizeBytes. "
+                f"Manifest 0 has {chunk_size}, manifest {i} has {manifest.fileChunkSizeBytes}."
+            )
+
     # Build trie from base snapshot
     root = _ManifestTrieNode()
 
@@ -449,6 +458,7 @@ def _compose_snapshot_diffs(
         dirs=result_dirs,
         files=result_paths,
         total_size=total_size,
+        file_chunk_size_bytes=chunk_size,
     )
 
 
@@ -482,6 +492,15 @@ def _compose_diffs(
             )
 
     first = manifests[0]
+
+    # Validate all manifests have the same fileChunkSizeBytes
+    chunk_size = first.fileChunkSizeBytes
+    for i, manifest in enumerate(manifests[1:], start=1):
+        if manifest.fileChunkSizeBytes != chunk_size:
+            raise ValueError(
+                f"All manifests must have the same fileChunkSizeBytes. "
+                f"Manifest 0 has {chunk_size}, manifest {i} has {manifest.fileChunkSizeBytes}."
+            )
 
     # Track changes using a trie with deleted flags
     root = _ManifestTrieNode()
@@ -572,4 +591,5 @@ def _compose_diffs(
         files=result_paths,
         total_size=total_size,
         parent_manifest_hash=first.parentManifestHash,
+        file_chunk_size_bytes=chunk_size,
     )

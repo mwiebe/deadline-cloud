@@ -839,3 +839,125 @@ class TestComposeManifestsDiffsAbsolute:
         result = compose_manifests([diff1, diff2])
 
         assert isinstance(result, AbsSnapshotDiff)
+
+
+class TestComposeFileChunkSizeValidation:
+    """Tests for fileChunkSizeBytes validation in compose_manifests."""
+
+    def test_snapshot_diffs_same_chunk_size_succeeds(self) -> None:
+        """Snapshot+diffs with same chunk size succeeds."""
+        snapshot = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file1.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+        diff = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file2.txt", hash="h2", size=200, mtime=2000)],
+            total_size=200,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+
+        result = compose_manifests([snapshot, diff])
+
+        assert result.fileChunkSizeBytes == 128 * 1024 * 1024
+
+    def test_snapshot_diffs_different_chunk_size_raises(self) -> None:
+        """Snapshot+diffs with different chunk sizes raises ValueError."""
+        snapshot = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file1.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+        diff = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file2.txt", hash="h2", size=200, mtime=2000)],
+            total_size=200,
+            file_chunk_size_bytes=256 * 1024 * 1024,
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            compose_manifests([snapshot, diff])
+
+        assert "fileChunkSizeBytes" in str(exc_info.value)
+
+    def test_diffs_same_chunk_size_succeeds(self) -> None:
+        """Diff+diff with same chunk size succeeds."""
+        diff1 = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file1.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+        diff2 = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file2.txt", hash="h2", size=200, mtime=2000)],
+            total_size=200,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+
+        result = compose_manifests([diff1, diff2])
+
+        assert result.fileChunkSizeBytes == 128 * 1024 * 1024
+
+    def test_diffs_different_chunk_size_raises(self) -> None:
+        """Diff+diff with different chunk sizes raises ValueError."""
+        diff1 = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file1.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+        diff2 = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/file2.txt", hash="h2", size=200, mtime=2000)],
+            total_size=200,
+            file_chunk_size_bytes=256 * 1024 * 1024,
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            compose_manifests([diff1, diff2])
+
+        assert "fileChunkSizeBytes" in str(exc_info.value)
+
+    def test_relative_snapshot_diffs_preserves_chunk_size(self) -> None:
+        """Relative snapshot+diffs preserves chunk size."""
+        snapshot = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="file1.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=64 * 1024 * 1024,
+        )
+        diff = SnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="file2.txt", hash="h2", size=200, mtime=2000)],
+            total_size=200,
+            file_chunk_size_bytes=64 * 1024 * 1024,
+        )
+
+        result = compose_manifests([snapshot, diff])
+
+        assert isinstance(result, Snapshot)
+        assert result.fileChunkSizeBytes == 64 * 1024 * 1024
+
+    def test_relative_diffs_preserves_chunk_size(self) -> None:
+        """Relative diff+diff preserves chunk size."""
+        diff1 = SnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="file1.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=64 * 1024 * 1024,
+        )
+        diff2 = SnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="file2.txt", hash="h2", size=200, mtime=2000)],
+            total_size=200,
+            file_chunk_size_bytes=64 * 1024 * 1024,
+        )
+
+        result = compose_manifests([diff1, diff2])
+
+        assert isinstance(result, SnapshotDiff)
+        assert result.fileChunkSizeBytes == 64 * 1024 * 1024
