@@ -434,6 +434,8 @@ class _TaskBasedPipeline:
         """Submit a work item to start processing through the pipeline."""
         with self._lock:
             self._pending_count += 1
+            # Clear done event in case it was set (e.g., when re-queuing items)
+            self._done_event.clear()
         # Start with combined READ+HASH stage in the read_hash pool
         self._read_hash_executor.submit(self._do_read_and_hash, item)
 
@@ -596,16 +598,9 @@ class _TaskBasedPipeline:
         # Get items to re-queue before invalidation
         items_to_requeue = self._s3_cache_validation.invalidate()
 
-        # Delete the S3 check cache database
-        if (
-            isinstance(self._data_cache, S3DataCache)
-            and self._data_cache.s3_check_cache is not None
-        ):
-            try:
-                self._data_cache.s3_check_cache.remove_cache()
-                logger.info("S3 check cache database deleted due to stale entries")
-            except Exception as e:
-                logger.warning(f"Failed to delete S3 check cache: {e}")
+        # Note: We don't delete the cache database here because other threads may still
+        # be using it. The cache is marked as invalidated, so subsequent checks will
+        # bypass it. The caller should delete the cache after the pipeline completes.
 
         # Re-queue skipped items
         for item in items_to_requeue:
@@ -619,6 +614,12 @@ class _TaskBasedPipeline:
             # Re-submit to pipeline
             self.submit(item)
             logger.debug(f"Re-queued item after cache invalidation: {item.file_path}")
+
+    def was_cache_invalidated(self) -> bool:
+        """Check if the S3 cache was invalidated during pipeline execution."""
+        if self._s3_cache_validation is None:
+            return False
+        return self._s3_cache_validation.is_invalidated()
 
     def _do_read_and_hash(self, item: PipelineWorkItem) -> None:
         """
@@ -1139,8 +1140,13 @@ class _TaskBasedPipeline:
         s3_key = self._data_cache.get_object_key(item.chunk_hash, self._hash_alg.value)
         cache_key = f"{self._data_cache.s3_bucket}/{s3_key}"
 
-        # Check S3 cache first (unless force_s3_check is True)
-        if not self._data_cache.force_s3_check and self._data_cache.s3_check_cache is not None:
+        # Check S3 cache first (unless force_s3_check is True or cache was invalidated)
+        cache_invalidated = self.was_cache_invalidated()
+        if (
+            not self._data_cache.force_s3_check
+            and not cache_invalidated
+            and self._data_cache.s3_check_cache is not None
+        ):
             cache_entry = self._data_cache.s3_check_cache.get_entry(cache_key)
             if cache_entry is not None:
                 item.skipped = True
@@ -1157,8 +1163,8 @@ class _TaskBasedPipeline:
         else:
             logger.debug(f"Skipping upload (exists): {s3_key}")
 
-        # Update S3 check cache
-        if self._data_cache.s3_check_cache is not None:
+        # Update S3 check cache (only if not invalidated)
+        if not cache_invalidated and self._data_cache.s3_check_cache is not None:
             self._data_cache.s3_check_cache.put_entry(
                 S3CheckCacheEntry(s3_key=cache_key, last_seen_time=str(time.time()))
             )
@@ -1610,6 +1616,14 @@ class _TaskBasedPipeline:
                 raise
 
 
+@dataclass
+class _PipelineResult:
+    """Result from running the pipeline."""
+
+    items: List[PipelineWorkItem]
+    cache_invalidated: bool
+
+
 def _run_pipeline(
     work_items: List[PipelineWorkItem],
     hash_alg: HashAlgorithm,
@@ -1620,7 +1634,7 @@ def _run_pipeline(
     progress_tracker: Optional[ProgressTracker],
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
-) -> List[PipelineWorkItem]:
+) -> _PipelineResult:
     """
     Run the pipeline on work items using separate thread pools for each stage.
 
@@ -1646,10 +1660,10 @@ def _run_pipeline(
         force_rehash: If True, ignore hash cache
 
     Returns:
-        List of processed work items with hashes filled in
+        _PipelineResult with processed work items and cache invalidation status
     """
     if not work_items:
-        return []
+        return _PipelineResult(items=[], cache_invalidated=False)
 
     # Create memory pool
     memory_pool = _MemoryPool(max_memory_bytes)
@@ -1675,7 +1689,11 @@ def _run_pipeline(
                 pipeline.submit(item)
 
             # Wait for completion and return results
-            return pipeline.wait_for_completion()
+            items = pipeline.wait_for_completion()
+            return _PipelineResult(
+                items=items,
+                cache_invalidated=pipeline.was_cache_invalidated(),
+            )
 
 
 def hash_upload_abs_manifest(
@@ -1874,9 +1892,9 @@ def hash_upload_abs_manifest(
     ] = {}  # cache_key -> hash or {chunk_idx -> hash}
 
     # Run the unified pipeline (cache checks are parallelized in worker threads)
-    pipeline_results: List[PipelineWorkItem] = []
+    pipeline_result = _PipelineResult(items=[], cache_invalidated=False)
     if all_work_items:
-        pipeline_results = _run_pipeline(
+        pipeline_result = _run_pipeline(
             work_items=all_work_items,
             hash_alg=manifest.hashAlg,
             data_cache=data_cache,
@@ -1888,13 +1906,22 @@ def hash_upload_abs_manifest(
             force_rehash=force_rehash,
         )
 
+    # If S3 cache was invalidated during pipeline, delete the cache database now
+    if pipeline_result.cache_invalidated:
+        if isinstance(data_cache, S3DataCache) and data_cache.s3_check_cache is not None:
+            try:
+                data_cache.s3_check_cache.remove_cache()
+                logger.info("S3 check cache database deleted due to stale entries")
+            except Exception as e:
+                logger.warning(f"Failed to delete S3 check cache: {e}")
+
     # Process results and update caches
     # Track skipped vs processed statistics
     skipped_files_set: set = set()
     skipped_bytes = 0
     processed_bytes = 0
 
-    for item in pipeline_results:
+    for item in pipeline_result.items:
         if isinstance(item, _StreamingWorkItem):
             if item.file_hash is not None:
                 cached_results[item.cache_key] = item.file_hash
@@ -1963,7 +1990,7 @@ def hash_upload_abs_manifest(
         if cache_key in skipped_files_set:
             # Check if ALL chunks of this file were skipped
             all_skipped = all(
-                item.skipped for item in pipeline_results if item.cache_key == cache_key
+                item.skipped for item in pipeline_result.items if item.cache_key == cache_key
             )
             if all_skipped:
                 skipped_files += 1
