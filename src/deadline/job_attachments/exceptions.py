@@ -183,3 +183,12 @@ class VFSRunPathNotSetError(JobAttachmentsError):
     """
     Exception for when the run path hasn't been set for the vfs
     """
+
+
+class ManifestHashMismatchError(JobAttachmentsError):
+    """
+    Exception raised when comparing manifests with incompatible hash states.
+
+    This occurs when one manifest has hashes computed but the other does not,
+    and ignore_hashes is False.
+    """

@@ -39,6 +39,27 @@ from .._manifest import (
     ManifestFilePath,
     SnapshotDiff,
 )
+from ...exceptions import ManifestHashMismatchError
+
+
+def _manifest_is_hashed(manifest: AnySnapshot) -> bool | None:
+    """
+    Check if a manifest has hashes computed for all regular files.
+
+    Returns:
+        True: All regular files have hashes (hash or chunkhashes set)
+        False: At least one regular file is missing hashes
+        None: No regular files to check (empty or symlinks only) - compatible with either
+    """
+    has_regular_files = False
+    for entry in manifest.files:
+        if entry.deleted or entry.symlink_target is not None:
+            continue
+        has_regular_files = True
+        if entry.hash is None and entry.chunkhashes is None:
+            return False
+    return True if has_regular_files else None
+
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +172,8 @@ def diff_snapshots(
 
     Raises:
         ValueError: If path types don't match (both absolute or both relative)
+        ManifestHashMismatchError: If one manifest is hashed and the other is not,
+                                   and ignore_hashes is False
     """
     # Validate path types match
     parent_is_abs = isinstance(parent, AbsSnapshot)
@@ -160,6 +183,23 @@ def diff_snapshots(
             "Parent and current manifests must have the same path type "
             "(both absolute or both relative)"
         )
+
+    # Validate hash state compatibility
+    # None means empty/symlinks-only manifest, compatible with either hashed or unhashed
+    if not ignore_hashes:
+        parent_hashed = _manifest_is_hashed(parent)
+        current_hashed = _manifest_is_hashed(current)
+        if (
+            parent_hashed is not None
+            and current_hashed is not None
+            and parent_hashed != current_hashed
+        ):
+            raise ManifestHashMismatchError(
+                "Cannot compare hashed and unhashed manifests. "
+                f"Parent is {'hashed' if parent_hashed else 'unhashed'}, "
+                f"current is {'hashed' if current_hashed else 'unhashed'}. "
+                "Either hash both manifests or set ignore_hashes=True."
+            )
 
     return _diff_snapshots(
         parent=parent,

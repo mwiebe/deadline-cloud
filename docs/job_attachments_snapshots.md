@@ -1946,6 +1946,21 @@ def diff_snapshots(
 2. Both manifests should be filtered with the same patterns
 3. Both manifests should have hashes computed (unless `ignore_hashes=True`)
 
+**Hash State Validation:**
+
+When `ignore_hashes=False`, the function validates that both manifests have compatible hash states:
+
+| Parent State | Current State | Result |
+|--------------|---------------|--------|
+| Hashed | Hashed | ✓ Comparison proceeds |
+| Unhashed | Unhashed | ✓ Comparison proceeds |
+| Empty/symlinks-only | Any | ✓ Comparison proceeds |
+| Any | Empty/symlinks-only | ✓ Comparison proceeds |
+| Hashed | Unhashed | ✗ Raises `ManifestHashMismatchError` |
+| Unhashed | Hashed | ✗ Raises `ManifestHashMismatchError` |
+
+Empty manifests and manifests containing only symlinks are considered compatible with either hashed or unhashed manifests, since they have no regular files whose hash state could conflict.
+
 **Comparison modes:**
 
 | Mode | `ignore_hashes` | Comparison Fields |

@@ -844,3 +844,166 @@ class TestDirectoryDeletionSemantics:
         deleted_dirs = {d.path for d in diff.dirs if d.deleted}
         assert "/deleted_dir" in deleted_dirs
         assert "/deleted_dir/subdir" in deleted_dirs
+
+
+class TestHashStateValidation:
+    """Tests for hash state validation in diff_snapshots."""
+
+    def _create_manifest(self, files: List[dict], dirs: List[dict] | None = None) -> AbsSnapshot:
+        """Helper to create an AbsSnapshot."""
+        file_entries = [ManifestFilePath(**f) for f in files]
+        dir_entries = [ManifestDirectoryPath(**d) for d in (dirs or [])]
+        total_size = sum(
+            f.get("size", 0) or 0
+            for f in files
+            if not f.get("deleted") and not f.get("symlink_target")
+        )
+        return AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=dir_entries,
+            files=file_entries,
+            total_size=total_size,
+        )
+
+    def test_both_hashed_succeeds(self) -> None:
+        """Both manifests hashed - comparison succeeds."""
+        parent = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash2", "size": 100, "mtime": 2000}]
+        )
+
+        diff = diff_snapshots(parent, current)
+        assert len(diff.files) == 1
+
+    def test_both_unhashed_succeeds(self) -> None:
+        """Both manifests unhashed - comparison succeeds."""
+        parent = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 1000}])
+        current = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 2000}])
+
+        diff = diff_snapshots(parent, current)
+        # Different mtime means modified
+        assert len(diff.files) == 1
+
+    def test_hashed_vs_unhashed_raises_error(self) -> None:
+        """Hashed parent vs unhashed current raises ManifestHashMismatchError."""
+        from deadline.job_attachments.exceptions import ManifestHashMismatchError
+
+        parent = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 2000}])
+
+        with pytest.raises(ManifestHashMismatchError) as exc_info:
+            diff_snapshots(parent, current)
+
+        assert "hashed" in str(exc_info.value)
+        assert "unhashed" in str(exc_info.value)
+
+    def test_unhashed_vs_hashed_raises_error(self) -> None:
+        """Unhashed parent vs hashed current raises ManifestHashMismatchError."""
+        from deadline.job_attachments.exceptions import ManifestHashMismatchError
+
+        parent = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 1000}])
+        current = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 2000}]
+        )
+
+        with pytest.raises(ManifestHashMismatchError) as exc_info:
+            diff_snapshots(parent, current)
+
+        assert "hashed" in str(exc_info.value)
+        assert "unhashed" in str(exc_info.value)
+
+    def test_ignore_hashes_bypasses_validation(self) -> None:
+        """ignore_hashes=True allows comparing hashed vs unhashed."""
+        parent = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+        current = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 2000}])
+
+        # Should not raise
+        diff = diff_snapshots(parent, current, ignore_hashes=True)
+        assert len(diff.files) == 1
+
+    def test_symlinks_ignored_in_hash_check(self) -> None:
+        """Symlinks don't affect hash state determination."""
+        # Parent has hashed file + symlink, current has unhashed file + symlink
+        parent = self._create_manifest(
+            [
+                {"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000},
+                {"path": "/link", "symlink_target": "/target"},
+            ]
+        )
+        current = self._create_manifest(
+            [
+                {"path": "/file.txt", "hash": "hash2", "size": 100, "mtime": 2000},
+                {"path": "/link", "symlink_target": "/target"},
+            ]
+        )
+
+        # Both have hashed regular files, so should succeed
+        diff = diff_snapshots(parent, current)
+        assert len(diff.files) == 1
+
+    def test_empty_manifests_succeed(self) -> None:
+        """Empty manifests are considered compatible."""
+        parent = self._create_manifest([])
+        current = self._create_manifest([])
+
+        diff = diff_snapshots(parent, current)
+        assert len(diff.files) == 0
+
+    def test_empty_vs_hashed_succeeds(self) -> None:
+        """Empty manifest compares correctly against hashed manifest."""
+        empty = self._create_manifest([])
+        hashed = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+
+        # Both directions should work
+        diff = diff_snapshots(empty, hashed)
+        assert len(diff.files) == 1  # new file
+
+        diff = diff_snapshots(hashed, empty)
+        assert len(diff.files) == 1  # deleted file
+
+    def test_empty_vs_unhashed_succeeds(self) -> None:
+        """Empty manifest compares correctly against unhashed manifest."""
+        empty = self._create_manifest([])
+        unhashed = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 1000}])
+
+        # Both directions should work
+        diff = diff_snapshots(empty, unhashed)
+        assert len(diff.files) == 1  # new file
+
+        diff = diff_snapshots(unhashed, empty)
+        assert len(diff.files) == 1  # deleted file
+
+    def test_symlink_only_manifests_succeed(self) -> None:
+        """Manifests with only symlinks are considered compatible."""
+        parent = self._create_manifest([{"path": "/link1", "symlink_target": "/target1"}])
+        current = self._create_manifest([{"path": "/link2", "symlink_target": "/target2"}])
+
+        diff = diff_snapshots(parent, current)
+        # link1 deleted, link2 added
+        assert len(diff.files) == 2
+
+    def test_symlink_only_vs_hashed_succeeds(self) -> None:
+        """Symlink-only manifest compares correctly against hashed manifest."""
+        symlink_only = self._create_manifest([{"path": "/link", "symlink_target": "/target"}])
+        hashed = self._create_manifest(
+            [{"path": "/file.txt", "hash": "hash1", "size": 100, "mtime": 1000}]
+        )
+
+        diff = diff_snapshots(symlink_only, hashed)
+        assert len(diff.files) == 2  # link deleted, file added
+
+    def test_symlink_only_vs_unhashed_succeeds(self) -> None:
+        """Symlink-only manifest compares correctly against unhashed manifest."""
+        symlink_only = self._create_manifest([{"path": "/link", "symlink_target": "/target"}])
+        unhashed = self._create_manifest([{"path": "/file.txt", "size": 100, "mtime": 1000}])
+
+        diff = diff_snapshots(symlink_only, unhashed)
+        assert len(diff.files) == 2  # link deleted, file added
