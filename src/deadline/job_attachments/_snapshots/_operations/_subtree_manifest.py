@@ -302,6 +302,7 @@ def _subtree_manifest(
             dirs=result_dirs,
             files=result_paths,
             total_size=total_size,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
     else:
         return SnapshotDiff(
@@ -309,6 +310,7 @@ def _subtree_manifest(
             dirs=result_dirs,
             files=result_paths,
             total_size=total_size,
+            file_chunk_size_bytes=manifest.fileChunkSizeBytes,
         )
 
 

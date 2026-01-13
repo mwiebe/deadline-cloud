@@ -32,6 +32,7 @@ from deadline.job_attachments._snapshots._operations._subtree_manifest import (
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
     AbsSnapshot,
+    AbsSnapshotDiff,
     Snapshot,
     SnapshotDiff,
     ManifestFilePath,
@@ -1477,3 +1478,63 @@ class TestSubtreeInvariant:
 
         # Verify the symlink was collapsed
         assert ("link", "h1", 100) in single_paths
+
+
+class TestSubtreeFileChunkSizePreservation:
+    """Tests for fileChunkSizeBytes preservation in subtree_manifest."""
+
+    def test_preserves_chunk_size_abs_snapshot(self) -> None:
+        """subtree_manifest preserves fileChunkSizeBytes for AbsSnapshot."""
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/root/subdir/file.txt", hash="h1", size=100, mtime=1000)],
+            dirs=[ManifestDirectoryPath(path="/root/subdir")],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+
+        result = subtree_manifest(manifest, "/root/subdir")
+
+        assert result.fileChunkSizeBytes == 128 * 1024 * 1024
+
+    def test_preserves_chunk_size_abs_diff(self) -> None:
+        """subtree_manifest preserves fileChunkSizeBytes for AbsSnapshotDiff."""
+        manifest = AbsSnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="/root/subdir/file.txt", hash="h1", size=100, mtime=1000)],
+            dirs=[ManifestDirectoryPath(path="/root/subdir")],
+            total_size=100,
+            file_chunk_size_bytes=64 * 1024 * 1024,
+        )
+
+        result = subtree_manifest(manifest, "/root/subdir")
+
+        assert result.fileChunkSizeBytes == 64 * 1024 * 1024
+
+    def test_preserves_chunk_size_rel_snapshot(self) -> None:
+        """subtree_manifest preserves fileChunkSizeBytes for Snapshot."""
+        manifest = Snapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000)],
+            dirs=[ManifestDirectoryPath(path="subdir")],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,
+        )
+
+        result = subtree_manifest(manifest, "subdir")
+
+        assert result.fileChunkSizeBytes == 128 * 1024 * 1024
+
+    def test_preserves_chunk_size_rel_diff(self) -> None:
+        """subtree_manifest preserves fileChunkSizeBytes for SnapshotDiff."""
+        manifest = SnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[ManifestFilePath(path="subdir/file.txt", hash="h1", size=100, mtime=1000)],
+            dirs=[ManifestDirectoryPath(path="subdir")],
+            total_size=100,
+            file_chunk_size_bytes=64 * 1024 * 1024,
+        )
+
+        result = subtree_manifest(manifest, "subdir")
+
+        assert result.fileChunkSizeBytes == 64 * 1024 * 1024
