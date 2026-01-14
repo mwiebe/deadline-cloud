@@ -122,6 +122,72 @@ ContentAddressedDataCache
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Relationship to Existing Job Attachments Implementation
+
+#### The BaseAssetManifest class
+
+The snapshots design uses new, independent manifest classes. We can implement conversion functions
+that convert a BaseAssetManifest to and from a Snapshot or a SnapshotDiff type. Because the
+BaseAssetManifest is used for both cases in the prior code, we need a way to select the correct
+one depending on context.
+
+#### Progress tracking
+
+The current job attachments code uses different progress tracking interfaces than `hash_upload_abs_manifest()`
+and `download_abs_manifest()`. We can write adaptor classes to facilitate refactoring, and
+plan to later switch the interfaces by releasing a breaking change.
+
+#### upload.py S3AssetManager.prepare_paths_for_upload()
+
+This is likely the place we can start refactoring. This function accepts the input paths, including
+files, directories, and referenced paths. The `collect_abs_snapshot()` function can collect all
+the inputs into a single AbsSnapshot object, and the `partition_manifest()` function can divide up
+the collected result into a list of (abs_root, Snapshot) pairs, which is pretty close to
+what `prepare_paths_for_upload()` returns.
+
+#### upload.py S3AssetUploader.upload_input_files()
+
+We can replace this with `hash_upload_abs_manifest()` using an `S3DataCache`. If we refactor this
+early, we can use `join_manifest()` and `manifest.clear_hashes()` to adapt the relative paths and
+remove the hashes. Ideally we refactor this later, so that we can call `hash_upload_abs_manifest()`
+once on the entire dataset that we're uploading all at once.
+
+#### upload.py S3AssetManager._create_manifest_file()
+
+This function collects and hashes files for a single root of a `deadline bundle submit` operation,
+into a relative-path manifest. While this could be achieved with `collect_abs_snapshot()`
+followed by `hash_abs_manifest()`, we don't want to refactor it this way. We want our `collect_abs_snapshot()`
+to happen earlier in the job submission flow, and use `partition_manifest()` to determine
+the groupings for each root. Therefore refactoring this function comes later.
+
+#### upload.py S3AssetUploader._snapshot_input_files()
+
+This is for the `deadline bundle submit --debug-snapshot` command. It can be replaced with
+a `hash_upload_abs_manifest()` call using the FileSystemDataCache. Before this will work,
+other refactoring needs to happen to structure the manifests that are provided as input here.
+
+#### download.py download_file()
+
+We won't need this anymore, downloading an individual file is handled within `download_abs_manifest()`
+and we can refactor at a higher level.
+
+#### download.py _download_files_parallel()
+
+The implementation of `download_abs_manifest()` has a full multi-threaded download that we can
+use with `S3DataCache`. We likely want to refactor at a higher manifest level instead of at this
+function.
+
+#### download.py download_files_from_manifests()
+
+This can be replaced with `download_abs_manifest()` after suitable adaptation of the inputs.
+First we would convert each manifest to use absolute paths with `join_manifest()` by joining
+it with its root absolute path, and then we would use `compose_manifest()` to layer them all
+into a single absolute manifest. That is then something we can provide to `download_abs_manfiest()`.
+
+#### download.py merge_asset_manifests()
+
+This can be replaced with `compose_manifests()`.
+
 ### Example Performance Measurement
 
 Here's an example performance measurement from an EC2 instance against S3 in the same region.
