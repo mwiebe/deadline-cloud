@@ -209,21 +209,25 @@ Separating structure collection, hashing, and hashing+uploading enables:
    and use the data where it makes sense.
 2. File system operations only work with absolute path manifests. This simplifies the definition and implementation
    of these operations. Conversion to/from relative path manifests is via the SUBTREE and JOIN operations.
-3. **Support v2023 on-disk format via lossy conversion.** When serializing to v2023 format, the following occurs:
+3. Path separators are always POSIX forward slash '/' in manifest path strings. E.g. on Windows,
+   an absolute path can look like "C:/path/to/file.txt". On Windows, operations should convert '\\'
+   path separators to '/', while on POSIX operations should preserve '\\' within file and directory names.
+4. Symlink targets are always absolute paths, or always relative to the same root that file and directory
+   paths are relative to. This is different than symlink representations on file systems, where they are
+   relative to the symlink's parent directory.
+5. In diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
+   This is necessary for the COMPOSE operation to correctly compose multiple diffs. When applying a diff,
+   a directory deletion means to delete the directory if it is empty, not to recursively delete its contents.
+6. There is no operation that uploads a hashed manifest. When we perform an upload, we always hash the data
+   on its way into the content-addressed data cache in order to guarantee that it always satisfies that hashing
+   the data stored for a hash key always equals that hash. Currently hash_upload requires that the provided manifest
+   has no hashes, but we could add a mode to it that validates existing hashes and fails if the content differs.
+7. **Support v2023 on-disk format via lossy conversion.** When serializing to v2023 format, the following occurs:
    - Symlinks are collapsed to files/directories or excluded (symlink_policy decides)
    - Empty directories are not preserved
    - Deletions are not preserved
    - Chunk size must be set to WHOLE_FILE_CHUNK_SIZE.
    - Runnable flags are not preserved
-4. Path separators are always POSIX forward slash '/' in manifest path strings. E.g. on Windows,
-   an absolute path can look like "C:/path/to/file.txt". On Windows, operations should convert '\\'
-   path separators to '/', while on POSIX operations should preserve '\\' within file and directory names.
-5. Symlink targets are always absolute paths, or always relative to the same root that file and directory
-   paths are relative to. This is different than symlink representations on file systems, where they are
-   relative to the symlink's parent directory.
-6. In diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
-   This is necessary for the COMPOSE operation to correctly compose multiple diffs. When applying a diff,
-   a directory deletion means to delete the directory if it is empty, not to recursively delete its contents.
 
 ## Module Organization
 
@@ -998,7 +1002,7 @@ The operation uses two thread pools connected by a bounded memory pool:
 **Multipart Upload Conditions (S3 only):**
 
 Multipart upload is used when:
-- Uploading to `S3DataCache` (not `FileSystemDataCache`)  
+- Uploading to `S3DataCache` (not `FileSystemDataCache`)
 - Chunk size >= `2 * multipart_part_size` (default threshold: 64MB with 32MB parts)
 - For streaming files (> `max_memory_bytes`), file size > multipart threshold
 
@@ -1361,19 +1365,19 @@ The `_TaskBasedPipeline` class tracks validation state:
 @dataclass
 class _S3CacheValidationState:
     """Tracks probabilistic S3 cache validation during upload."""
-    
+
     # Counters for sampling decision
     cache_hit_count: int = 0  # Total items where cache said "exists"
-    
+
     # Validation results
     cache_invalidated: bool = False  # Set True on first validation failure
-    
+
     # Items to retry if cache is invalidated
     skipped_items: List[PipelineWorkItem] = field(default_factory=list)
-    
+
     # Lock for thread-safe updates
     lock: threading.Lock = field(default_factory=threading.Lock)
-    
+
     def should_verify(self) -> bool:
         """Determine if this cache hit should be verified with HeadObject."""
         with self.lock:
