@@ -110,12 +110,15 @@ def join_manifest(
 
     # Determine output type based on prefix (absolute vs relative) and input type (snapshot vs diff)
     output_type = _get_output_manifest_type(manifest, prefix)
+
+    # Note: parentManifestHash is NOT preserved because joining a prefix changes the root,
+    # making the original parent manifest hash invalid for the new path structure.
     return output_type(
         hash_alg=manifest.hashAlg,
         dirs=result_dirs,
         files=result_paths,
         total_size=manifest.totalSize,
-        parent_manifest_hash=manifest.parentManifestHash,
+        file_chunk_size_bytes=manifest.fileChunkSizeBytes,
     )
 
 

@@ -825,7 +825,6 @@ def test_hash_upload_s3(
     # ProgressReportMetadata has: progress (%), transferRate, progressMessage, processedFiles
     # We track percentage and estimate bytes from it
     total_bytes = manifest.totalSize
-    total_files = len(manifest.files)
     progress_state = {"pct": 0.0, "last_print": time.perf_counter()}
 
     def on_progress(metadata) -> bool:

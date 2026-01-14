@@ -335,8 +335,8 @@ class TestJoinManifestDiff:
         assert result.dirs[0].path == "prefix/old_dir"
         assert result.dirs[0].deleted is True
 
-    def test_preserves_parent_manifest_hash(self) -> None:
-        """Parent manifest hash is preserved."""
+    def test_does_not_preserve_parent_manifest_hash(self) -> None:
+        """Parent manifest hash is NOT preserved (paths are re-rooted)."""
         manifest = SnapshotDiff(
             hash_alg=HashAlgorithm.XXH128,
             dirs=[],
@@ -347,7 +347,23 @@ class TestJoinManifestDiff:
 
         result = join_manifest(manifest, "prefix")
 
-        assert result.parentManifestHash == "parent_hash_123"
+        # parentManifestHash should NOT be preserved because joining a prefix
+        # changes the root, making the original parent hash invalid
+        assert result.parentManifestHash is None
+
+    def test_preserves_file_chunk_size_bytes(self) -> None:
+        """File chunk size bytes is preserved."""
+        manifest = SnapshotDiff(
+            hash_alg=HashAlgorithm.XXH128,
+            dirs=[],
+            files=[ManifestFilePath(path="file.txt", hash="h1", size=100, mtime=1000)],
+            total_size=100,
+            file_chunk_size_bytes=128 * 1024 * 1024,  # 128MB
+        )
+
+        result = join_manifest(manifest, "prefix")
+
+        assert result.fileChunkSizeBytes == 128 * 1024 * 1024
 
     def test_returns_rel_diff_snapshots_with_rel_prefix(self) -> None:
         """Joining SnapshotDiff with relative prefix returns SnapshotDiff."""

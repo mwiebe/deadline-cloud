@@ -19,6 +19,22 @@ The library provides four concrete manifest classes organized by two dimensions:
 - **Relative paths** (`Snapshot`, `SnapshotDiff`) - Paths relative to an unspecified root, portable across systems
 - **Absolute paths** (`AbsSnapshot`, `AbsSnapshotDiff`) - Full filesystem paths, required for file system operations
 
+**Path Normalization:**
+
+Within a single manifest, all paths (file paths, directory paths, and symlink targets) share these properties:
+- All paths use the same style—either all absolute, or all relative to the same root
+- Paths are normalized and cannot contain `.` or `..` components
+- Path separators are always forward slash `/` (even on Windows, e.g., `C:/path/to/file.txt`)
+- Windows long-path prefix (`//?/`) is stripped during normalization
+
+**Windows Absolute Paths:**
+
+Windows absolute paths in manifests can take two forms:
+- Drive letter paths: `X:/path/to/file.txt`
+- UNC paths: `//server/share/path/to/file.txt`
+
+Note that UNC paths use forward slashes like all other manifest paths (not the native `\\server\share` format).
+
 **Manifest Type:**
 - **Snapshot** - Complete point-in-time capture of a directory tree
 - **Diff** - Changes between two snapshots (additions, modifications, deletions)
@@ -70,10 +86,10 @@ ContentAddressedDataCache
 │  2. HASH: AbsManifest → AbsManifest                                     │
 │         Computes hashes for all files in the manifest.                  │
 │                                                                         │
-│  3. HASH_UPLOAD: (AbsManifest, DataCache) → UploadResult                │
+│  3. HASH_UPLOAD: (AbsManifest, ContentAddressedDataCache) → UploadResult│
 │         Hashes files and uploads them to a data cache.                  │
 │                                                                         │
-│  4. DOWNLOAD: (AbsManifest, DataCache) → DownloadResult                 │
+│  4. DOWNLOAD: (AbsManifest, ContentAddressedDataCache) → DownloadResult │
 │         Downloads files from a data cache to local filesystem.          │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -274,21 +290,53 @@ class S3DataCache(ContentAddressedDataCache):
     s3_key_prefix: str
     s3_client: Any  # boto3 S3 client with permissions for GetObject, PutObject, HeadObject
     s3_check_cache: Optional[S3CheckCache] = field(default=None)
+    multipart_part_size: int = field(default=32 * 1024 * 1024)  # 32MB default
     force_s3_check: bool = field(default=False)
+    account_id: Any = field(default=None)  # None = auto-detect, NO_ACCOUNT_ID_CHECK = disable
+
+    @property
+    def expected_bucket_owner(self) -> Optional[str]:
+        """Returns the account ID to use for ExpectedBucketOwner, or None if disabled."""
+        ...
 
     def get_object_key(self, hash_value: str, algorithm: str) -> str:
+        """Returns the S3 key for a given hash."""
         return f"{self.s3_key_prefix}/{hash_value}.{algorithm}"
 
-    def object_exists(self, hash_value: str, algorithm: str) -> bool:
-        key = self.get_object_key(hash_value, algorithm)
-        cache_key = f"{self.s3_bucket}/{key}"
-        # Check local cache first (unless force_s3_check is True)
-        if not self.force_s3_check and self.s3_check_cache is not None:
-            cache_entry = self.s3_check_cache.get_entry(cache_key)
-            if cache_entry is not None:
-                return True
-        # Fall back to S3 HeadObject
+    def get_cache_key(self, hash_value: str, algorithm: str) -> str:
+        """Returns the cache key for a given hash (bucket/key format)."""
+        return f"{self.s3_bucket}/{self.get_object_key(hash_value, algorithm)}"
+
+    def get_check_cache_entry(self, hash_value: str, algorithm: str) -> Optional[S3CheckCacheEntry]:
+        """Check if hash exists in the S3 check cache (without HeadObject)."""
         ...
+
+    def head_object_exists(self, hash_value: str, algorithm: str) -> bool:
+        """Check if object exists in S3 using HeadObject (bypassing cache)."""
+        ...
+
+    def object_exists(self, hash_value: str, algorithm: str) -> bool:
+        """Check local cache first, then fall back to HeadObject."""
+        ...
+
+**Fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `s3_bucket` | `str` | (required) | The S3 bucket name |
+| `s3_key_prefix` | `str` | (required) | Key prefix for content-addressable storage (e.g., `"Data"`) |
+| `s3_client` | boto3 S3 client | (required) | Client with GetObject, PutObject, HeadObject permissions |
+| `s3_check_cache` | `Optional[S3CheckCache]` | `None` | Cache to avoid redundant S3 existence checks |
+| `multipart_part_size` | `int` | 32MB | Part size for multipart uploads/downloads |
+| `force_s3_check` | `bool` | `False` | If True, skip s3_check_cache and always make HeadObject calls |
+| `account_id` | `Any` | `None` | AWS account ID for ExpectedBucketOwner. `None` = auto-detect from credentials. `NO_ACCOUNT_ID_CHECK` = disable the check. |
+
+**Account ID Handling:**
+
+The `account_id` field controls the `ExpectedBucketOwner` parameter on S3 API calls, which prevents confused deputy attacks:
+- `None` (default): Auto-detect from credentials at construction time
+- `NO_ACCOUNT_ID_CHECK`: Disable ExpectedBucketOwner checks entirely
+- String value: Use the provided account ID
 
 
 @dataclass
@@ -359,6 +407,133 @@ def collect_abs_snapshot(
 | `TRANSITIVE_INCLUDE_TARGETS` | Keep all symlinks and add their targets to the manifest. |
 | `EXCLUDE_ALL` | Skip all symlinks entirely. |
 | `EXCLUDE_ESCAPING` | Preserve symlinks whose targets are within the collected paths; exclude symlinks whose targets are outside (escaping symlinks). |
+
+**Symlink Collapsing Behavior:**
+
+When a symlink is collapsed (via `COLLAPSE_ALL` or `COLLAPSE_ESCAPING`), it is replaced with the actual content at its target location. The behavior depends on whether the target is a file or directory:
+
+*File symlink collapsing:*
+- The symlink entry is replaced with a regular file entry
+- The file's metadata (size, mtime, runnable) comes from the target file
+- The entry's path remains the symlink's path (not the target's path)
+
+*Directory symlink collapsing:*
+- The symlink is replaced with the entire directory tree at the target location
+- All entries appear under the symlink's path, not the target's path (path translation)
+- Nested symlinks within the collapsed directory are handled recursively:
+  - If a nested symlink points within the same collapsed directory → preserve it with translated target
+  - If a nested symlink points outside the collapsed directory → collapse it recursively
+
+*Example - Directory symlink collapsing with nested symlinks:*
+
+```
+/project/                        # Being collected
+└── assets -> /external/v2       # Directory symlink to collapse
+
+/external/v2/
+├── model.obj
+├── current -> textures/wood.png # Points within collapsed dir
+└── textures/
+    ├── wood.png
+    └── shared -> /library/tex   # Points outside collapsed dir
+
+/library/tex/
+└── metal.png
+```
+
+After collapsing `/project/assets`:
+- `/project/assets/model.obj` (file)
+- `/project/assets/current` → `/project/assets/textures/wood.png` (symlink, target translated)
+- `/project/assets/textures/wood.png` (file)
+- `/project/assets/textures/shared/metal.png` (file, recursively collapsed)
+
+The nested symlink `current` is preserved because its target is within the collapsed directory (translated from `/external/v2/textures/wood.png` to `/project/assets/textures/wood.png`). The nested symlink `shared` is recursively collapsed because its target escapes the collapsed directory.
+
+**Escaping Symlink Detection Algorithm:**
+
+For `COLLAPSE_ESCAPING` and `EXCLUDE_ESCAPING` policies, the COLLECT operation uses a two-pass algorithm to determine which symlinks are "escaping" (pointing outside the collected paths):
+
+*Pass 1 - Build the collected set:*
+1. Walk all directories and collect all non-symlink files and directories
+2. Collect all non-symlink files from `filenames` and `optional_filenames`
+3. Defer all symlinks encountered for later processing
+4. The result is a set of all collected paths (the "collected set")
+
+*Pass 2 - Process deferred symlinks:*
+For each deferred symlink, resolve its target (without following symlink chains) and check if the target is within the collected set:
+
+```python
+def is_escaping(symlink_target: Path, collected_set: Set[str]) -> bool:
+    target_posix = symlink_target.as_posix()
+    # Direct match - target path itself was collected
+    if target_posix in collected_set:
+        return False
+    # Prefix match - target is under a collected directory
+    for collected_path in collected_set:
+        if target_posix.startswith(collected_path + "/"):
+            return False
+    return True
+```
+
+- If the target is in the collected set → preserve the symlink
+- If the target escapes → collapse (inline the target's contents) or exclude, based on policy
+
+*Why two passes?*
+
+A single-pass approach cannot correctly identify escaping symlinks because the full collected set isn't known until all paths are visited. Consider:
+
+```
+/project/
+├── data/
+│   └── file.txt
+└── link -> data/file.txt    # Is this escaping?
+```
+
+If we process `link` before `data/file.txt`, we don't yet know that `data/file.txt` will be collected. The two-pass approach ensures we have the complete picture before making escaping decisions.
+
+**Transitive Include Targets Algorithm:**
+
+The `TRANSITIVE_INCLUDE_TARGETS` policy preserves all symlinks and recursively collects their targets into the manifest. This ensures the manifest contains all data reachable through symlinks, regardless of where those targets are located on the filesystem.
+
+*Purpose and caller responsibility:*
+
+This policy collects all transitively reachable paths without restriction. The resulting manifest may contain paths from anywhere on the filesystem (e.g., `/usr/lib`, `/home/other_user`, etc.). It is the caller's responsibility to validate that the resulting paths are within acceptable boundaries before using the manifest.
+
+*Algorithm:*
+
+1. During the main collection pass, when a symlink is encountered:
+   - Preserve the symlink entry with its absolute target
+   - Queue the target path for transitive collection
+
+2. After the main pass, process queued transitive targets:
+   - If target is a file: add it to the manifest
+   - If target is a symlink: preserve it and queue its target (recursive)
+   - If target is a directory: walk it, preserving any nested symlinks and queuing their targets
+
+3. Continue until no new targets are queued (fixed-point)
+
+*Example:*
+
+```
+/project/                    # Being collected
+└── link1 -> /external/data
+
+/external/
+└── data/
+    ├── file.txt
+    └── link2 -> /other/resource
+
+/other/
+└── resource.bin
+```
+
+Result with `TRANSITIVE_INCLUDE_TARGETS`:
+- `/project/link1` (symlink → `/external/data`)
+- `/external/data/file.txt` (file)
+- `/external/data/link2` (symlink → `/other/resource`)
+- `/other/resource.bin` (file)
+
+All paths reachable through symlinks are included, preserving the symlink structure.
 
 **Symlink Cycle Handling:**
 
@@ -486,7 +661,18 @@ def hash_abs_manifest(
 
 **Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
 
-**Raises:** `ValueError` if the manifest contains relative paths
+**Raises:**
+- `ValueError` if the manifest contains relative paths
+- `ValueError` if any regular file entry already has a hash (is not unhashed)
+
+**Input Validation:**
+
+The HASH operation validates that all regular file entries are unhashed (`hash=None` and `chunkhashes=None`). This validation:
+- Prevents accidental re-hashing of already-hashed manifests
+- Ensures the operation is safe to call only once per manifest
+- Catches programming errors where a hashed manifest is passed incorrectly
+
+To re-hash a manifest (e.g., after file modifications), create a new manifest with `collect_abs_snapshot()` rather than passing an already-hashed manifest.
 
 **Hash cache behavior:**
 
@@ -495,6 +681,31 @@ def hash_abs_manifest(
 | `hash_cache` provided, `force_rehash=False` | Check cache by (path, mtime); use cached hash on hit |
 | `hash_cache` provided, `force_rehash=True` | Always compute hash, update cache |
 | `hash_cache` is None | Always compute hash |
+
+**Hash cache key resolution:**
+
+Cache keys are generated by resolving the file path using `Path.resolve()`, which:
+- Resolves any symlinks in the path components
+- Normalizes `.` and `..` components
+- Returns an absolute path
+
+This ensures that different paths referring to the same physical file (e.g., via symlinks or relative references) share the same cache entry.
+
+**Hash cache byte-range support:**
+
+The hash cache supports caching hashes for both whole files and arbitrary byte ranges, enabling efficient caching for any chunking scheme:
+
+| Entry Type | `range_start` | `range_end` | Description |
+|------------|---------------|-------------|-------------|
+| Whole-file | 0 | `WHOLE_FILE_RANGE_END` (-1) | Hash of entire file |
+| Byte-range | ≥ 0 | > 0 | Hash of bytes in range [start, end) |
+
+Cache entries are keyed by `(file_path, hash_algorithm, range_start, range_end)`. This allows:
+- Caching whole-file hashes alongside chunk hashes for the same file
+- Supporting different chunk sizes without cache invalidation
+- Reusing cached chunk hashes when chunk boundaries align
+
+When looking up or storing a hash, the `range_start` and `range_end` parameters specify which portion of the file the hash covers. The `WHOLE_FILE_RANGE_END` constant (-1) is a sentinel value indicating a whole-file hash.
 
 **Chunking behavior (controlled by `manifest.fileChunkSizeBytes`):**
 
@@ -732,7 +943,13 @@ Files are skipped when:
 1. The hash cache has the file's hash AND the data cache already contains that hash
 2. The HeadObject check finds the object already exists in S3
 
-**Raises:** `ValueError` if the manifest contains relative paths
+**Raises:**
+- `ValueError` if the manifest contains relative paths
+- `ValueError` if any regular file entry already has a hash (is not unhashed)
+
+**Input Validation:**
+
+Like the HASH operation, HASH_UPLOAD validates that all regular file entries are unhashed (`hash=None` and `chunkhashes=None`). This prevents accidental re-processing of already-hashed manifests and catches programming errors early.
 
 **Pipelined Architecture:**
 
@@ -808,12 +1025,39 @@ The multipart threshold is `2 * S3DataCache.multipart_part_size` (default: 64MB 
 
 **Multipart Upload Coordination (S3 only):**
 
-For files using multipart upload, the system:
-1. Creates S3 multipart upload session
-2. Submits each part as independent upload task to thread pool
-3. Tracks completion using atomic counters (similar to download pipeline)
-4. Last completing part calls `CompleteMultipartUpload` 
-5. On any error, calls `AbortMultipartUpload` for cleanup
+For files using multipart upload, the system uses two coordination structures:
+
+*`_MultipartUploadState` - Tracks the overall multipart upload:*
+
+| Field | Description |
+|-------|-------------|
+| `file_hash` | Final hash of the complete file |
+| `s3_key` | S3 object key for the upload |
+| `upload_id` | S3 multipart upload ID from `CreateMultipartUpload` |
+| `parts_remaining` | Atomic counter of parts still being uploaded |
+| `completed_parts` | List of `{"PartNumber": int, "ETag": str}` for `CompleteMultipartUpload` |
+| `part_hashes` | Per-part hashes for verification (streaming files only) |
+| `part_errors` | Errors from failed part uploads |
+| `lock` | Thread lock for safe concurrent updates |
+
+*`_MultipartPartWorkItem` - Represents a single part to upload:*
+
+| Field | Description |
+|-------|-------------|
+| `multipart_state` | Reference to the parent `_MultipartUploadState` |
+| `part_number` | 1-based part number for S3 |
+| `data` | Part content bytes to upload |
+| `expected_hash` | Hash for verification (streaming files only) |
+
+*Coordination flow:*
+
+1. **Initiate:** Create `_MultipartUploadState` with `CreateMultipartUpload`, set `parts_remaining` to total part count
+2. **Submit parts:** Create `_MultipartPartWorkItem` for each part, submit to upload thread pool
+3. **Part completion:** Each part uploads independently; on success, atomically:
+   - Append `{"PartNumber", "ETag"}` to `completed_parts`
+   - Decrement `parts_remaining`
+4. **Finalize:** The thread that decrements `parts_remaining` to 0 calls `CompleteMultipartUpload`
+5. **Error handling:** On any part failure, record error in `part_errors` and call `AbortMultipartUpload`
 
 **Streaming File Handling:**
 
@@ -1311,7 +1555,7 @@ Downloads files from a data cache (S3 or filesystem) to the local filesystem. Fo
 ```python
 def download_abs_manifest(
     manifest: AbsManifest,
-    data_cache: DataCache,
+    data_cache: ContentAddressedDataCache,
     *,
     hash_cache: Optional[HashCache] = None,
     file_conflict_resolution: FileConflictResolution = FileConflictResolution.OVERWRITE,
@@ -1544,32 +1788,50 @@ Example: To delete directory `/project/old_assets/` containing `model.obj` and `
 /project/old_assets/             (deleted=True, directory)
 ```
 
+**Interleaved Directory Creation:**
+
+The DOWNLOAD operation interleaves directory creation with file download submission for optimal performance:
+
+```python
+# Directories sorted by path (parents before children)
+for dir_path in sorted_dirs:
+    create_directory(dir_path)        # Create this directory
+    for entry in files_in_dir:        # Submit files in this directory
+        pipeline.submit_file(entry)   # Downloads start immediately
+```
+
+This approach provides two performance benefits:
+
+1. **Avoids redundant directory creation:** By sorting directories and creating them in order (parents before children), each directory is created exactly once. Without this, creating nested paths like `/a/b/c/file.txt` would redundantly create `/a`, `/a/b`, and `/a/b/c` for every file.
+
+2. **Maximizes parallelism:** Files are submitted for download as soon as their parent directory exists, rather than waiting for all directories to be created first. This allows downloads to proceed in parallel with directory creation for deeper paths.
+
 **Parallel Download Architecture:**
 
-The DOWNLOAD operation uses asyncio to coordinate parallel downloads of both regular files and chunked files, with S3 multi-part parallel downloads for large files:
+The DOWNLOAD operation uses a `ThreadPoolExecutor` with callbacks to coordinate parallel downloads of both regular files and chunked files, with S3 multi-part parallel downloads for large files:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    ASYNCIO DOWNLOAD COORDINATOR                         │
+│                    DOWNLOAD PIPELINE COORDINATOR                        │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  Regular Files (with multi-part for large files ≥16MB):                 │
+│  Regular Files (with multi-part for large files ≥64MB):                 │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  1. run_in_executor() → pre-allocate temp file + handle conflicts│   │
-│  │  2. For large files: asyncio.gather() parallel byte-range parts │   │
-│  │     For small files: single get_object request                  │   │
-│  │  3. run_in_executor() → atomic replace + mtime update           │   │
+│  │  1. executor.submit() → pre-allocate temp file + handle conflicts│   │
+│  │  2. For large files: parallel byte-range downloads               │   │
+│  │     For small files: single get_object request                   │   │
+│  │  3. Atomic replace + mtime update                                │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
-│  Chunked Files (continuation pattern via add_done_callback):            │
+│  Chunked Files (fan-out/fan-in via atomic counter):                     │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │  1. run_in_executor() → pre-allocate temp file + handle conflicts│   │
-│  │     └─► add_done_callback schedules continuation:               │   │
-│  │  2. asyncio.gather() all chunk downloads (parallel via executor)│   │
-│  │     - Large chunks (≥16MB): parallel byte-range parts           │   │
-│  │     - Small chunks: single get_object request                   │   │
-│  │     └─► continuation:                                           │   │
-│  │  3. run_in_executor() → atomic replace + mtime update           │   │
+│  │  1. executor.submit() → pre-allocate temp file + handle conflicts│   │
+│  │     └─► Fan-out: submit all chunk downloads to executor         │   │
+│  │  2. Each chunk downloads in parallel                             │   │
+│  │     - Large chunks (≥64MB): parallel byte-range parts            │   │
+│  │     - Small chunks: single get_object request                    │   │
+│  │     └─► Each chunk decrements atomic counter on completion       │   │
+│  │  3. Last chunk (counter reaches 0) → atomic replace + mtime      │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  All tasks share a single ThreadPoolExecutor(max_workers=N)            │
@@ -1578,19 +1840,17 @@ The DOWNLOAD operation uses asyncio to coordinate parallel downloads of both reg
 ```
 
 Both regular files and chunked files download concurrently. For S3 downloads of files or chunks
-larger than 16MB, parallel byte-range requests (8MB parts) are used for improved throughput.
-For chunked files, all chunks download in parallel using `asyncio.gather()`, with each chunk
-written directly to its correct byte offset in a pre-allocated temporary file. The phases are
-chained using `add_done_callback` - when pre-allocation completes, the callback schedules chunk
-downloads; when all chunks complete, finalization runs. If pre-allocation fails, the continuation
-is never scheduled and the error propagates. All file I/O runs via `run_in_executor()` to avoid
-blocking the asyncio event loop.
+larger than `2 * multipart_part_size` (default 64MB), parallel byte-range requests are used for
+improved throughput. For chunked files, all chunks download in parallel, with each chunk
+written directly to its correct byte offset in a pre-allocated temporary file. Completion is
+tracked via an atomic counter—when the last chunk completes (counter reaches 0), that thread
+performs the atomic file replacement.
 
 This architecture maximizes throughput by:
 - Downloading multiple files simultaneously (regular and chunked)
 - Downloading all chunks of chunked files in parallel
 - Using parallel byte-range requests for large files/chunks (S3 multi-part download)
-- Using asyncio for coordination without blocking the thread pool
+- Using callbacks instead of async/await for lower overhead
 
 **S3 Multi-Part Download:**
 
@@ -1639,7 +1899,7 @@ All file downloads are atomic to ensure target files are never in a partial or c
 2. **Atomic move:** After the download completes successfully, `os.replace()` atomically moves the temp file to the final location
 3. **Error cleanup:** If any error occurs during download, the temporary file is deleted
 
-This is particularly important for chunked files (>256MB), where multiple chunks are downloaded in parallel. The target file only appears once all chunks have been successfully downloaded and the asyncio continuation completes the atomic move.
+This is particularly important for chunked files (>256MB), where multiple chunks are downloaded in parallel. The target file only appears once all chunks have been successfully downloaded and the last completing thread performs the atomic move.
 
 | File Type | Behavior |
 |-----------|----------|
@@ -2096,6 +2356,48 @@ For v2025-12-04-beta (with deletion markers):
 - For v2025 snapshot+diffs: first must be snapshot, rest must be diffs
 - For v2025 diff composition: all must be diffs, `parentManifestHash` from first diff
 
+**Trie-Based Implementation:**
+
+The COMPOSE operation uses a trie (prefix tree) structure where each node represents a path component. This provides efficient handling of directory operations and cascading effects.
+
+*Trie node structure:*
+
+| Field | Description |
+|-------|-------------|
+| `children` | Child nodes keyed by path component |
+| `file_entry` | File/symlink entry at this node (None for directories) |
+| `deleted` | Deletion marker flag (for diff composition only) |
+
+*Why a trie?*
+
+1. **Efficient path operations:** Insert, lookup, and delete are O(path depth) rather than O(n) for flat lists
+2. **Natural directory structure:** The trie mirrors the filesystem hierarchy, making directory operations intuitive
+3. **Cascading deletions:** When a directory is deleted, its subtree can be efficiently removed or marked
+
+*Snapshot + Diffs composition:*
+
+When composing a snapshot with diffs, the trie accumulates the final state:
+- Base snapshot entries are inserted into the trie
+- For each diff: deletions remove nodes from the trie, additions/modifications insert or update nodes
+- The final trie contains only the entries that exist after all diffs are applied
+- Deletion markers are NOT preserved in the output (it's a snapshot, not a diff)
+
+*Diff + Diffs composition:*
+
+When composing multiple diffs (without a base snapshot), the trie tracks cumulative changes:
+- Each node has a `deleted` flag to track deletion markers
+- Deletions set `deleted=True`; additions clear it and set `file_entry`
+- After all diffs are applied, `reconcile_deleted_flags()` handles the case where a deleted directory has non-deleted children (the directory must exist for its children)
+- The output includes both current entries AND deletion markers
+
+*The reconciliation step:*
+
+The `reconcile_deleted_flags()` method handles this scenario:
+1. diff1 deletes `/dir/` and all its contents
+2. diff2 adds `/dir/newfile.txt`
+
+After diff2, `/dir/` must NOT be marked as deleted because it has a non-deleted child. The reconciliation traverses the trie depth-first and clears the `deleted` flag on any node that has non-deleted descendants.
+
 **Validation Rules:**
 
 | Condition | Behavior |
@@ -2548,16 +2850,16 @@ Joins a prefix to all paths in a manifest, producing a new manifest with prefixe
 
 ```python
 def join_manifest(
-    manifest: Manifest,
+    manifest: RelManifest,
     prefix: str,
-) -> Manifest:
+) -> AnyManifest:
 ```
 
 **Parameters:**
 
 | Parameter | Description |
 |-----------|-------------|
-| `manifest` | The source manifest to transform |
+| `manifest` | The source manifest with relative paths (`Snapshot` or `SnapshotDiff`) |
 | `prefix` | Path prefix to join to all paths (relative or absolute) |
 
 **Conceptual Model:**
@@ -2590,6 +2892,16 @@ New manifest (absolute paths):
 - File paths (`entry.path`)
 - Directory paths (`dir.path`)
 - Symlink targets (`entry.symlink_target`)
+
+**What Gets Preserved:**
+
+- `fileChunkSizeBytes` - Chunk size settings are preserved
+- `totalSize` - Total size is preserved
+- All file metadata (hash, size, mtime, runnable, chunkhashes)
+
+**What Does NOT Get Preserved:**
+
+- `parentManifestHash` - Since joining a prefix changes the root path structure, the original parent manifest hash is no longer valid for the new paths. The output manifest has `parentManifestHash=None`.
 
 **Example - Converting Relative to Absolute:**
 
@@ -2764,8 +3076,66 @@ diff = diff_snapshots(
 |----------|-------|-------------|
 | `DEFAULT_FILE_CHUNK_SIZE` | 256 MB (256 × 1024 × 1024) | Default threshold for chunked hashing |
 | `WHOLE_FILE_CHUNK_SIZE` | -1 | Sentinel value meaning "no chunking, hash whole file" |
+| `DEFAULT_S3_MULTIPART_PART_SIZE` | 32 MB (32 × 1024 × 1024) | Default part size for S3 multipart uploads/downloads |
+| `NO_ACCOUNT_ID_CHECK` | Sentinel object | Disables ExpectedBucketOwner checks when passed as `S3DataCache.account_id` |
+| `WHOLE_FILE_RANGE_END` | -1 | Sentinel value for hash cache `range_end` indicating a whole-file hash |
 
 ## Validation Rules
+
+Manifests validate their constraints on construction. However, manifest fields can be modified after construction, which may leave the manifest in an invalid state. Call `validate()` on a manifest to check that it still satisfies all constraints.
+
+### Entry Classes
+
+Manifests contain two types of entries: file entries and directory entries.
+
+#### ManifestFilePath
+
+Represents a file or symlink in the manifest:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `str` | File path (relative or absolute depending on manifest type) |
+| `hash` | `Optional[str]` | Content hash for small files (None if unhashed, chunked, or symlink) |
+| `size` | `int` | File size in bytes |
+| `mtime` | `int` | Modification time (microseconds since epoch) |
+| `chunkhashes` | `Optional[List[str]]` | Per-chunk hashes for large files (None if unhashed, small, or symlink) |
+| `symlink_target` | `Optional[str]` | Symlink target path (None for regular files) |
+| `runnable` | `bool` | POSIX execute bit (always False on Windows) |
+| `deleted` | `bool` | Deletion marker for diff manifests (v2025 only) |
+
+**Symlinks vs Regular Files:**
+- If `symlink_target` is set, the entry is a symlink and `hash`/`chunkhashes` must both be None
+- If `symlink_target` is None, the entry is a regular file
+
+**Hashed vs Unhashed Files:**
+Regular files can be in one of three states:
+
+| State | `hash` | `chunkhashes` | Description |
+|-------|--------|---------------|-------------|
+| Unhashed | None | None | Created by COLLECT; needs hashing before upload |
+| Hashed (single) | Set | None | Small file or whole-file hashing mode |
+| Hashed (chunked) | None | Set | Large file with per-chunk hashes |
+
+The COLLECT operation produces unhashed manifests (both `hash` and `chunkhashes` are None for regular files). The HASH and HASH_UPLOAD operations populate the appropriate hash field(s) based on file size and chunk settings.
+
+#### ManifestDirectoryPath
+
+Represents a directory in the manifest:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | `str` | Directory path (relative or absolute depending on manifest type) |
+| `deleted` | `bool` | Deletion marker for diff manifests (v2025 only) |
+
+**Implicit vs Explicit Directories:**
+
+- Parent directories of files and symlinks are implicitly part of the manifest, even if not in the `dirs` list. Operations that need directory information expand to include all parent directories of files and symlinks.
+- Empty directories must be explicitly listed in `dirs`, since no files or symlinks imply their existence.
+- The v2023 format does not support empty directories.
+
+**Directory Deletion Semantics:**
+
+A directory marked as `deleted=True` is only considered deleted if no non-deleted file, symlink, or subdirectory exists under it. If any non-deleted entry exists as a subpath, the directory deletion is effectively ignored.
 
 ### Symlink Validation (v2025-12-04-beta)
 
@@ -2774,11 +3144,11 @@ diff = diff_snapshots(
 
 ### Chunked File Validation (v2025-12-04-beta)
 
-Chunking behavior is controlled by the manifest's `fileChunkSizeBytes` field:
+For **hashed** regular files, chunking behavior is controlled by the manifest's `fileChunkSizeBytes` field:
 
 | `fileChunkSizeBytes` | File Size | Required Field |
 |---------------------|-----------|----------------|
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | `hash` (default) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | `hash` |
 | `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | `chunkhashes` |
 | `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | `hash` (no chunking) |
 | Positive int (chunk size) | ≤ chunk size | `hash` |
