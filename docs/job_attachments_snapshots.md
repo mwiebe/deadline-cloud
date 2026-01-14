@@ -672,7 +672,7 @@ The HASH operation validates that all regular file entries are unhashed (`hash=N
 - Ensures the operation is safe to call only once per manifest
 - Catches programming errors where a hashed manifest is passed incorrectly
 
-To re-hash a manifest (e.g., after file modifications), create a new manifest with `collect_abs_snapshot()` rather than passing an already-hashed manifest.
+To re-hash a manifest (e.g., after file modifications), call `clear_hashes()` on the manifest first to reset it to an unhashed state.
 
 **Hash cache behavior:**
 
@@ -3174,6 +3174,16 @@ Regular files can be in one of three states:
 | Hashed (chunked) | None | Set | Large file with per-chunk hashes |
 
 The COLLECT operation produces unhashed manifests (both `hash` and `chunkhashes` are None for regular files). The HASH and HASH_UPLOAD operations populate the appropriate hash field(s) based on file size and chunk settings.
+
+**Clearing Hashes:**
+
+The `clear_hashes()` method on manifest classes sets `hash` and `chunkhashes` to None for all regular file entries, returning the manifest to an unhashed state. Symlinks and deleted entries are unchanged. This is useful when you need to re-hash a manifest after files have been modified.
+
+```python
+# Re-hash a manifest after files have changed
+manifest.clear_hashes()
+hashed = hash_abs_manifest(manifest, hash_cache)
+```
 
 #### ManifestDirectoryPath
 

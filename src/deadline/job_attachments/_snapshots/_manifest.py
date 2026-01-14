@@ -454,6 +454,19 @@ class _BaseManifest:
             if entry.chunkhashes is not None:
                 entry._validate_chunkhashes(chunk_size)
 
+    def clear_hashes(self) -> None:
+        """
+        Clear all hash values from file entries in the manifest.
+
+        Sets `hash` and `chunkhashes` to None for all regular file entries,
+        leaving symlinks and deleted entries unchanged. This is useful when
+        you need to re-hash a manifest after files have been modified.
+        """
+        for entry in self.files:
+            if entry.symlink_target is None and not entry.deleted:
+                entry.hash = None
+                entry.chunkhashes = None
+
     @classmethod
     def get_default_hash_alg(cls) -> HashAlgorithm:
         """Returns the default hashing algorithm for manifests."""

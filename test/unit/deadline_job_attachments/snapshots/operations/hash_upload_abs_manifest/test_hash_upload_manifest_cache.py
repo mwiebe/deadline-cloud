@@ -1146,7 +1146,7 @@ class TestAllFilesSkippedDueToCacheHits:
         test_file2.write_text("Content for file 2")
         file2_stat = test_file2.stat()
 
-        # Create unhashed manifest (same as what collect_abs_snapshot produces)
+        # Create unhashed manifest (same as what collect_abs_snapshot produces or you get from manifest.clear_hashes())
         manifest = AbsSnapshot(
             hash_alg=HashAlgorithm.XXH128,
             files=[

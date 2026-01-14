@@ -178,7 +178,9 @@ class TestConcurrentUploadDeduplicationFileSystem:
         # Verify hashes - use endswith for precise matching
         dup1_hash = next(f.hash for f in result.manifest.files if f.path.endswith("dup1.txt"))
         dup2_hash = next(f.hash for f in result.manifest.files if f.path.endswith("dup2.txt"))
-        different_hash = next(f.hash for f in result.manifest.files if f.path.endswith("different.txt"))
+        different_hash = next(
+            f.hash for f in result.manifest.files if f.path.endswith("different.txt")
+        )
 
         assert dup1_hash == dup2_hash
         assert dup1_hash != different_hash
@@ -379,7 +381,9 @@ class TestConcurrentUploadDeduplicationS3:
         # Verify hashes - use endswith for precise matching
         dup1_hash = next(f.hash for f in result.manifest.files if f.path.endswith("dup1.txt"))
         dup2_hash = next(f.hash for f in result.manifest.files if f.path.endswith("dup2.txt"))
-        different_hash = next(f.hash for f in result.manifest.files if f.path.endswith("different.txt"))
+        different_hash = next(
+            f.hash for f in result.manifest.files if f.path.endswith("different.txt")
+        )
 
         assert dup1_hash == dup2_hash
         assert dup1_hash != different_hash
