@@ -1085,6 +1085,63 @@ The pipeline constrains total memory usage across both stages:
 - When `max_memory_bytes` is reached, the READ+HASH stage blocks until UPLOAD completes and frees memory
 - Each chunk occupies memory from READ+HASH through UPLOAD completion
 
+**Concurrent Upload Deduplication:**
+
+When multiple files or chunks have identical content (same hash), the pipeline prevents redundant
+concurrent uploads. This is particularly valuable for:
+- Files with repeated chunks (e.g., sparse files, files with repeated patterns)
+- Multiple files with identical content in the same upload batch
+- Large datasets with many duplicate files
+
+The deduplication mechanism uses a hash-to-event map to coordinate concurrent uploads:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    UPLOAD DEDUPLICATION                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Thread A (hash=abc123):              Thread B (hash=abc123):           │
+│  ┌─────────────────────┐              ┌─────────────────────┐           │
+│  │ 1. Check map        │              │ 1. Check map        │           │
+│  │    hash not found   │              │    hash found!      │           │
+│  │ 2. Register hash    │              │ 2. Get event        │           │
+│  │    with new Event   │              │ 3. Wait on event    │           │
+│  │ 3. Upload data      │              │    (blocks)         │           │
+│  │ 4. Signal event     │──────────────│ 4. Event signaled   │           │
+│  │ 5. Remove from map  │              │ 5. Skip upload      │           │
+│  └─────────────────────┘              │ 6. Release memory   │           │
+│                                       └─────────────────────┘           │
+│                                                                         │
+│  Result: Only ONE upload to data cache, both threads complete           │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+*Implementation details:*
+
+| Field | Description |
+|-------|-------------|
+| `_uploading_hashes` | `Dict[str, threading.Event]` mapping hash → completion event |
+| `_uploading_hashes_lock` | Lock protecting the map for thread-safe access |
+
+*Coordination flow:*
+
+1. **First thread with hash:** Registers hash in map with a new `Event`, proceeds to upload
+2. **Subsequent threads with same hash:** Find existing entry, wait on the `Event`
+3. **Upload completion:** First thread signals `Event` and removes hash from map
+4. **Waiting threads:** Wake up, mark item as skipped, release memory, record result
+
+*Benefits:*
+
+- Eliminates redundant network I/O for duplicate content
+- Reduces data cache write operations
+- Memory is released promptly for skipped uploads
+- Progress tracking correctly counts skipped uploads
+
+This deduplication is separate from the S3 check cache (which prevents re-uploading content that
+already exists in the data cache from previous operations). The concurrent deduplication handles
+duplicates within a single HASH_UPLOAD operation.
+
 **Default Memory Limit Calculation:**
 
 When `max_memory_bytes` is not specified, the default is calculated as:

@@ -361,6 +361,11 @@ class HashUploadPipelineBase(ABC):
         self._error: Optional[Exception] = None
         self._error_lock = threading.Lock()
 
+        # Deduplication: track hashes currently being uploaded to prevent concurrent
+        # uploads of the same content. Maps hash -> Event that signals upload complete.
+        self._uploading_hashes: Dict[str, threading.Event] = {}
+        self._uploading_hashes_lock = threading.Lock()
+
     # =========================================================================
     # Public API
     # =========================================================================
@@ -573,7 +578,42 @@ class HashUploadPipelineBase(ABC):
                 should_decrement_pending = False
                 return
             else:
-                self._upload_chunk(item)
+                # Deduplicate concurrent uploads of the same hash
+                if item.chunk_hash is not None:
+                    wait_event: Optional[threading.Event] = None
+                    with self._uploading_hashes_lock:
+                        if item.chunk_hash in self._uploading_hashes:
+                            # Another thread is uploading this hash, wait for it
+                            wait_event = self._uploading_hashes[item.chunk_hash]
+                        else:
+                            # Register this hash as being uploaded
+                            self._uploading_hashes[item.chunk_hash] = threading.Event()
+
+                    if wait_event is not None:
+                        # Wait for the other upload to complete, then skip this one
+                        wait_event.wait()
+                        item.skipped = True
+                        item.uploaded = False
+                        if item.data is not None:
+                            chunk_size = len(item.data)
+                            self._memory_pool.release(chunk_size)
+                            item.data = None
+                            if self._progress_state is not None:
+                                self._progress_state.record_upload_complete(
+                                    chunk_size, skipped=True
+                                )
+                        self._record_result(item)
+                        return
+
+                try:
+                    self._upload_chunk(item)
+                finally:
+                    # Unregister and signal completion
+                    if item.chunk_hash is not None:
+                        with self._uploading_hashes_lock:
+                            event = self._uploading_hashes.pop(item.chunk_hash, None)
+                            if event is not None:
+                                event.set()
                 self._record_result(item)
 
         except Exception as e:
