@@ -124,7 +124,7 @@ ContentAddressedDataCache
 
 ### Refactoring the Existing Job Attachments Implementation
 
-#### The BaseAssetManifest class
+#### Conversions for the BaseAssetManifest class - DONE
 
 The snapshots design uses new, independent manifest classes. Conversion functions in
 `_snapshots/_convert_v2023_manifest.py` convert between `BaseAssetManifest` and `Snapshot`/`SnapshotDiff`:
@@ -158,13 +158,34 @@ The current job attachments code uses different progress tracking interfaces tha
 and `download_abs_manifest()`. We can write adaptor classes to facilitate refactoring, and
 plan to later switch the interfaces by releasing a breaking change.
 
-#### upload.py S3AssetManager.prepare_paths_for_upload()
+#### upload.py S3AssetManager.prepare_paths_for_upload() - DONE
 
-This is likely the place we can start refactoring. This function accepts the input paths, including
-files, directories, and referenced paths. The `collect_abs_snapshot()` function can collect all
-the inputs into a single AbsSnapshot object, and the `partition_manifest()` function can divide up
-the collected result into a list of (abs_root, Snapshot) pairs, which is pretty close to
-what `prepare_paths_for_upload()` returns.
+The new `partition_snapshot_by_storage_profile()` function in `_upload_v2.py` takes an already-collected
+`AbsSnapshot`, filters out SHARED storage profile locations, and partitions by LOCAL locations using
+`filter_manifest()` and `partition_manifest()`.
+
+```python
+from deadline.job_attachments._upload_v2 import partition_snapshot_by_storage_profile
+from deadline.job_attachments._snapshots import collect_abs_snapshot
+
+# Collect inputs into an AbsSnapshot
+abs_snapshot = collect_abs_snapshot(
+    directories=["/home/user/movie1/assets"],
+    filenames=["/home/user/movie1/scene.blend"],
+)
+
+# Partition by storage profile locations
+groups = partition_snapshot_by_storage_profile(
+    manifest=abs_snapshot,
+    output_paths=["/home/user/movie1/outputs"],
+    referenced_paths=[],
+    storage_profile=storage_profile,  # From queue configuration
+)
+
+# Each group has: root_path, manifest (relative paths), outputs, file_system_location_name
+for group in groups:
+    print(f"Root: {group.root_path}, Files: {len(group.manifest.files)}")
+```
 
 #### upload.py S3AssetUploader.upload_input_files()
 

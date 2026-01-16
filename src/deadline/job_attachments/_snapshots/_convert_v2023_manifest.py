@@ -15,7 +15,7 @@ These conversions are lossy when going from snapshot to v2023.
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import cast, List
 
 from ._manifest import (
     Snapshot,
@@ -25,6 +25,7 @@ from ._manifest import (
     WHOLE_FILE_CHUNK_SIZE,
 )
 from ._operations._subtree_manifest import subtree_manifest
+from ..asset_manifests.base_manifest import BaseManifestPath
 from ..asset_manifests.v2023_03_03 import AssetManifest, ManifestPath
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ def snapshot_to_v2023_manifest(snapshot: Snapshot) -> AssetManifest:
 
     return AssetManifest(
         hash_alg=collapsed.hashAlg,
-        paths=paths,
+        paths=cast(List[BaseManifestPath], paths),
         total_size=collapsed.totalSize,
     )
 
@@ -187,7 +188,7 @@ def snapshot_diff_to_v2023_manifest(snapshot_diff: SnapshotDiff) -> AssetManifes
 
     return AssetManifest(
         hash_alg=collapsed.hashAlg,
-        paths=paths,
+        paths=cast(List[BaseManifestPath], paths),
         total_size=total_size,
     )
 
