@@ -418,6 +418,108 @@ def _save_debug_snapshot(
     return None
 
 
+def _process_job_attachments(
+    *,
+    deadline: BaseClient,
+    farm_id: str,
+    queue_id: str,
+    queue: dict,
+    asset_references: AssetReferences,
+    storage_profile: Optional[StorageProfile],
+    require_paths_exist: bool,
+    known_asset_paths: Collection[str],
+    job_bundle_dir: str,
+    job_parameters: list[dict[str, Any]],
+    parameters: list[JobParameter],
+    config: Optional[ConfigParser],
+    debug_snapshot_dir: Optional[str],
+    job_attachments_file_system: str,
+    from_gui: bool,
+    force_s3_check: bool,
+    print_function_callback: Callable[[str], None],
+    interactive_confirmation_callback: Optional[Callable[[str, bool], bool]],
+    hashing_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
+    upload_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
+) -> Tuple[Optional[dict], S3AssetManager]:
+    """
+    Process job attachments for submission.
+
+    Returns a tuple of (attachment_settings, asset_manager). attachment_settings is None
+    if there are no asset groups to process.
+    """
+    known_asset_paths = _build_known_asset_paths(
+        known_asset_paths=known_asset_paths,
+        job_bundle_dir=job_bundle_dir,
+        storage_profile=storage_profile,
+        config=config,
+        job_parameters=job_parameters,
+        parameters=parameters,
+    )
+
+    # Extend input_filenames with all the files in the input_directories
+    missing_directories: set[str] = set()
+    for directory in asset_references.input_directories:
+        if not os.path.isdir(directory):
+            if require_paths_exist:
+                missing_directories.add(directory)
+            else:
+                logger.warning(
+                    f"Input path '{directory}' does not exist. Adding to referenced paths."
+                )
+                asset_references.referenced_paths.add(directory)
+            continue
+
+        is_dir_empty = True
+        for root, _, files in os.walk(directory):
+            if not files:
+                continue
+            is_dir_empty = False
+            asset_references.input_filenames.update(
+                os.path.normpath(os.path.join(root, file)) for file in files
+            )
+        if is_dir_empty:
+            logger.info(f"Input directory '{directory}' is empty. Adding to referenced paths.")
+            asset_references.referenced_paths.add(directory)
+    asset_references.input_directories.clear()
+
+    if missing_directories:
+        all_missing_directories = "\n\t".join(sorted(list(missing_directories)))
+        misconfigured_directories_msg = (
+            "Job submission contains misconfigured input directories and cannot be submitted."
+            " All input directories must exist."
+            f"\nNon-existent directories:\n\t{all_missing_directories}"
+        )
+        raise MisconfiguredInputsError(misconfigured_directories_msg)
+
+    queue_role_session = api.get_queue_user_boto3_session(
+        deadline=deadline,
+        config=config,
+        farm_id=farm_id,
+        queue_id=queue_id,
+        queue_display_name=queue["displayName"],
+    )
+
+    return _process_job_attachments_with_s3_asset_manager(
+        farm_id=farm_id,
+        queue_id=queue_id,
+        queue=queue,
+        queue_role_session=queue_role_session,
+        asset_references=asset_references,
+        storage_profile=storage_profile,
+        require_paths_exist=require_paths_exist,
+        known_asset_paths=known_asset_paths,
+        config=config,
+        debug_snapshot_dir=debug_snapshot_dir,
+        job_attachments_file_system=job_attachments_file_system,
+        from_gui=from_gui,
+        force_s3_check=force_s3_check,
+        print_function_callback=print_function_callback,
+        interactive_confirmation_callback=interactive_confirmation_callback,
+        hashing_progress_callback=hashing_progress_callback,
+        upload_progress_callback=upload_progress_callback,
+    )
+
+
 def _process_job_attachments_with_s3_asset_manager(
     *,
     farm_id: str,
@@ -746,71 +848,20 @@ def create_job_from_job_bundle(
     )
 
     # Hash and upload job attachments if there are any
+    asset_manager: Optional[S3AssetManager] = None
     if asset_references and "jobAttachmentSettings" in queue:
-        known_asset_paths = _build_known_asset_paths(
-            known_asset_paths=known_asset_paths,
-            job_bundle_dir=job_bundle_dir,
-            storage_profile=storage_profile,
-            config=config,
-            job_parameters=job_parameters,
-            parameters=parameters,
-        )
-
-        # Extend input_filenames with all the files in the input_directories
-        missing_directories: set[str] = set()
-        for directory in asset_references.input_directories:
-            if not os.path.isdir(directory):
-                if require_paths_exist:
-                    missing_directories.add(directory)
-                else:
-                    logger.warning(
-                        f"Input path '{directory}' does not exist. Adding to referenced paths."
-                    )
-                    asset_references.referenced_paths.add(directory)
-                continue
-
-            is_dir_empty = True
-            for root, _, files in os.walk(directory):
-                if not files:
-                    continue
-                is_dir_empty = False
-                asset_references.input_filenames.update(
-                    os.path.normpath(os.path.join(root, file)) for file in files
-                )
-            # Empty directories just become references since the current asset manifest spec
-            # version cannot represent them.
-            if is_dir_empty:
-                logger.info(f"Input directory '{directory}' is empty. Adding to referenced paths.")
-                asset_references.referenced_paths.add(directory)
-        asset_references.input_directories.clear()
-
-        if missing_directories:
-            all_missing_directories = "\n\t".join(sorted(list(missing_directories)))
-            misconfigured_directories_msg = (
-                "Job submission contains misconfigured input directories and cannot be submitted."
-                " All input directories must exist."
-                f"\nNon-existent directories:\n\t{all_missing_directories}"
-            )
-
-            raise MisconfiguredInputsError(misconfigured_directories_msg)
-
-        queue_role_session = api.get_queue_user_boto3_session(
+        attachment_settings, asset_manager = _process_job_attachments(
             deadline=deadline,
-            config=config,
-            farm_id=farm_id,
-            queue_id=queue_id,
-            queue_display_name=queue["displayName"],
-        )
-
-        attachment_settings, asset_manager = _process_job_attachments_with_s3_asset_manager(
             farm_id=farm_id,
             queue_id=queue_id,
             queue=queue,
-            queue_role_session=queue_role_session,
             asset_references=asset_references,
             storage_profile=storage_profile,
             require_paths_exist=require_paths_exist,
             known_asset_paths=known_asset_paths,
+            job_bundle_dir=job_bundle_dir,
+            job_parameters=job_parameters,
+            parameters=parameters,
             config=config,
             debug_snapshot_dir=debug_snapshot_dir,
             job_attachments_file_system=job_attachments_file_system,
@@ -851,6 +902,7 @@ def create_job_from_job_bundle(
     )
 
     if debug_snapshot_dir:
+        assert asset_manager is not None
         return _save_debug_snapshot(
             debug_snapshot_dir,
             create_job_args,
