@@ -122,14 +122,35 @@ ContentAddressedDataCache
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Relationship to Existing Job Attachments Implementation
+### Refactoring the Existing Job Attachments Implementation
 
 #### The BaseAssetManifest class
 
-The snapshots design uses new, independent manifest classes. We can implement conversion functions
-that convert a BaseAssetManifest to and from a Snapshot or a SnapshotDiff type. Because the
-BaseAssetManifest is used for both cases in the prior code, we need a way to select the correct
-one depending on context.
+The snapshots design uses new, independent manifest classes. Conversion functions in
+`_snapshots/_convert_v2023_manifest.py` convert between `BaseAssetManifest` and `Snapshot`/`SnapshotDiff`:
+
+| Function | Description |
+|----------|-------------|
+| `snapshot_to_v2023_manifest(snapshot)` | Converts `Snapshot` → `AssetManifest`. Collapses symlinks via `COLLAPSE_ALL`, drops empty dirs with warning. |
+| `snapshot_diff_to_v2023_manifest(snapshot_diff)` | Converts `SnapshotDiff` → `AssetManifest`. Collapses symlinks via `COLLAPSE_ALL`, drops deletions and empty dirs with warnings. |
+| `v2023_manifest_to_snapshot(manifest)` | Converts `AssetManifest` → `Snapshot`. Sets `fileChunkSizeBytes=WHOLE_FILE_CHUNK_SIZE`. |
+| `v2023_manifest_to_snapshot_diff(manifest, parent_hash)` | Converts `AssetManifest` → `SnapshotDiff`. |
+
+```python
+from deadline.job_attachments._snapshots import (
+    snapshot_to_v2023_manifest,
+    v2023_manifest_to_snapshot,
+)
+
+# Convert snapshot to v2023 for serialization
+v2023_manifest = snapshot_to_v2023_manifest(hashed_snapshot)
+manifest_json = v2023_manifest.encode()
+
+# Convert v2023 back to snapshot for processing
+snapshot = v2023_manifest_to_snapshot(v2023_manifest)
+```
+
+Note: The v2023 format is lossy—it cannot represent symlinks, empty directories, deletions, or chunked files.
 
 #### Progress tracking
 

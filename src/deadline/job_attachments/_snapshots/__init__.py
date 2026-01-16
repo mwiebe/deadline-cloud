@@ -47,6 +47,12 @@ from ._operations import (
     join_manifest,
     IncludeExcludePathsFilter,
 )
+from ._convert_v2023_manifest import (
+    snapshot_to_v2023_manifest,
+    snapshot_diff_to_v2023_manifest,
+    v2023_manifest_to_snapshot,
+    v2023_manifest_to_snapshot_diff,
+)
 
 __all__ = [
     # Manifest classes
@@ -91,4 +97,9 @@ __all__ = [
     "join_manifest",
     "SymlinkPolicy",
     "IncludeExcludePathsFilter",
+    # v2023 manifest conversion
+    "snapshot_to_v2023_manifest",
+    "snapshot_diff_to_v2023_manifest",
+    "v2023_manifest_to_snapshot",
+    "v2023_manifest_to_snapshot_diff",
 ]
