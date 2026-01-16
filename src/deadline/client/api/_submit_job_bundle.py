@@ -440,11 +440,11 @@ def _process_job_attachments(
     interactive_confirmation_callback: Optional[Callable[[str, bool], bool]],
     hashing_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
     upload_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
-) -> Tuple[Optional[dict], S3AssetManager]:
+) -> Optional[dict]:
     """
     Process job attachments for submission.
 
-    Returns a tuple of (attachment_settings, asset_manager). attachment_settings is None
+    Returns attachment_settings. attachment_settings is None
     if there are no asset groups to process.
     """
     known_asset_paths = _build_known_asset_paths(
@@ -539,11 +539,11 @@ def _process_job_attachments_with_s3_asset_manager(
     interactive_confirmation_callback: Optional[Callable[[str, bool], bool]],
     hashing_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
     upload_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
-) -> Tuple[Optional[dict], S3AssetManager]:
+) -> Optional[dict]:
     """
     Process job attachments using S3AssetManager.
 
-    Returns a tuple of (attachment_settings, asset_manager). attachment_settings is None
+    Returns attachment_settings. attachment_settings is None
     if there are no asset groups to process.
     """
     asset_manager = S3AssetManager(
@@ -583,7 +583,7 @@ def _process_job_attachments_with_s3_asset_manager(
                     processedFiles=0,
                 )
             )
-        return None, asset_manager
+        return None
 
     # Generate warning message if needed
     asset_path_message, default_prompt_response = _generate_message_for_asset_paths(
@@ -652,7 +652,7 @@ def _process_job_attachments_with_s3_asset_manager(
 
     attachment_settings["fileSystem"] = JobAttachmentsFileSystem(job_attachments_file_system)
 
-    return attachment_settings, asset_manager
+    return attachment_settings
 
 
 @api.record_function_latency_telemetry_event()
@@ -847,10 +847,25 @@ def create_job_from_job_bundle(
         parameters, job_bundle_dir
     )
 
+    create_job_args.update(app_parameters_formatted)
+
+    if job_parameters_formatted:
+        create_job_args["parameters"] = job_parameters_formatted
+
+    if priority is not None:
+        create_job_args["priority"] = priority
+    if max_worker_count is not None:
+        create_job_args["maxWorkerCount"] = max_worker_count
+    if max_failed_tasks_count is not None:
+        create_job_args["maxFailedTasksCount"] = max_failed_tasks_count
+    if max_retries_per_task is not None:
+        create_job_args["maxRetriesPerTask"] = max_retries_per_task
+    if target_task_run_status is not None:
+        create_job_args["targetTaskRunStatus"] = target_task_run_status
+
     # Hash and upload job attachments if there are any
-    asset_manager: Optional[S3AssetManager] = None
     if asset_references and "jobAttachmentSettings" in queue:
-        attachment_settings, asset_manager = _process_job_attachments(
+        attachment_settings = _process_job_attachments(
             deadline=deadline,
             farm_id=farm_id,
             queue_id=queue_id,
@@ -876,22 +891,6 @@ def create_job_from_job_bundle(
         if attachment_settings is not None:
             create_job_args["attachments"] = attachment_settings
 
-    create_job_args.update(app_parameters_formatted)
-
-    if job_parameters_formatted:
-        create_job_args["parameters"] = job_parameters_formatted
-
-    if priority is not None:
-        create_job_args["priority"] = priority
-    if max_worker_count is not None:
-        create_job_args["maxWorkerCount"] = max_worker_count
-    if max_failed_tasks_count is not None:
-        create_job_args["maxFailedTasksCount"] = max_failed_tasks_count
-    if max_retries_per_task is not None:
-        create_job_args["maxRetriesPerTask"] = max_retries_per_task
-    if target_task_run_status is not None:
-        create_job_args["targetTaskRunStatus"] = target_task_run_status
-
     if logging.DEBUG >= logger.getEffectiveLevel():
         logger.debug(json.dumps(create_job_args, indent=1))
 
@@ -902,15 +901,16 @@ def create_job_from_job_bundle(
     )
 
     if debug_snapshot_dir:
-        assert asset_manager is not None
-        return _save_debug_snapshot(
-            debug_snapshot_dir,
-            create_job_args,
-            asset_manager,
-            queue,
-            storage_profile_id,
-            storage_profile,
-        )
+        raise RuntimeError("Debug snapshots are temporarily turned off")
+        # assert asset_manager is not None
+        # return _save_debug_snapshot(
+        #     debug_snapshot_dir,
+        #     create_job_args,
+        #     asset_manager,
+        #     queue,
+        #     storage_profile_id,
+        #     storage_profile,
+        # )
 
     create_job_response = deadline.create_job(**create_job_args)
     logger.debug("CreateJob Response %r", create_job_response)
