@@ -480,7 +480,6 @@ def _process_job_attachments(
         if is_dir_empty:
             logger.info(f"Input directory '{directory}' is empty. Adding to referenced paths.")
             asset_references.referenced_paths.add(directory)
-    asset_references.input_directories.clear()
 
     if missing_directories:
         all_missing_directories = "\n\t".join(sorted(list(missing_directories)))
@@ -498,6 +497,28 @@ def _process_job_attachments(
         queue_id=queue_id,
         queue_display_name=queue["displayName"],
     )
+
+    if ENABLE_SNAPSHOTS_LIBRARY:
+        # Pass directories to collect_abs_snapshot before they're cleared
+        directories_to_collect = [d for d in asset_references.input_directories if os.path.isdir(d)]
+        asset_references.input_directories.clear()
+
+        return _process_job_attachments_with_snapshots(
+            queue=queue,
+            queue_role_session=queue_role_session,
+            directories=directories_to_collect,
+            filenames=list(asset_references.input_filenames),
+            output_directories=list(asset_references.output_directories),
+            referenced_paths=list(asset_references.referenced_paths),
+            storage_profile=storage_profile,
+            debug_snapshot_dir=debug_snapshot_dir,
+            job_attachments_file_system=job_attachments_file_system,
+            print_function_callback=print_function_callback,
+            hashing_progress_callback=hashing_progress_callback,
+            upload_progress_callback=upload_progress_callback,
+        )
+
+    asset_references.input_directories.clear()
 
     return _process_job_attachments_with_s3_asset_manager(
         farm_id=farm_id,
@@ -651,6 +672,215 @@ def _process_job_attachments_with_s3_asset_manager(
         )
 
     attachment_settings["fileSystem"] = JobAttachmentsFileSystem(job_attachments_file_system)
+
+    return attachment_settings
+
+
+def _process_job_attachments_with_snapshots(
+    *,
+    queue: dict,
+    queue_role_session,
+    directories: List[str],
+    filenames: List[str],
+    output_directories: List[str],
+    referenced_paths: List[str],
+    storage_profile: Optional[StorageProfile],
+    debug_snapshot_dir: Optional[str],
+    job_attachments_file_system: str,
+    print_function_callback: Callable[[str], None],
+    hashing_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
+    upload_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
+) -> Optional[dict]:
+    """
+    Process job attachments using the snapshots library.
+
+    Returns attachment_settings dict, or None if there are no files to process.
+    """
+    from ...job_attachments._snapshots import (
+        collect_abs_snapshot,
+        hash_upload_abs_manifest,
+        S3DataCache,
+        FileSystemDataCache,
+        SymlinkPolicy,
+        WHOLE_FILE_CHUNK_SIZE,
+        snapshot_to_v2023_manifest,
+        AbsSnapshot,
+    )
+    from ...job_attachments._upload_v2 import partition_snapshot_by_storage_profile
+    from ...job_attachments.asset_manifests.hash_algorithms import hash_data, HashAlgorithm
+    from ...job_attachments.models import ManifestProperties, PathFormat
+    from ...job_attachments.caches.hash_cache import HashCache
+    from ...job_attachments.caches.s3_check_cache import S3CheckCache
+    from typing import cast
+
+    abs_snapshot = collect_abs_snapshot(
+        directories=directories,  # type: ignore[arg-type]
+        filenames=filenames,  # type: ignore[arg-type]
+        symlink_policy=SymlinkPolicy.COLLAPSE_ESCAPING,
+        file_chunk_size_bytes=WHOLE_FILE_CHUNK_SIZE,
+    )
+
+    if not abs_snapshot.files:
+        # No files to process
+        if hashing_progress_callback:
+            hashing_progress_callback(
+                ProgressReportMetadata(
+                    status=ProgressStatus.PREPARING_IN_PROGRESS,
+                    progress=0,
+                    transferRate=0,
+                    progressMessage="No files to hash",
+                    processedFiles=0,
+                )
+            )
+        if upload_progress_callback:
+            upload_progress_callback(
+                ProgressReportMetadata(
+                    status=ProgressStatus.UPLOAD_IN_PROGRESS,
+                    progress=0,
+                    transferRate=0,
+                    progressMessage="No files to upload",
+                    processedFiles=0,
+                )
+            )
+        return None
+
+    # Create data cache
+    job_attachment_settings = JobAttachmentS3Settings(**queue["jobAttachmentSettings"])
+    cache_dir = config_file.get_cache_directory()
+
+    # Create progress callback adapter
+    def on_progress(metadata) -> bool:
+        # Report hashing progress
+        if hashing_progress_callback:
+            hashing_total = metadata.hashed_file_chunks + metadata.hash_skipped_file_chunks
+            hashing_progress = (
+                (hashing_total / metadata.total_file_chunks * 100)
+                if metadata.total_file_chunks > 0
+                else 0
+            )
+            if not hashing_progress_callback(
+                ProgressReportMetadata(
+                    status=ProgressStatus.PREPARING_IN_PROGRESS,
+                    progress=hashing_progress,
+                    transferRate=0,
+                    progressMessage=f"Hashing {hashing_total}/{metadata.total_file_chunks} files",
+                    processedFiles=hashing_total,
+                )
+            ):
+                return False
+
+        # Report upload progress
+        if upload_progress_callback:
+            upload_total = metadata.uploaded_file_chunks + metadata.upload_skipped_file_chunks
+            if not upload_progress_callback(
+                ProgressReportMetadata(
+                    status=ProgressStatus.UPLOAD_IN_PROGRESS,
+                    progress=metadata.progress,
+                    transferRate=0,
+                    progressMessage=metadata.progressMessage,
+                    processedFiles=upload_total,
+                )
+            ):
+                return False
+
+        return True
+
+    if not debug_snapshot_dir:
+        s3_client = queue_role_session.client("s3")
+        with S3CheckCache(cache_dir) as s3_check_cache:
+            from ...job_attachments._snapshots import NO_ACCOUNT_ID_CHECK
+
+            s3_data_cache = S3DataCache(
+                s3_bucket=job_attachment_settings.s3BucketName,
+                s3_key_prefix=job_attachment_settings.full_cas_prefix(),
+                s3_client=s3_client,
+                s3_check_cache=s3_check_cache,
+                account_id=NO_ACCOUNT_ID_CHECK,
+            )
+
+            with HashCache(cache_dir) as hash_cache:
+                result = hash_upload_abs_manifest(
+                    manifest=abs_snapshot,
+                    data_cache=s3_data_cache,
+                    hash_cache=hash_cache,
+                    on_progress=on_progress,
+                )
+    else:
+        fs_data_cache = FileSystemDataCache(
+            root_path=Path(debug_snapshot_dir) / "Data",
+        )
+        with HashCache(cache_dir) as hash_cache:
+            result = hash_upload_abs_manifest(
+                manifest=abs_snapshot,
+                data_cache=fs_data_cache,
+                hash_cache=hash_cache,
+                on_progress=on_progress,
+            )
+
+    hashed_snapshot = cast(AbsSnapshot, result.manifest)
+
+    # Print upload summary
+    stats = result.statistics
+    if stats.total_files > 0:
+        print_function_callback("Upload Summary:")
+        print_function_callback(f"    Total files: {stats.total_files}")
+        print_function_callback(f"    Total bytes: {stats.total_bytes}")
+        print_function_callback(f"    Processed files: {stats.processed_files}")
+        print_function_callback(f"    Skipped files: {stats.skipped_files}")
+
+    # Partition by storage profile
+    groups = partition_snapshot_by_storage_profile(
+        manifest=hashed_snapshot,
+        output_paths=output_directories,
+        referenced_paths=referenced_paths,
+        storage_profile=storage_profile,
+    )
+
+    # Build attachment_settings
+    manifests_list = []
+    for group in groups:
+        if not group.manifest.files and not group.outputs:
+            continue
+
+        # Convert to v2023 manifest format
+        v2023_manifest = snapshot_to_v2023_manifest(group.manifest)
+        manifest_str = v2023_manifest.encode()
+        manifest_hash = hash_data(manifest_str.encode("utf-8"), HashAlgorithm.XXH128)
+
+        # Upload manifest to S3 or write to debug snapshot
+        import uuid
+
+        manifest_name = f"manifest_{uuid.uuid4().hex}.json"
+        if not debug_snapshot_dir:
+            manifest_key = f"{job_attachment_settings.rootPrefix}/Manifests/{manifest_name}"
+            s3_client.put_object(
+                Bucket=job_attachment_settings.s3BucketName,
+                Key=manifest_key,
+                Body=manifest_str.encode("utf-8"),
+            )
+            manifest_path = manifest_key
+        else:
+            manifest_dir = Path(debug_snapshot_dir) / "Manifests"
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            manifest_file = manifest_dir / manifest_name
+            manifest_file.write_text(manifest_str)
+            manifest_path = f"Manifests/{manifest_name}"
+
+        manifests_list.append(
+            ManifestProperties(
+                rootPath=group.root_path,
+                rootPathFormat=PathFormat.POSIX if os.name != "nt" else PathFormat.WINDOWS,
+                fileSystemLocationName=group.file_system_location_name,
+                inputManifestPath=manifest_path,
+                inputManifestHash=manifest_hash,
+                outputRelativeDirectories=group.outputs if group.outputs else None,
+            ).to_dict()
+        )
+
+    attachment_settings: Dict[str, Any] = {
+        "manifests": manifests_list,
+        "fileSystem": JobAttachmentsFileSystem(job_attachments_file_system).value,
+    }
 
     return attachment_settings
 

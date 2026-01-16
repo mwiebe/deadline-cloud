@@ -16,6 +16,7 @@ import pytest
 import time
 
 from deadline.client import api, config
+from deadline.client.api import _submit_job_bundle
 from deadline.job_attachments.exceptions import MisconfiguredInputsError
 from deadline.job_attachments.models import (
     AssetRootGroup,
@@ -433,13 +434,16 @@ def test_create_job_from_job_bundle_error_duplicate_parameters(
             )
 
 
+@pytest.mark.parametrize("use_snapshots_library", [False, True])
 def test_create_job_from_job_bundle_job_attachments(
-    fresh_deadline_config, temp_job_bundle_dir, temp_assets_dir
+    fresh_deadline_config, temp_job_bundle_dir, temp_assets_dir, use_snapshots_library
 ):
     """
     Test a job bundle with asset references.
     """
-    with patch_calls_for_create_job_from_job_bundle() as mock:
+    with patch_calls_for_create_job_from_job_bundle() as mock, patch.object(
+        _submit_job_bundle, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library
+    ):
         mock.get_boto3_client().get_storage_profile_for_queue.return_value = (
             MOCK_GET_STORAGE_PROFILE_FOR_QUEUE_RESPONSE
         )
@@ -489,20 +493,25 @@ def test_create_job_from_job_bundle_job_attachments(
             known_asset_paths=[temp_assets_dir],
         )
 
-        mock.hash_attachments.assert_called_once_with(
-            asset_manager=ANY,
-            asset_groups=[
-                AssetRootGroup(
-                    root_path=temp_assets_dir,
-                    inputs={Path(temp_assets_dir) / p for p in asset_contents.keys()},
-                    outputs={Path(temp_assets_dir) / "somedir"},
-                )
-            ],
-            total_input_files=3,
-            total_input_bytes=35,
-            print_function_callback=print,
-            hashing_progress_callback=fake_hashing_callback,
-        )
+        if not use_snapshots_library:
+            mock.hash_attachments.assert_called_once_with(
+                asset_manager=ANY,
+                asset_groups=[
+                    AssetRootGroup(
+                        root_path=temp_assets_dir,
+                        inputs={Path(temp_assets_dir) / p for p in asset_contents.keys()},
+                        outputs={Path(temp_assets_dir) / "somedir"},
+                    )
+                ],
+                total_input_files=3,
+                total_input_bytes=35,
+                print_function_callback=print,
+                hashing_progress_callback=fake_hashing_callback,
+            )
+            mock_telemetry_client = mock.get_deadline_cloud_library_telemetry_client()
+            assert mock_telemetry_client.record_hashing_summary.call_count == 1
+            assert mock_telemetry_client.record_upload_summary.call_count == 1
+
         mock.get_boto3_client().create_job.assert_called_once_with(
             farmId=MOCK_FARM_ID,
             queueId=MOCK_QUEUE_ID,
@@ -513,8 +522,6 @@ def test_create_job_from_job_bundle_job_attachments(
             attachments=ANY,
         )
         mock_telemetry_client = mock.get_deadline_cloud_library_telemetry_client()
-        assert mock_telemetry_client.record_hashing_summary.call_count == 1
-        assert mock_telemetry_client.record_upload_summary.call_count == 1
         assert mock_telemetry_client.record_event.mock_calls == [
             call(
                 event_type="com.amazon.rum.deadline.submission",

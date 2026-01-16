@@ -275,14 +275,17 @@ def test_cli_bundle_storage_profile_id(fresh_deadline_config, deadline_mock, tem
 
 
 @pytest.mark.parametrize("loading_method", [e.value for e in JobAttachmentsFileSystem] + [None])
+@pytest.mark.parametrize("use_snapshots_library", [False, True])
 def test_cli_bundle_asset_load_method(
-    fresh_deadline_config, deadline_mock, temp_job_bundle_dir, loading_method
+    fresh_deadline_config, deadline_mock, temp_job_bundle_dir, loading_method, use_snapshots_library
 ):
     """
     Verify that asset loading method set on CLI are passed to the CreateJob call.
 
     The job attachments S3 bucket is a moto mock, so the verified calls exercise the relevant code for that.
     """
+    from deadline.client.api import _submit_job_bundle
+
     config.set_setting("defaults.farm_id", MOCK_FARM_ID)
     config.set_setting("defaults.queue_id", MOCK_QUEUE_ID)
     config.set_setting("settings.auto_accept", "true")
@@ -326,7 +329,9 @@ def test_cli_bundle_asset_load_method(
         params += ["--job-attachments-file-system", loading_method]
 
     runner = CliRunner()
-    result = runner.invoke(main, params)
+
+    with patch.object(_submit_job_bundle, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library):
+        result = runner.invoke(main, params)
 
     expected_loading_method = (
         loading_method
