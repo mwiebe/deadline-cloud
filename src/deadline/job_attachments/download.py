@@ -78,6 +78,8 @@ from threading import Lock
 download_logger = getLogger("deadline.job_attachments.download")
 
 S3_DOWNLOAD_MAX_CONCURRENCY = 10
+
+ENABLE_SNAPSHOTS_LIBRARY = os.environ.get("ENABLE_SNAPSHOTS_LIBRARY") == "1"
 WINDOWS_MAX_PATH_LENGTH = 260
 TEMP_DOWNLOAD_ADDED_CHARS_LENGTH = 9
 
@@ -896,6 +898,30 @@ def download_files_from_manifests(
     Returns:
         The download summary statistics.
     """
+    if ENABLE_SNAPSHOTS_LIBRARY:
+        from ._download_v2 import download_files_from_manifests_v2
+
+        result = download_files_from_manifests_v2(
+            s3_bucket=s3_bucket,
+            manifests_by_root=manifests_by_root,
+            cas_prefix=cas_prefix,
+            session=session,
+            on_downloading_files=on_downloading_files,
+            conflict_resolution=conflict_resolution,
+        )
+        # Apply fs_permission_settings after download if needed
+        if fs_permission_settings is not None:
+            for local_root in manifests_by_root.keys():
+                # Get all file paths under this root from the manifest
+                manifest = manifests_by_root[local_root]
+                file_paths = [os.path.join(local_root, entry.path) for entry in manifest.paths]
+                _set_fs_group(
+                    file_paths=file_paths,
+                    local_root=local_root,
+                    fs_permission_settings=fs_permission_settings,
+                )
+        return result
+
     s3_client = get_s3_client(session=session)
     num_download_workers = _get_num_download_workers()
     file_mod_time = datetime.now().timestamp()

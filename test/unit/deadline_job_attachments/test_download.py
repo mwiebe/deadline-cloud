@@ -35,6 +35,7 @@ from deadline.job_attachments.asset_manifests.v2023_03_03 import (
     ManifestPath as ManifestPathv2023_03_03,
 )
 from deadline.job_attachments.asset_manifests.versions import ManifestVersion
+from deadline.job_attachments import download as download_module
 from deadline.job_attachments.download import (
     OutputDownloader,
     download_file,
@@ -577,6 +578,7 @@ def assert_get_job_input_output_paths_by_asset_root(
 
 @pytest.mark.docker
 @pytest.mark.parametrize("manifest_version", [ManifestVersion.v2023_03_03])
+@pytest.mark.parametrize("use_snapshots_library", [False, True])
 class TestFullDownload:
     """
     Tests for downloads from cas.
@@ -595,6 +597,7 @@ class TestFullDownload:
         create_get_queue_response: Callable[[Queue], dict[str, Any]],
         create_get_job_response: Callable[[Job], dict[str, Any]],
         manifest_version: ManifestVersion,
+        use_snapshots_library: bool,
     ):
         """
         Setup the default queue and s3 bucket for all asset tests.
@@ -608,6 +611,7 @@ class TestFullDownload:
         self.job = default_job
         self.queue_response = create_get_queue_response(self.queue)
         self.job_response = create_get_job_response(self.job)
+        self.use_snapshots_library = use_snapshots_library
         create_s3_bucket(default_job_attachment_s3_settings.s3BucketName)
 
         s3 = boto3.Session(region_name="us-west-2").resource("s3")  # pylint: disable=invalid-name
@@ -767,6 +771,7 @@ class TestFullDownload:
         self,
         tmp_path: Path,
         manifest_version: ManifestVersion,
+        use_snapshots_library: bool,
     ):
         """
         Tests whether the files listed in the given manifest are downloaded correctly from the
@@ -789,7 +794,9 @@ class TestFullDownload:
         mock_on_downloading_files = MagicMock(return_value=True)
 
         # IF
-        with patch("shutil.chown") as mock_chown, patch("os.chmod") as mock_chmod:
+        with patch("shutil.chown") as mock_chown, patch("os.chmod") as mock_chmod, patch.object(
+            download_module, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library
+        ):
             _ = download_files_from_manifests(
                 s3_bucket=self.job_attachment_settings.s3BucketName,
                 manifests_by_root=manifests_by_root,
@@ -833,6 +840,7 @@ class TestFullDownload:
         self,
         tmp_path: Path,
         manifest_version: ManifestVersion,
+        use_snapshots_library: bool,
     ):
         """
         Tests whether the files listed in the given manifest are downloaded correctly from the
@@ -856,7 +864,9 @@ class TestFullDownload:
         # IF
         with patch(
             f"{deadline.__package__}.job_attachments.os_file_permission._change_permission_for_windows"
-        ) as mock_change_permission:
+        ) as mock_change_permission, patch.object(
+            download_module, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library
+        ):
             _ = download_files_from_manifests(
                 s3_bucket=self.job_attachment_settings.s3BucketName,
                 manifests_by_root=manifests_by_root,
@@ -911,6 +921,7 @@ class TestFullDownload:
         manifest_version: ManifestVersion,
         posix_target_group: str,
         posix_disjoint_group: str,
+        use_snapshots_library: bool,
     ):
         """
         Tests whether the file system ownership and permissions of the downloaded files
@@ -946,13 +957,14 @@ class TestFullDownload:
         mock_on_downloading_files = MagicMock(return_value=True)
 
         # IF
-        _ = download_files_from_manifests(
-            s3_bucket=self.job_attachment_settings.s3BucketName,
-            manifests_by_root=manifests_by_root,
-            cas_prefix=self.job_attachment_settings.full_cas_prefix(),
-            fs_permission_settings=fs_permission_settings,
-            on_downloading_files=mock_on_downloading_files,
-        )
+        with patch.object(download_module, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library):
+            _ = download_files_from_manifests(
+                s3_bucket=self.job_attachment_settings.s3BucketName,
+                manifests_by_root=manifests_by_root,
+                cas_prefix=self.job_attachment_settings.full_cas_prefix(),
+                fs_permission_settings=fs_permission_settings,
+                on_downloading_files=mock_on_downloading_files,
+            )
 
         # THEN
         expected_changed_paths = [
@@ -988,6 +1000,7 @@ class TestFullDownload:
         self,
         tmp_path: Path,
         manifest_version: ManifestVersion,
+        use_snapshots_library: bool,
     ):
         """
         Tests whether the file system ownership and permissions of the downloaded files
@@ -1024,13 +1037,14 @@ class TestFullDownload:
         mock_on_downloading_files = MagicMock(return_value=True)
 
         # IF
-        _ = download_files_from_manifests(
-            s3_bucket=self.job_attachment_settings.s3BucketName,
-            manifests_by_root=manifests_by_root,
-            cas_prefix=self.job_attachment_settings.full_cas_prefix(),
-            fs_permission_settings=fs_permission_settings,
-            on_downloading_files=mock_on_downloading_files,
-        )
+        with patch.object(download_module, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library):
+            _ = download_files_from_manifests(
+                s3_bucket=self.job_attachment_settings.s3BucketName,
+                manifests_by_root=manifests_by_root,
+                cas_prefix=self.job_attachment_settings.full_cas_prefix(),
+                fs_permission_settings=fs_permission_settings,
+                on_downloading_files=mock_on_downloading_files,
+            )
 
         # THEN
         expected_changed_paths = [
