@@ -248,6 +248,52 @@ def _snapshot_attachments(
     return attachment_settings.to_dict()
 
 
+def _build_known_asset_paths(
+    known_asset_paths: Collection[str],
+    job_bundle_dir: str,
+    storage_profile: Optional[StorageProfile],
+    config: Optional[ConfigParser],
+    job_parameters: list[dict[str, Any]],
+    parameters: list[JobParameter],
+) -> List[str]:
+    """
+    Build the complete list of known asset paths.
+
+    Known paths include:
+    - Paths in the known_asset_paths parameter
+    - The job bundle directory
+    - Paths configured in the storage profile as LOCAL (not SHARED)
+    - Paths configured in settings.known_asset_paths
+    - PATH-type parameters from job_parameters
+    """
+    result = list(known_asset_paths) + [os.path.abspath(job_bundle_dir)]
+
+    if storage_profile:
+        result.extend(
+            fsl.path
+            for fsl in storage_profile.fileSystemLocations
+            if fsl.type == FileSystemLocationType.LOCAL
+        )
+
+    configured_known_asset_paths = config_file.get_setting(
+        "settings.known_asset_paths", config=config
+    ).strip()
+    if configured_known_asset_paths:
+        result.extend(configured_known_asset_paths.split(os.pathsep))
+
+    known_parameter_names = {job_param.get("name") for job_param in job_parameters}
+    for job_param in parameters:
+        if job_param.get("type") == "PATH" and job_param.get("name") in known_parameter_names:
+            job_param_value = job_param.get("value")
+            if job_param_value:
+                if job_param.get("objectType") == "FILE":
+                    result.append(os.path.dirname(job_param_value))
+                else:
+                    result.append(job_param_value)
+
+    return _filter_redundant_known_paths(result)
+
+
 def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]:
     """
     Filters out redundant paths from the known asset paths list.
@@ -701,53 +747,14 @@ def create_job_from_job_bundle(
 
     # Hash and upload job attachments if there are any
     if asset_references and "jobAttachmentSettings" in queue:
-        # Extend known_asset_paths with all paths that are treated as known. These are
-        # paths provided explicitly by the call to submit the job bundle:
-        #   * Paths in the known_asset_paths parameter to this function call
-        #   * Paths contained inside the job bundle.
-        #   * Paths configured in the locally configured storage profile as LOCAL (not SHARED).
-        #   * Paths configured in the local config file settings.known_asset_paths
-        #   * Paths provided within the job_parameters parameter to this function call
-        # Paths that are treated as unknown (unless in one of the above categories). These can be
-        # absolute paths referencing anywhere in the file system, not explicitly provided by the call,
-        # so require that they be marked as known in the local configuration file or the associated
-        # Storage Profile in the AWS account:
-        #   * Paths provided in the job bundle via the parameter_values.json/.yaml file
-        #   * Paths provided in the job bundle via the asset_references.json/.yaml files
-        known_asset_paths = list(known_asset_paths) + [os.path.abspath(job_bundle_dir)]
-        # Add the configured storage profile paths
-        if storage_profile:
-            known_asset_paths.extend(
-                [
-                    fsl.path
-                    for fsl in storage_profile.fileSystemLocations
-                    if fsl.type == FileSystemLocationType.LOCAL
-                ]
-            )
-        # Add the configured known asset paths
-        configured_known_asset_paths = config_file.get_setting(
-            "settings.known_asset_paths", config=config
-        ).strip()
-        if configured_known_asset_paths:
-            known_asset_paths.extend(configured_known_asset_paths.split(os.pathsep))
-        # Use the parameter names from job_parameters, but the values from parameters. If a value was provided
-        # in job_parameters, it has been applied into parameters and normalized as necessary.
-        known_parameter_names = {job_param.get("name") for job_param in job_parameters}
-        for job_param in parameters:
-            if job_param.get("type") == "PATH" and job_param.get("name") in known_parameter_names:
-                job_param_value = job_param.get("value")
-                if job_param_value:
-                    if job_param.get("objectType") == "FILE":
-                        # If the job parameter is a file, use its directory as the known path. When collecting
-                        # outputs for upload, only that directory is used, not the file path.
-                        known_asset_paths.append(os.path.dirname(job_param_value))
-                    else:
-                        known_asset_paths.append(job_param_value)
-
-        # Filter known_asset_paths to remove any paths that have another one as a prefix. This can
-        # reduce the amount of processing needed later, and produces a shorter warning message when presenting
-        # to users.
-        known_asset_paths = _filter_redundant_known_paths(known_asset_paths)
+        known_asset_paths = _build_known_asset_paths(
+            known_asset_paths=known_asset_paths,
+            job_bundle_dir=job_bundle_dir,
+            storage_profile=storage_profile,
+            config=config,
+            job_parameters=job_parameters,
+            parameters=parameters,
+        )
 
         # Extend input_filenames with all the files in the input_directories
         missing_directories: set[str] = set()
