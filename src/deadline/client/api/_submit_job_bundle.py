@@ -334,7 +334,7 @@ def _filter_redundant_known_paths(known_asset_paths: Iterable[str]) -> list[str]
 def _save_debug_snapshot(
     debug_snapshot_dir: str,
     create_job_args: dict,
-    asset_manager: S3AssetManager,
+    job_attachment_settings: JobAttachmentS3Settings,
     queue: dict,
     storage_profile_id: str,
     storage_profile: Optional[StorageProfile],
@@ -370,7 +370,7 @@ def _save_debug_snapshot(
                 write_line(f"    --recursive {continuation}")
                 write_line(f"    ./{subdir} {continuation}")
                 write_line(
-                    f"    s3://{asset_manager.job_attachment_settings.s3BucketName}/{asset_manager.job_attachment_settings.rootPrefix}/{subdir}"  # type: ignore
+                    f"    s3://{job_attachment_settings.s3BucketName}/{job_attachment_settings.rootPrefix}/{subdir}"
                 )
                 write_line()
         write_line(f"aws deadline create-job {continuation}")
@@ -504,6 +504,8 @@ def _process_job_attachments(
         asset_references.input_directories.clear()
 
         return _process_job_attachments_with_snapshots(
+            farm_id=farm_id,
+            queue_id=queue_id,
             queue=queue,
             queue_role_session=queue_role_session,
             directories=directories_to_collect,
@@ -678,6 +680,8 @@ def _process_job_attachments_with_s3_asset_manager(
 
 def _process_job_attachments_with_snapshots(
     *,
+    farm_id: str,
+    queue_id: str,
     queue: dict,
     queue_role_session,
     directories: List[str],
@@ -851,27 +855,30 @@ def _process_job_attachments_with_snapshots(
         import uuid
 
         manifest_name = f"manifest_{uuid.uuid4().hex}.json"
+        # Use same path format as S3AssetManager: farm_id/queue_id/Inputs/guid/manifest_name
+        partial_manifest_prefix = job_attachment_settings.partial_manifest_prefix(farm_id, queue_id)
+        partial_manifest_key = f"{partial_manifest_prefix}/{manifest_name}"
+
         if not debug_snapshot_dir:
-            manifest_key = f"{job_attachment_settings.rootPrefix}/Manifests/{manifest_name}"
+            full_manifest_key = job_attachment_settings.add_root_and_manifest_folder_prefix(
+                partial_manifest_key
+            )
             s3_client.put_object(
                 Bucket=job_attachment_settings.s3BucketName,
-                Key=manifest_key,
+                Key=full_manifest_key,
                 Body=manifest_str.encode("utf-8"),
             )
-            manifest_path = manifest_key
         else:
-            manifest_dir = Path(debug_snapshot_dir) / "Manifests"
-            manifest_dir.mkdir(parents=True, exist_ok=True)
-            manifest_file = manifest_dir / manifest_name
+            manifest_file = Path(debug_snapshot_dir) / "Manifests" / partial_manifest_key
+            manifest_file.parent.mkdir(parents=True, exist_ok=True)
             manifest_file.write_text(manifest_str)
-            manifest_path = f"Manifests/{manifest_name}"
 
         manifests_list.append(
             ManifestProperties(
                 rootPath=group.root_path,
                 rootPathFormat=PathFormat.POSIX if os.name != "nt" else PathFormat.WINDOWS,
                 fileSystemLocationName=group.file_system_location_name,
-                inputManifestPath=manifest_path,
+                inputManifestPath=partial_manifest_key,
                 inputManifestHash=manifest_hash,
                 outputRelativeDirectories=group.outputs if group.outputs else None,
             ).to_dict()
@@ -1131,16 +1138,15 @@ def create_job_from_job_bundle(
     )
 
     if debug_snapshot_dir:
-        raise RuntimeError("Debug snapshots are temporarily turned off")
-        # assert asset_manager is not None
-        # return _save_debug_snapshot(
-        #     debug_snapshot_dir,
-        #     create_job_args,
-        #     asset_manager,
-        #     queue,
-        #     storage_profile_id,
-        #     storage_profile,
-        # )
+        job_attachment_settings = JobAttachmentS3Settings(**queue["jobAttachmentSettings"])
+        return _save_debug_snapshot(
+            debug_snapshot_dir,
+            create_job_args,
+            job_attachment_settings,
+            queue,
+            storage_profile_id,
+            storage_profile,
+        )
 
     create_job_response = deadline.create_job(**create_job_args)
     logger.debug("CreateJob Response %r", create_job_response)

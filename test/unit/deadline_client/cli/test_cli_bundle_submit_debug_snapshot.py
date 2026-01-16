@@ -13,6 +13,7 @@ import os
 import shutil
 import difflib
 
+import pytest
 from click.testing import CliRunner
 
 from deadline.client import config
@@ -141,10 +142,15 @@ def assert_directories_equal(snapshot_dir, expected_dir):
     }
 
 
-def test_cli_bundle_submit_debug_snapshot(fresh_deadline_config, deadline_mock, tmp_path):
+@pytest.mark.parametrize("use_snapshots_library", [False, True])
+def test_cli_bundle_submit_debug_snapshot(
+    fresh_deadline_config, deadline_mock, tmp_path, use_snapshots_library
+):
     """
     Confirm that CLI bundle submit makes the right create_job call from a simple JSON template.
     """
+    from deadline.client.api import _submit_job_bundle
+
     # Make sure the temporary path has no symlinks
     tmp_path = tmp_path.resolve()
 
@@ -168,7 +174,7 @@ def test_cli_bundle_submit_debug_snapshot(fresh_deadline_config, deadline_mock, 
         deadline.job_attachments.models,
         "_generate_random_guid",
         return_value="00000000000000000000000000000000",
-    ):
+    ), patch.object(_submit_job_bundle, "ENABLE_SNAPSHOTS_LIBRARY", use_snapshots_library):
         runner = CliRunner()
         result = runner.invoke(
             main,

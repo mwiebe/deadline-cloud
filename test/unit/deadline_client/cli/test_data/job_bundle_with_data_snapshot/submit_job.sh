@@ -19,5 +19,5 @@ aws deadline create-job \
     --template file://template_param.data \
     --template-type YAML \
     --priority 50 \
-    --attachments file://attachments_param.json \
-    --parameters file://parameters_param.json
+    --parameters file://parameters_param.json \
+    --attachments file://attachments_param.json

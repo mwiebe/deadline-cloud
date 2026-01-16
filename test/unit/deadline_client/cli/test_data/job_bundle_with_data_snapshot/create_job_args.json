@@ -4,6 +4,17 @@
  "template": "specificationVersion: jobtemplate-2023-09\nname: \"Job Bundle with data\"\ndescription: This bundle is for testing 'deadline bundle submit'.\nparameterDefinitions:\n- name: InputDir\n  type: PATH\n  default: input\n  dataFlow: IN\n  objectType: DIRECTORY\n- name: OutputDir\n  type: PATH\n  default: output\n  dataFlow: OUT\n  objectType: DIRECTORY\n- name: InputOutputDir\n  type: PATH\n  default: input_output\n  dataFlow: INOUT\n  objectType: DIRECTORY\nsteps:\n- name: Step\n  script:\n    actions:\n      onRun:\n        command: bash\n        args: [\"--help\"]\n  hostRequirements:\n    attributes:\n    - name: attr.worker.os.family\n      anyOf:\n      - linux\n",
  "templateType": "YAML",
  "priority": 50,
+ "parameters": {
+  "InputDir": {
+   "path": "ROOT_PATH_0/input"
+  },
+  "OutputDir": {
+   "path": "ROOT_PATH_0/output"
+  },
+  "InputOutputDir": {
+   "path": "ROOT_PATH_0/input_output"
+  }
+ },
  "attachments": {
   "manifests": [
    {
@@ -18,16 +29,5 @@
    }
   ],
   "fileSystem": "COPIED"
- },
- "parameters": {
-  "InputDir": {
-   "path": "ROOT_PATH_0/input"
-  },
-  "OutputDir": {
-   "path": "ROOT_PATH_0/output"
-  },
-  "InputOutputDir": {
-   "path": "ROOT_PATH_0/input_output"
-  }
  }
 }
