@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import os
+import time
 import re
 import textwrap
 from configparser import ConfigParser
@@ -59,6 +59,8 @@ from ._job_attachment import _hash_attachments  # type: ignore[import]
 from ...job_attachments._path_summarization import human_readable_file_size, summarize_path_list
 
 logger = logging.getLogger(__name__)
+
+ENABLE_SNAPSHOTS_LIBRARY = os.environ.get("ENABLE_SNAPSHOTS_LIBRARY") == "1"
 
 
 def _summarize_asset_paths(
@@ -370,6 +372,141 @@ def _save_debug_snapshot(
     return None
 
 
+def _process_job_attachments_with_s3_asset_manager(
+    *,
+    farm_id: str,
+    queue_id: str,
+    queue: dict,
+    queue_role_session,
+    asset_references: AssetReferences,
+    storage_profile: Optional[StorageProfile],
+    require_paths_exist: bool,
+    known_asset_paths: List[str],
+    config: Optional[ConfigParser],
+    debug_snapshot_dir: Optional[str],
+    job_attachments_file_system: str,
+    from_gui: bool,
+    force_s3_check: bool,
+    print_function_callback: Callable[[str], None],
+    interactive_confirmation_callback: Optional[Callable[[str, bool], bool]],
+    hashing_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
+    upload_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
+) -> Tuple[Optional[dict], S3AssetManager]:
+    """
+    Process job attachments using S3AssetManager.
+
+    Returns a tuple of (attachment_settings, asset_manager). attachment_settings is None
+    if there are no asset groups to process.
+    """
+    asset_manager = S3AssetManager(
+        farm_id=farm_id,
+        queue_id=queue_id,
+        job_attachment_settings=JobAttachmentS3Settings(**queue["jobAttachmentSettings"]),
+        session=queue_role_session,
+    )
+
+    upload_group = asset_manager.prepare_paths_for_upload(
+        input_paths=sorted(asset_references.input_filenames),
+        output_paths=sorted(asset_references.output_directories),
+        referenced_paths=sorted(asset_references.referenced_paths),
+        storage_profile=storage_profile,
+        require_paths_exist=require_paths_exist,
+    )
+
+    if not upload_group.asset_groups:
+        # Call each callback once indicating nothing to do.
+        if hashing_progress_callback is not None:
+            hashing_progress_callback(
+                ProgressReportMetadata(
+                    status=ProgressStatus.PREPARING_IN_PROGRESS,
+                    progress=0,
+                    transferRate=0,
+                    progressMessage="No files to hash",
+                    processedFiles=0,
+                )
+            )
+        if upload_progress_callback is not None:
+            upload_progress_callback(
+                ProgressReportMetadata(
+                    status=ProgressStatus.UPLOAD_IN_PROGRESS,
+                    progress=0,
+                    transferRate=0,
+                    progressMessage="No files to upload",
+                    processedFiles=0,
+                )
+            )
+        return None, asset_manager
+
+    # Generate warning message if needed
+    asset_path_message, default_prompt_response = _generate_message_for_asset_paths(
+        upload_group, storage_profile, known_asset_paths
+    )
+
+    if interactive_confirmation_callback is None:
+        # In this case, no user prompt can be presented. The result of the function must
+        # be the default that would be presented to the interactive prompt.
+        print_function_callback(asset_path_message)
+        if not default_prompt_response:
+            print_function_callback("\nJob submission canceled (user input not enabled).")
+            raise DeadlineOperationCanceled()
+    elif config_file.str2bool(get_setting("settings.auto_accept", config=config)):
+        if not default_prompt_response:
+            if from_gui:
+                # In the from_gui case, we present a prompt even though settings.auto_accept is enabled.
+                if not interactive_confirmation_callback(
+                    asset_path_message + "Do you wish to proceed?", default_prompt_response
+                ):
+                    print_function_callback("Job submission canceled (user input).")
+                    raise UserInitiatedCancel()
+            else:
+                # In this case, no user prompt should be presented. The result of the function must
+                # be the default that would be presented to the interactive prompt.
+                print_function_callback(
+                    f"{asset_path_message}\nJob submission canceled (settings.auto_accept enabled and there were unknown paths)."
+                )
+                raise DeadlineOperationCanceled()
+        else:
+            print_function_callback(asset_path_message)
+    else:
+        if not interactive_confirmation_callback(
+            asset_path_message + "\nDo you wish to proceed?", default_prompt_response
+        ):
+            print_function_callback("Job submission canceled (user input).")
+            raise UserInitiatedCancel()
+
+    _, asset_manifests = _hash_attachments(
+        asset_manager=asset_manager,
+        asset_groups=upload_group.asset_groups,
+        total_input_files=upload_group.total_input_files,
+        total_input_bytes=upload_group.total_input_bytes,
+        print_function_callback=print_function_callback,
+        hashing_progress_callback=hashing_progress_callback,
+    )
+
+    if not debug_snapshot_dir:
+        attachment_settings = _upload_attachments(  # type: ignore
+            asset_manager,
+            asset_manifests,
+            print_function_callback,
+            upload_progress_callback,
+            from_gui=from_gui,
+            force_s3_check=force_s3_check,
+        )
+    else:
+        attachment_settings = _snapshot_attachments(  # type: ignore
+            debug_snapshot_dir,
+            asset_manager,
+            asset_manifests,
+            print_function_callback,
+            upload_progress_callback,
+            from_gui=from_gui,
+        )
+
+    attachment_settings["fileSystem"] = JobAttachmentsFileSystem(job_attachments_file_system)
+
+    return attachment_settings, asset_manager
+
+
 @api.record_function_latency_telemetry_event()
 def create_job_from_job_bundle(
     job_bundle_dir: str,
@@ -562,57 +699,56 @@ def create_job_from_job_bundle(
         parameters, job_bundle_dir
     )
 
-    # Extend known_asset_paths with all paths that are treated as known. These are
-    # paths provided explicitly by the call to submit the job bundle:
-    #   * Paths in the known_asset_paths parameter to this function call
-    #   * Paths contained inside the job bundle.
-    #   * Paths configured in the locally configured storage profile as LOCAL (not SHARED).
-    #   * Paths configured in the local config file settings.known_asset_paths
-    #   * Paths provided within the job_parameters parameter to this function call
-    # Paths that are treated as unknown (unless in one of the above categories). These can be
-    # absolute paths referencing anywhere in the file system, not explicitly provided by the call,
-    # so require that they be marked as known in the local configuration file or the associated
-    # Storage Profile in the AWS account:
-    #   * Paths provided in the job bundle via the parameter_values.json/.yaml file
-    #   * Paths provided in the job bundle via the asset_references.json/.yaml files
-    known_asset_paths = list(known_asset_paths) + [os.path.abspath(job_bundle_dir)]
-    # Add the configured storage profile paths
-    if storage_profile:
-        known_asset_paths.extend(
-            [
-                fsl.path
-                for fsl in storage_profile.fileSystemLocations
-                if fsl.type == FileSystemLocationType.LOCAL
-            ]
-        )
-    # Add the configured known asset paths
-    configured_known_asset_paths = config_file.get_setting(
-        "settings.known_asset_paths", config=config
-    ).strip()
-    if configured_known_asset_paths:
-        known_asset_paths.extend(configured_known_asset_paths.split(os.pathsep))
-    # Use the parameter names from job_parameters, but the values from parameters. If a value was provided
-    # in job_parameters, it has been applied into parameters and normalized as necessary.
-    known_parameter_names = {job_param.get("name") for job_param in job_parameters}
-    for job_param in parameters:
-        if job_param.get("type") == "PATH" and job_param.get("name") in known_parameter_names:
-            job_param_value = job_param.get("value")
-            if job_param_value:
-                if job_param.get("objectType") == "FILE":
-                    # If the job parameter is a file, use its directory as the known path. When collecting
-                    # outputs for upload, only that directory is used, not the file path.
-                    known_asset_paths.append(os.path.dirname(job_param_value))
-                else:
-                    known_asset_paths.append(job_param_value)
-
-    # Filter known_asset_paths to remove any paths that have another one as a prefix. This can
-    # reduce the amount of processing needed later, and produces a shorter warning message when presenting
-    # to users.
-    known_asset_paths = _filter_redundant_known_paths(known_asset_paths)
-
     # Hash and upload job attachments if there are any
-    files_processed = False
     if asset_references and "jobAttachmentSettings" in queue:
+        # Extend known_asset_paths with all paths that are treated as known. These are
+        # paths provided explicitly by the call to submit the job bundle:
+        #   * Paths in the known_asset_paths parameter to this function call
+        #   * Paths contained inside the job bundle.
+        #   * Paths configured in the locally configured storage profile as LOCAL (not SHARED).
+        #   * Paths configured in the local config file settings.known_asset_paths
+        #   * Paths provided within the job_parameters parameter to this function call
+        # Paths that are treated as unknown (unless in one of the above categories). These can be
+        # absolute paths referencing anywhere in the file system, not explicitly provided by the call,
+        # so require that they be marked as known in the local configuration file or the associated
+        # Storage Profile in the AWS account:
+        #   * Paths provided in the job bundle via the parameter_values.json/.yaml file
+        #   * Paths provided in the job bundle via the asset_references.json/.yaml files
+        known_asset_paths = list(known_asset_paths) + [os.path.abspath(job_bundle_dir)]
+        # Add the configured storage profile paths
+        if storage_profile:
+            known_asset_paths.extend(
+                [
+                    fsl.path
+                    for fsl in storage_profile.fileSystemLocations
+                    if fsl.type == FileSystemLocationType.LOCAL
+                ]
+            )
+        # Add the configured known asset paths
+        configured_known_asset_paths = config_file.get_setting(
+            "settings.known_asset_paths", config=config
+        ).strip()
+        if configured_known_asset_paths:
+            known_asset_paths.extend(configured_known_asset_paths.split(os.pathsep))
+        # Use the parameter names from job_parameters, but the values from parameters. If a value was provided
+        # in job_parameters, it has been applied into parameters and normalized as necessary.
+        known_parameter_names = {job_param.get("name") for job_param in job_parameters}
+        for job_param in parameters:
+            if job_param.get("type") == "PATH" and job_param.get("name") in known_parameter_names:
+                job_param_value = job_param.get("value")
+                if job_param_value:
+                    if job_param.get("objectType") == "FILE":
+                        # If the job parameter is a file, use its directory as the known path. When collecting
+                        # outputs for upload, only that directory is used, not the file path.
+                        known_asset_paths.append(os.path.dirname(job_param_value))
+                    else:
+                        known_asset_paths.append(job_param_value)
+
+        # Filter known_asset_paths to remove any paths that have another one as a prefix. This can
+        # reduce the amount of processing needed later, and produces a shorter warning message when presenting
+        # to users.
+        known_asset_paths = _filter_redundant_known_paths(known_asset_paths)
+
         # Extend input_filenames with all the files in the input_directories
         missing_directories: set[str] = set()
         for directory in asset_references.input_directories:
@@ -659,116 +795,28 @@ def create_job_from_job_bundle(
             queue_display_name=queue["displayName"],
         )
 
-        asset_manager = S3AssetManager(
+        attachment_settings, asset_manager = _process_job_attachments_with_s3_asset_manager(
             farm_id=farm_id,
             queue_id=queue_id,
-            job_attachment_settings=JobAttachmentS3Settings(**queue["jobAttachmentSettings"]),
-            session=queue_role_session,
-        )
-
-        upload_group = asset_manager.prepare_paths_for_upload(
-            input_paths=sorted(asset_references.input_filenames),
-            output_paths=sorted(asset_references.output_directories),
-            referenced_paths=sorted(asset_references.referenced_paths),
+            queue=queue,
+            queue_role_session=queue_role_session,
+            asset_references=asset_references,
             storage_profile=storage_profile,
             require_paths_exist=require_paths_exist,
+            known_asset_paths=known_asset_paths,
+            config=config,
+            debug_snapshot_dir=debug_snapshot_dir,
+            job_attachments_file_system=job_attachments_file_system,
+            from_gui=from_gui,
+            force_s3_check=force_s3_check,
+            print_function_callback=print_function_callback,
+            interactive_confirmation_callback=interactive_confirmation_callback,
+            hashing_progress_callback=hashing_progress_callback,
+            upload_progress_callback=upload_progress_callback,
         )
 
-        if upload_group.asset_groups:
-            # Generate warning message if needed
-            asset_path_message, default_prompt_response = _generate_message_for_asset_paths(
-                upload_group, storage_profile, known_asset_paths
-            )
-
-            if interactive_confirmation_callback is None:
-                # In this case, no user prompt can be presented. The result of the function must
-                # be the default that would be presented to the interactive prompt.
-                print_function_callback(asset_path_message)
-                if not default_prompt_response:
-                    print_function_callback("\nJob submission canceled (user input not enabled).")
-                    raise DeadlineOperationCanceled()
-            elif config_file.str2bool(get_setting("settings.auto_accept", config=config)):
-                if not default_prompt_response:
-                    if from_gui:
-                        # In the from_gui case, we present a prompt even though settings.auto_accept is enabled.
-                        if not interactive_confirmation_callback(
-                            asset_path_message + "Do you wish to proceed?", default_prompt_response
-                        ):
-                            print_function_callback("Job submission canceled (user input).")
-                            raise UserInitiatedCancel()
-                    else:
-                        # In this case, no user prompt should be presented. The result of the function must
-                        # be the default that would be presented to the interactive prompt.
-                        print_function_callback(
-                            f"{asset_path_message}\nJob submission canceled (settings.auto_accept enabled and there were unknown paths)."
-                        )
-                        raise DeadlineOperationCanceled()
-                else:
-                    print_function_callback(asset_path_message)
-            else:
-                if not interactive_confirmation_callback(
-                    asset_path_message + "\nDo you wish to proceed?", default_prompt_response
-                ):
-                    print_function_callback("Job submission canceled (user input).")
-                    raise UserInitiatedCancel()
-
-            _, asset_manifests = _hash_attachments(
-                asset_manager=asset_manager,
-                asset_groups=upload_group.asset_groups,
-                total_input_files=upload_group.total_input_files,
-                total_input_bytes=upload_group.total_input_bytes,
-                print_function_callback=print_function_callback,
-                hashing_progress_callback=hashing_progress_callback,
-            )
-
-            if not debug_snapshot_dir:
-                attachment_settings = _upload_attachments(  # type: ignore
-                    asset_manager,
-                    asset_manifests,
-                    print_function_callback,
-                    upload_progress_callback,
-                    from_gui=from_gui,
-                    force_s3_check=force_s3_check,
-                )
-            else:
-                attachment_settings = _snapshot_attachments(  # type: ignore
-                    debug_snapshot_dir,
-                    asset_manager,
-                    asset_manifests,
-                    print_function_callback,
-                    upload_progress_callback,
-                    from_gui=from_gui,
-                )
-
-            attachment_settings["fileSystem"] = JobAttachmentsFileSystem(
-                job_attachments_file_system
-            )
+        if attachment_settings is not None:
             create_job_args["attachments"] = attachment_settings
-
-            files_processed = True
-
-    if not files_processed:
-        # Call each callback once indicating nothing to do.
-        if hashing_progress_callback is not None:
-            hashing_progress_callback(
-                ProgressReportMetadata(
-                    status=ProgressStatus.PREPARING_IN_PROGRESS,
-                    progress=0,
-                    transferRate=0,
-                    progressMessage="No files to hash",
-                    processedFiles=0,
-                )
-            )
-        if upload_progress_callback is not None:
-            upload_progress_callback(
-                ProgressReportMetadata(
-                    status=ProgressStatus.UPLOAD_IN_PROGRESS,
-                    progress=0,
-                    transferRate=0,
-                    progressMessage="No files to upload",
-                    processedFiles=0,
-                )
-            )
 
     create_job_args.update(app_parameters_formatted)
 
