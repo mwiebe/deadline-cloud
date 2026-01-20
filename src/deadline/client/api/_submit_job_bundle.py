@@ -869,14 +869,13 @@ def _process_job_attachments_with_snapshots(
 
     # Create progress callback adapter
     def on_progress(metadata) -> bool:
-        # Report hashing progress
+        # Report hashing progress (based on bytes for consistency with upload progress)
         if hashing_progress_callback:
-            hashing_total = metadata.hashed_file_chunks + metadata.hash_skipped_file_chunks
+            hashing_bytes = metadata.hashed_bytes + metadata.hash_skipped_bytes
             hashing_progress = (
-                (hashing_total / metadata.total_file_chunks * 100)
-                if metadata.total_file_chunks > 0
-                else 0
+                (hashing_bytes / metadata.total_bytes * 100) if metadata.total_bytes > 0 else 0
             )
+            hashing_total = metadata.hashed_file_chunks + metadata.hash_skipped_file_chunks
             if not hashing_progress_callback(
                 ProgressReportMetadata(
                     status=ProgressStatus.PREPARING_IN_PROGRESS,
@@ -888,13 +887,19 @@ def _process_job_attachments_with_snapshots(
             ):
                 return False
 
-        # Report upload progress
+        # Report upload progress (capped at hash progress since upload can't exceed hash)
         if upload_progress_callback:
+            hashing_bytes = metadata.hashed_bytes + metadata.hash_skipped_bytes
+            hashing_progress = (
+                (hashing_bytes / metadata.total_bytes * 100) if metadata.total_bytes > 0 else 0
+            )
+            # Upload progress can't exceed hash progress
+            upload_progress = min(metadata.progress, hashing_progress)
             upload_total = metadata.uploaded_file_chunks + metadata.upload_skipped_file_chunks
             if not upload_progress_callback(
                 ProgressReportMetadata(
                     status=ProgressStatus.UPLOAD_IN_PROGRESS,
-                    progress=metadata.progress,
+                    progress=upload_progress,
                     transferRate=0,
                     progressMessage=metadata.progressMessage,
                     processedFiles=upload_total,
@@ -941,13 +946,15 @@ def _process_job_attachments_with_snapshots(
     # Print upload summary
     stats = result.statistics
     if stats.total_file_chunks > 0:
+        # Use "files" when processing whole files, "chunks" when chunking is enabled
+        unit = "files" if hashed_snapshot.fileChunkSizeBytes <= 0 else "chunks"
         summary_lines = [
             "Hash/Upload Summary:",
             f"    Total bytes: {human_readable_file_size(stats.total_bytes)}",
-            f"    Hashed: {human_readable_file_size(stats.hashed_bytes)} ({stats.hashed_file_chunks} chunks)",
-            f"    Hash cache hits: {human_readable_file_size(stats.hash_skipped_bytes)} ({stats.hash_skipped_file_chunks} chunks)",
-            f"    Uploaded: {human_readable_file_size(stats.uploaded_bytes)} ({stats.uploaded_file_chunks} chunks)",
-            f"    Upload cache hits: {human_readable_file_size(stats.upload_skipped_bytes)} ({stats.upload_skipped_file_chunks} chunks)",
+            f"    Hashed: {human_readable_file_size(stats.hashed_bytes)} ({stats.hashed_file_chunks} {unit})",
+            f"    Hash cache hits: {human_readable_file_size(stats.hash_skipped_bytes)} ({stats.hash_skipped_file_chunks} {unit})",
+            f"    Uploaded: {human_readable_file_size(stats.uploaded_bytes)} ({stats.uploaded_file_chunks} {unit})",
+            f"    Upload cache hits: {human_readable_file_size(stats.upload_skipped_bytes)} ({stats.upload_skipped_file_chunks} {unit})",
             f"    {stats.progressMessage}",
         ]
         print_function_callback("\n".join(summary_lines))

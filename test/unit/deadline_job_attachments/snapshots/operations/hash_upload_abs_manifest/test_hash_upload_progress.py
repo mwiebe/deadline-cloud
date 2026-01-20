@@ -277,3 +277,86 @@ class TestHashUploadProgress:
         final = callbacks[-1]
         # Upload was skipped because content already in cache
         assert final.upload_skipped_bytes == entry.size
+
+    def test_progress_message_uses_files_for_whole_file_mode(self, tmp_path: Path) -> None:
+        """Test that progressMessage says 'files' when using whole file mode (no chunking)."""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+        entries = [
+            self._create_test_file(files_dir / f"file{i}.txt", f"content{i}") for i in range(3)
+        ]
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=entries,
+            total_size=sum(e.size or 0 for e in entries),
+            file_chunk_size_bytes=-1,  # Whole file mode
+        )
+
+        data_cache = FileSystemDataCache(root_path=cache_root)
+        result = hash_upload_abs_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+        )
+
+        # progressMessage should contain "files" not "chunks"
+        assert "files" in result.statistics.progressMessage
+        assert "chunks" not in result.statistics.progressMessage
+        assert "(3 files)" in result.statistics.progressMessage
+
+    def test_progress_message_uses_chunks_for_chunked_mode(self, tmp_path: Path) -> None:
+        """Test that progressMessage says 'chunks' when using chunked mode."""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+        # Create a file large enough to be chunked with small chunk size
+        entry = self._create_test_file(files_dir / "large.txt", "x" * 100)
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[entry],
+            total_size=entry.size or 0,
+            file_chunk_size_bytes=32,  # Small chunk size to force chunking
+        )
+
+        data_cache = FileSystemDataCache(root_path=cache_root)
+        result = hash_upload_abs_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+            max_memory_bytes=256 * 1024 * 1024,  # Ensure memory is sufficient
+        )
+
+        # progressMessage should contain "chunks" not "files"
+        assert "chunks" in result.statistics.progressMessage
+        assert "files" not in result.statistics.progressMessage
+        # 100 bytes / 32 bytes per chunk = 4 chunks (rounded up)
+        assert "(4 chunks)" in result.statistics.progressMessage
+
+    def test_progress_message_contains_rate(self, tmp_path: Path) -> None:
+        """Test that progressMessage contains throughput rate."""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+        entry = self._create_test_file(files_dir / "test.txt", "rate test content")
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=[entry],
+            total_size=entry.size or 0,
+        )
+
+        data_cache = FileSystemDataCache(root_path=cache_root)
+        result = hash_upload_abs_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+        )
+
+        # progressMessage should contain rate in format "(X B/s)" or "(X KB/s)" etc.
+        assert "/s)" in result.statistics.progressMessage
