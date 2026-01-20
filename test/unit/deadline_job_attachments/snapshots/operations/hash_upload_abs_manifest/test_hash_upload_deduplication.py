@@ -220,11 +220,11 @@ class TestConcurrentUploadDeduplicationFileSystem:
             max_workers=4,
         )
 
-        # Total bytes should be 64 (processed + skipped)
+        # Total bytes should be 64 (uploaded + skipped)
         stats = result.statistics
-        assert stats.processed_bytes + stats.skipped_bytes == 64
+        assert stats.uploaded_bytes + stats.upload_skipped_bytes == 64
         # At least some bytes should be skipped (3 of 4 chunks are duplicates)
-        assert stats.skipped_bytes >= 16 * 3  # At least 3 chunks skipped
+        assert stats.upload_skipped_bytes >= 16 * 3  # At least 3 chunks skipped
 
 
 class TestConcurrentUploadDeduplicationS3:

@@ -499,40 +499,6 @@ def _process_job_attachments(
         parameters=parameters,
     )
 
-    # Extend input_filenames with all the files in the input_directories
-    missing_directories: set[str] = set()
-    for directory in asset_references.input_directories:
-        if not os.path.isdir(directory):
-            if require_paths_exist:
-                missing_directories.add(directory)
-            else:
-                logger.warning(
-                    f"Input path '{directory}' does not exist. Adding to referenced paths."
-                )
-                asset_references.referenced_paths.add(directory)
-            continue
-
-        is_dir_empty = True
-        for root, _, files in os.walk(directory):
-            if not files:
-                continue
-            is_dir_empty = False
-            asset_references.input_filenames.update(
-                os.path.normpath(os.path.join(root, file)) for file in files
-            )
-        if is_dir_empty:
-            logger.info(f"Input directory '{directory}' is empty. Adding to referenced paths.")
-            asset_references.referenced_paths.add(directory)
-
-    if missing_directories:
-        all_missing_directories = "\n\t".join(sorted(list(missing_directories)))
-        misconfigured_directories_msg = (
-            "Job submission contains misconfigured input directories and cannot be submitted."
-            " All input directories must exist."
-            f"\nNon-existent directories:\n\t{all_missing_directories}"
-        )
-        raise MisconfiguredInputsError(misconfigured_directories_msg)
-
     queue_role_session = api.get_queue_user_boto3_session(
         deadline=deadline,
         config=config,
@@ -542,9 +508,30 @@ def _process_job_attachments(
     )
 
     if ENABLE_SNAPSHOTS_LIBRARY:
-        # Pass directories to collect_abs_snapshot before they're cleared
-        directories_to_collect = [d for d in asset_references.input_directories if os.path.isdir(d)]
-        asset_references.input_directories.clear()
+        # For snapshots path, validate directories exist but don't walk them -
+        # collect_abs_snapshot will handle the directory walking
+        missing_directories: set[str] = set()
+        directories_to_collect: list[str] = []
+        for directory in asset_references.input_directories:
+            if not os.path.isdir(directory):
+                if require_paths_exist:
+                    missing_directories.add(directory)
+                else:
+                    logger.warning(
+                        f"Input path '{directory}' does not exist. Adding to referenced paths."
+                    )
+                    asset_references.referenced_paths.add(directory)
+            else:
+                directories_to_collect.append(directory)
+
+        if missing_directories:
+            all_missing_directories = "\n\t".join(sorted(list(missing_directories)))
+            misconfigured_directories_msg = (
+                "Job submission contains misconfigured input directories and cannot be submitted."
+                " All input directories must exist."
+                f"\nNon-existent directories:\n\t{all_missing_directories}"
+            )
+            raise MisconfiguredInputsError(misconfigured_directories_msg)
 
         return _process_job_attachments_with_snapshots(
             farm_id=farm_id,
@@ -566,6 +553,40 @@ def _process_job_attachments(
             hashing_progress_callback=hashing_progress_callback,
             upload_progress_callback=upload_progress_callback,
         )
+
+    # For non-snapshots path, extend input_filenames with all the files in the input_directories
+    missing_dirs: set[str] = set()
+    for directory in asset_references.input_directories:
+        if not os.path.isdir(directory):
+            if require_paths_exist:
+                missing_dirs.add(directory)
+            else:
+                logger.warning(
+                    f"Input path '{directory}' does not exist. Adding to referenced paths."
+                )
+                asset_references.referenced_paths.add(directory)
+            continue
+
+        is_dir_empty = True
+        for root, _, files in os.walk(directory):
+            if not files:
+                continue
+            is_dir_empty = False
+            asset_references.input_filenames.update(
+                os.path.normpath(os.path.join(root, file)) for file in files
+            )
+        if is_dir_empty:
+            logger.info(f"Input directory '{directory}' is empty. Adding to referenced paths.")
+            asset_references.referenced_paths.add(directory)
+
+    if missing_dirs:
+        all_missing_directories = "\n\t".join(sorted(list(missing_dirs)))
+        misconfigured_directories_msg = (
+            "Job submission contains misconfigured input directories and cannot be submitted."
+            " All input directories must exist."
+            f"\nNon-existent directories:\n\t{all_missing_directories}"
+        )
+        raise MisconfiguredInputsError(misconfigured_directories_msg)
 
     asset_references.input_directories.clear()
 
@@ -919,13 +940,15 @@ def _process_job_attachments_with_snapshots(
 
     # Print upload summary
     stats = result.statistics
-    if stats.total_files > 0:
+    if stats.total_file_chunks > 0:
         summary_lines = [
-            "Upload Summary:",
-            f"    Total files: {stats.total_files}",
+            "Hash/Upload Summary:",
             f"    Total bytes: {human_readable_file_size(stats.total_bytes)}",
-            f"    Processed files: {stats.processed_files}",
-            f"    Skipped files: {stats.skipped_files}",
+            f"    Hashed: {human_readable_file_size(stats.hashed_bytes)} ({stats.hashed_file_chunks} chunks)",
+            f"    Hash cache hits: {human_readable_file_size(stats.hash_skipped_bytes)} ({stats.hash_skipped_file_chunks} chunks)",
+            f"    Uploaded: {human_readable_file_size(stats.uploaded_bytes)} ({stats.uploaded_file_chunks} chunks)",
+            f"    Upload cache hits: {human_readable_file_size(stats.upload_skipped_bytes)} ({stats.upload_skipped_file_chunks} chunks)",
+            f"    {stats.progressMessage}",
         ]
         print_function_callback("\n".join(summary_lines))
 

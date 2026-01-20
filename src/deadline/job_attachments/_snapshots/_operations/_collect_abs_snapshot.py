@@ -249,7 +249,8 @@ def _collect_abs_snapshot_impl(
                             logger.debug("Collected (collapsed symlink): %s", entry_path)
                         except OSError as e:
                             logger.debug("Skipping broken symlink %s: %s", entry_path, e)
-        else:
+        elif stat.S_ISREG(stat_info.st_mode):
+            # Only collect regular files, skip device files (NUL, CON, etc. on Windows)
             try:
                 entry = _create_unhashed_file_entry(full_path, entry_path, stat_info)
                 file_entries.append(entry)
@@ -258,6 +259,9 @@ def _collect_abs_snapshot_impl(
                 logger.debug("Collected: %s", entry_path)
             except OSError as e:
                 logger.debug("Skipping inaccessible file %s: %s", entry_path, e)
+        else:
+            # Skip non-regular files (device files, sockets, etc.)
+            logger.debug("Skipping non-regular file %s (mode: %o)", entry_path, stat_info.st_mode)
 
     # Determine if we need two-pass processing
     use_two_pass = symlink_policy in (
@@ -362,7 +366,8 @@ def _collect_abs_snapshot_impl(
                                         logger.debug(
                                             "Skipping broken symlink %s: %s", entry_path, e
                                         )
-                else:
+                elif stat.S_ISREG(stat_info.st_mode):
+                    # Only collect regular files, skip device files (NUL, CON, etc. on Windows)
                     try:
                         entry = _create_unhashed_file_entry(full_path, entry_path, stat_info)
                         file_entries.append(entry)
@@ -371,6 +376,11 @@ def _collect_abs_snapshot_impl(
                         logger.debug("Collected: %s", entry_path)
                     except OSError as e:
                         logger.debug("Skipping inaccessible file %s: %s", entry_path, e)
+                else:
+                    # Skip non-regular files (device files, sockets, etc.)
+                    logger.debug(
+                        "Skipping non-regular file %s (mode: %o)", entry_path, stat_info.st_mode
+                    )
 
     # =========================================================================
     # Pass 2: Process deferred symlinks (COLLAPSE_ESCAPING only)

@@ -31,12 +31,13 @@ from .._content_addressed_data_cache import (
     ContentAddressedDataCache,
     S3DataCache,
 )
-from ...progress_tracker import SummaryStatistics
+from ...progress_tracker import human_readable_file_size
 
 # Import pipeline classes and types
 from ._hash_upload_abs_manifest_pipeline import (
     HashUploadPipelineBase,
     HashUploadProgressCallback,
+    HashUploadProgressMetadata,
     _HashUploadProgressState,
     _ChunkWorkItem,
     _StreamingWorkItem,
@@ -64,12 +65,12 @@ class UploadResult:
     Result of a hash_upload_abs_manifest operation.
 
     Attributes:
-        statistics: Summary statistics about the upload operation including
-            processed/skipped files and bytes.
+        statistics: Progress metadata with final statistics about the hash/upload operation
+            including separate counts for hashing and uploading phases.
         manifest: The manifest with all hashes filled in.
     """
 
-    statistics: SummaryStatistics
+    statistics: HashUploadProgressMetadata
     manifest: AbsManifest
 
 
@@ -318,13 +319,12 @@ def hash_upload_abs_manifest(
 
     start_time = time.perf_counter()
 
-    progress_state: Optional[_HashUploadProgressState] = None
-    if on_progress is not None:
-        progress_state = _HashUploadProgressState(
-            total_file_chunks=len(all_work_items),
-            total_bytes=sum(entry.size or 0 for _, entry in entry_map.values()),
-            on_progress=on_progress,
-        )
+    # Always create progress_state to track statistics, even without callback
+    progress_state = _HashUploadProgressState(
+        total_file_chunks=len(all_work_items),
+        total_bytes=sum(entry.size or 0 for _, entry in entry_map.values()),
+        on_progress=on_progress,  # May be None
+    )
 
     cached_results: Dict[str, Union[str, Dict[int, str]]] = {}
 
@@ -341,7 +341,7 @@ def hash_upload_abs_manifest(
             force_rehash=force_rehash,
         )
 
-    if progress_state is not None:
+    if progress_state.on_progress is not None:
         progress_state.force_callback()
 
     if pipeline_result.cache_invalidated:
@@ -516,18 +516,35 @@ def hash_upload_abs_manifest(
         file_chunk_size_bytes=output_chunk_size,
     )
 
-    # Build statistics
+    # Build final statistics from progress_state
     end_time = time.perf_counter()
     total_time = end_time - start_time
-    statistics = SummaryStatistics(
-        total_time=total_time,
-        total_files=len(entry_map),
-        total_bytes=total_size,
-        processed_files=processed_files,
-        processed_bytes=processed_bytes,
-        skipped_files=skipped_files,
-        skipped_bytes=skipped_bytes,
-        transfer_rate=processed_bytes / total_time if total_time > 0 else 0.0,
+
+    # Build summary message
+    hashed_bytes = progress_state.hashed_bytes + progress_state.hash_skipped_bytes
+    uploaded_bytes = progress_state.uploaded_bytes + progress_state.upload_skipped_bytes
+    summary_parts = [
+        f"Hashed {human_readable_file_size(hashed_bytes)}",
+        f"uploaded {human_readable_file_size(uploaded_bytes)}",
+        f"in {total_time:.2f}s",
+    ]
+    if total_time > 0:
+        rate = progress_state.uploaded_bytes / total_time
+        summary_parts.append(f"({human_readable_file_size(int(rate))}/s)")
+
+    statistics = HashUploadProgressMetadata(
+        total_file_chunks=progress_state.total_file_chunks,
+        total_bytes=progress_state.total_bytes,
+        hashed_file_chunks=progress_state.hashed_file_chunks,
+        hashed_bytes=progress_state.hashed_bytes,
+        hash_skipped_file_chunks=progress_state.hash_skipped_file_chunks,
+        hash_skipped_bytes=progress_state.hash_skipped_bytes,
+        uploaded_file_chunks=progress_state.uploaded_file_chunks,
+        uploaded_bytes=progress_state.uploaded_bytes,
+        upload_skipped_file_chunks=progress_state.upload_skipped_file_chunks,
+        upload_skipped_bytes=progress_state.upload_skipped_bytes,
+        progress=100.0,
+        progressMessage=" ".join(summary_parts),
     )
 
     return UploadResult(

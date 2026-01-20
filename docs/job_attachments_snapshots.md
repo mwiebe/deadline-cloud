@@ -1033,25 +1033,29 @@ result = hash_upload_abs_manifest(
 ```
 
 **Returns:** `UploadResult` containing:
-- `statistics`: `SummaryStatistics` with upload metrics (see below)
+- `statistics`: `HashUploadProgressMetadata` with detailed hash/upload metrics (see below)
 - `manifest`: A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in
 
 **UploadResult Statistics:**
 
-The `statistics` field contains a `SummaryStatistics` object with:
+The `statistics` field contains a `HashUploadProgressMetadata` object with separate tracking for hashing and uploading phases:
 
 | Field | Description |
 |-------|-------------|
-| `total_files` | Total number of files in the manifest |
+| `total_file_chunks` | Total files + chunks to process |
 | `total_bytes` | Total size of all files |
-| `processed_files` | Number of files that were actually uploaded |
-| `processed_bytes` | Bytes that were actually uploaded |
-| `skipped_files` | Number of files skipped (already in data cache) |
-| `skipped_bytes` | Bytes skipped (already in data cache) |
-| `total_time` | Total operation time in seconds |
-| `transfer_rate` | Upload throughput in bytes/second |
+| `hashed_file_chunks` | Number of files/chunks that were hashed |
+| `hashed_bytes` | Bytes that were hashed |
+| `hash_skipped_file_chunks` | Files/chunks skipped due to hash cache hit |
+| `hash_skipped_bytes` | Bytes skipped due to hash cache hit |
+| `uploaded_file_chunks` | Number of files/chunks that were uploaded |
+| `uploaded_bytes` | Bytes that were uploaded |
+| `upload_skipped_file_chunks` | Files/chunks skipped (already in data cache) |
+| `upload_skipped_bytes` | Bytes skipped (already in data cache) |
+| `progress` | Overall progress percentage (0-100) |
+| `progressMessage` | Human-readable summary message |
 
-Files are skipped when:
+Files/chunks are skipped when:
 1. The hash cache has the file's hash AND the data cache already contains that hash
 2. The HeadObject check finds the object already exists in S3
 
@@ -1639,8 +1643,9 @@ with HashCache("/tmp/hash_cache") as hash_cache:
 
 # Print upload statistics
 stats = result.statistics
-print(f"Uploaded {stats.processed_files} files ({stats.processed_bytes} bytes)")
-print(f"Skipped {stats.skipped_files} files ({stats.skipped_bytes} bytes) - already in cache")
+print(f"Hashed {stats.hashed_bytes} bytes, skipped {stats.hash_skipped_bytes} bytes (cache hit)")
+print(f"Uploaded {stats.uploaded_bytes} bytes, skipped {stats.upload_skipped_bytes} bytes (already in cache)")
+print(f"Progress: {stats.progressMessage}")
 
 # Now entries have their hashes filled in AND files are uploaded (paths are still absolute)
 for entry in result.manifest.files[:2]:
@@ -1690,7 +1695,7 @@ with HashCache("/tmp/hash_cache") as hash_cache:
 
 # Files are now stored in /tmp/debug_snapshot/data/{hash}.xxh128
 print(f"Debug snapshot created with {len(result.manifest.files)} entries")
-print(f"Uploaded: {result.statistics.processed_bytes} bytes, Skipped: {result.statistics.skipped_bytes} bytes")
+print(f"Uploaded: {result.statistics.uploaded_bytes} bytes, Skipped: {result.statistics.upload_skipped_bytes} bytes")
 ```
 
 **Performance Comparison:**

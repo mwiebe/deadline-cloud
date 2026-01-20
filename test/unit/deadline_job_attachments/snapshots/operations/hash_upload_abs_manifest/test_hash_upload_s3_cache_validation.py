@@ -552,8 +552,8 @@ class TestS3CacheValidationIntegration:
         # Both should have same hash
         assert result1.manifest.files[0].hash == result2.manifest.files[0].hash
 
-        # Second upload should have skipped the file (skipped_bytes should be > 0)
-        assert result2.statistics.skipped_bytes > 0
+        # Second upload should have skipped the file (upload_skipped_bytes should be > 0)
+        assert result2.statistics.upload_skipped_bytes > 0
 
     def test_multiple_files_stale_cache_all_reuploaded(
         self, tmp_path: Path, s3, create_s3_bucket
