@@ -30,7 +30,7 @@ Within a single manifest, all paths (file paths, directory paths, and symlink ta
 **Windows Absolute Paths:**
 
 Windows absolute paths in manifests can take two forms:
-- Drive letter paths: `X:/path/to/file.txt`
+- Drive letter paths: `C:`, `C:/`, `X:/path/to/file.txt`
 - UNC paths: `//server/share/path/to/file.txt`
 
 Note that UNC paths use forward slashes like all other manifest paths (not the native `\\server\share` format).

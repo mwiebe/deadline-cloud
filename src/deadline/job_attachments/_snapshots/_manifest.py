@@ -55,8 +55,13 @@ def _is_absolute_path(path: str) -> bool:
     """Check if a path string represents an absolute path."""
     # The "/" check catches both POSIX and Windows UNC paths,
     # and the drive-letter check is Windows-specific.
+    # On Windows, "C:" alone (drive letter without path) is also absolute.
     return path.startswith("/") or (
-        os.name == "nt" and len(path) >= 3 and path[1] == ":" and path[2] == "/"
+        os.name == "nt"
+        and len(path) >= 2
+        and path[0].isalpha()
+        and path[1] == ":"
+        and (len(path) == 2 or path[2] == "/")
     )
 
 

@@ -51,6 +51,10 @@ class TestHelperFunctions:
     @patch.object(os, "name", "nt")
     def test_is_absolute_path_windows_drive(self) -> None:
         """Windows drive letter paths are detected on Windows."""
+        assert (
+            _is_absolute_path("C:") is True
+        )  # Drive letter alone (e.g., after posixpath.normpath)
+        assert _is_absolute_path("C:/") is True
         assert _is_absolute_path("C:/Users/file.txt") is True
         assert _is_absolute_path("D:/Projects/file.txt") is True
 
