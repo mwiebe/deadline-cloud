@@ -141,6 +141,9 @@ def partition_manifest(
     result: List[Tuple[str, RelManifest]] = []
 
     for root in all_roots:
+        # Convert root to OS-native separators for output
+        output_root = _to_native_separators(root)
+
         if root == "." or root == "":
             # Special case: root-level relative paths - convert to RelManifest
             # (subtree_manifest doesn't accept "." as a subtree path)
@@ -159,8 +162,8 @@ def partition_manifest(
                     total_size=manifest.totalSize,
                     dirs=list(manifest.dirs),
                 )
-            result.append((root, rel_manifest))
-            logger.debug("Partitioned root '%s' with %d entries", root, len(manifest.files))
+            result.append((output_root, rel_manifest))
+            logger.debug("Partitioned root '%s' with %d entries", output_root, len(manifest.files))
         else:
             # Use subtree_manifest to extract the subtree (returns empty manifest if no entries)
             subtree = subtree_manifest(
@@ -168,8 +171,8 @@ def partition_manifest(
                 subtree=root,
                 symlink_policy=symlink_policy,
             )
-            result.append((root, subtree))
-            logger.debug("Partitioned root '%s' with %d entries", root, len(subtree.files))
+            result.append((output_root, subtree))
+            logger.debug("Partitioned root '%s' with %d entries", output_root, len(subtree.files))
 
     return result
 
@@ -190,6 +193,17 @@ def _normalize_path(path: str) -> str:
     # Handle edge case where path becomes empty
     if not path:
         path = "."
+    return path
+
+
+def _to_native_separators(path: str) -> str:
+    """Convert a normalized path to use OS-native separators.
+
+    On Windows, forward slashes are converted to backslashes.
+    On POSIX, the path is returned unchanged.
+    """
+    if os.name == "nt":
+        return path.replace("/", "\\")
     return path
 
 

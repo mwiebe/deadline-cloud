@@ -6,6 +6,7 @@ Refactored upload functions using the snapshots composable operations.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -30,6 +31,13 @@ class PartitionedAssetGroup:
     file_system_location_name: Optional[str] = None
 
 
+def _normalize_to_forward_slashes(path: str) -> str:
+    """Normalize a path to use forward slashes (for internal comparisons)."""
+    if os.name == "nt":
+        return path.replace("\\", "/")
+    return path
+
+
 def _get_file_system_locations_by_type(
     storage_profile: StorageProfile,
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -48,7 +56,10 @@ def _get_file_system_locations_by_type(
 
 
 def _get_relative_path(path: str, root: str) -> str:
-    """Get path relative to root using string operations (cross-platform safe)."""
+    """Get path relative to root using string operations (cross-platform safe).
+
+    Both path and root should use forward slashes for comparison.
+    """
     if path == root:
         return "."
     if not root.endswith("/"):
@@ -114,12 +125,18 @@ def partition_snapshot_by_storage_profile(
     # Build result with outputs associated to each root
     result = []
     for root, rel_manifest in partitions:
+        # Normalize root to forward slashes for comparisons
+        # (partition_manifest returns native separators on Windows)
+        root_normalized = _normalize_to_forward_slashes(root)
+
         # Find outputs under this root and make them relative
         root_outputs = []
         for p in filtered_outputs:
-            if _is_path_under_root(p, root):
+            # Normalize output path to forward slashes for comparison
+            p_normalized = _normalize_to_forward_slashes(p)
+            if _is_path_under_root(p_normalized, root_normalized):
                 try:
-                    root_outputs.append(_get_relative_path(p, root))
+                    root_outputs.append(_get_relative_path(p_normalized, root_normalized))
                 except ValueError:
                     pass
 
@@ -130,7 +147,7 @@ def partition_snapshot_by_storage_profile(
                 root_path=root,
                 manifest=rel_manifest,
                 outputs=root_outputs,
-                file_system_location_name=local_locations.get(root),
+                file_system_location_name=local_locations.get(root_normalized),
             )
         )
 

@@ -26,6 +26,7 @@ from deadline.job_attachments._snapshots._operations._partition_manifest import 
     _is_path_under_root,
     _longest_common_path_prefix,
     _normalize_path,
+    _to_native_separators,
     _collect_all_dirs,
     _get_windows_drive_root,
 )
@@ -53,6 +54,19 @@ class TestHelperFunctions:
     def test_normalize_path_empty_becomes_dot(self) -> None:
         """Empty path becomes '.'."""
         assert _normalize_path("") == "."
+
+    def test_to_native_separators_windows(self) -> None:
+        """On Windows, forward slashes are converted to backslashes."""
+        with patch.object(os, "name", "nt"):
+            assert _to_native_separators("C:/Users/file.txt") == "C:\\Users\\file.txt"
+            assert _to_native_separators("//server/share/file") == "\\\\server\\share\\file"
+            assert _to_native_separators("relative/path") == "relative\\path"
+
+    def test_to_native_separators_posix(self) -> None:
+        """On POSIX, paths are unchanged."""
+        with patch.object(os, "name", "posix"):
+            assert _to_native_separators("/home/user/file.txt") == "/home/user/file.txt"
+            assert _to_native_separators("relative/path") == "relative/path"
 
     def test_is_absolute_path_posix(self) -> None:
         """POSIX absolute paths are detected."""
@@ -286,7 +300,11 @@ class TestPartitionManifestRelative:
 
         assert len(result) == 2
         roots = [r for r, _ in result]
-        assert roots == ["assets/textures", "assets/models"]
+        # On Windows, roots are returned with backslash separators
+        if os.name == "nt":
+            assert roots == ["assets\\textures", "assets\\models"]
+        else:
+            assert roots == ["assets/textures", "assets/models"]
 
         # Check first partition
         _, textures_manifest = result[0]
@@ -310,7 +328,11 @@ class TestPartitionManifestRelative:
 
         assert len(result) == 2
         roots = [r for r, _ in result]
-        assert roots == ["assets/textures", "assets/models"]
+        # On Windows, roots are returned with backslash separators
+        if os.name == "nt":
+            assert roots == ["assets\\textures", "assets\\models"]
+        else:
+            assert roots == ["assets/textures", "assets/models"]
 
         # Second partition should be empty
         _, models_manifest = result[1]
@@ -577,7 +599,8 @@ class TestPartitionManifestReferencedPaths:
 
         # Without referenced_paths, root would be "project/src"
         result_without = partition_manifest(manifest)
-        assert result_without[0][0] == "project/src"
+        expected_root = "project\\src" if os.name == "nt" else "project/src"
+        assert result_without[0][0] == expected_root
 
         # With referenced_paths at project level, root should be "project"
         result_with = partition_manifest(
@@ -982,9 +1005,10 @@ class TestPartitionManifestAdditionalRoots:
             result = partition_manifest(manifest, roots=["C:/projects/scene"])
 
         roots = [r for r, _ in result]
-        assert roots[0] == "C:/projects/scene"
-        # Remainder should be C:/data/textures (deepest common prefix)
-        assert "C:/data/textures" in roots
+        # On Windows, roots are returned with backslash separators
+        assert roots[0] == "C:\\projects\\scene"
+        # Remainder should be C:\data\textures (deepest common prefix)
+        assert "C:\\data\\textures" in roots
 
     def test_windows_explicit_root_with_remainder_multiple_drives(self) -> None:
         """Windows: explicit root with remainder across multiple drives."""
@@ -1000,10 +1024,11 @@ class TestPartitionManifestAdditionalRoots:
             result = partition_manifest(manifest, roots=["C:/projects/scene"])
 
         roots = [r for r, _ in result]
-        assert roots[0] == "C:/projects/scene"
+        # On Windows, roots are returned with backslash separators
+        assert roots[0] == "C:\\projects\\scene"
         # Each drive should get its own deepest root
         remaining = sorted(roots[1:])
-        assert remaining == ["D:/assets/textures", "E:/cache/temp"]
+        assert remaining == ["D:\\assets\\textures", "E:\\cache\\temp"]
 
     def test_windows_explicit_root_with_unc_remainder(self) -> None:
         """Windows: explicit root with UNC path remainder."""
@@ -1029,9 +1054,10 @@ class TestPartitionManifestAdditionalRoots:
             result = partition_manifest(manifest, roots=["C:/projects/scene"])
 
         roots = [r for r, _ in result]
-        assert roots[0] == "C:/projects/scene"
+        # On Windows, roots are returned with backslash separators
+        assert roots[0] == "C:\\projects\\scene"
         # UNC remainder should be deepest common prefix
-        assert "//server/share/assets" in roots
+        assert "\\\\server\\share\\assets" in roots
 
     def test_relative_explicit_root_with_remainder(self) -> None:
         """Relative paths: explicit root with remainder finds deepest common root."""
@@ -1047,10 +1073,16 @@ class TestPartitionManifestAdditionalRoots:
         result = partition_manifest(manifest, roots=["project/src"])
 
         roots = [r for r, _ in result]
-        assert roots[0] == "project/src"
-        # Remainder should be deepest common prefixes per top-level
-        remaining = sorted(roots[1:])
-        assert remaining == ["data/cache", "libs/common"]
+        # On Windows, roots are returned with backslash separators
+        if os.name == "nt":
+            assert roots[0] == "project\\src"
+            # Remainder should be deepest common prefixes per top-level
+            remaining = sorted(roots[1:])
+            assert remaining == ["data\\cache", "libs\\common"]
+        else:
+            assert roots[0] == "project/src"
+            remaining = sorted(roots[1:])
+            assert remaining == ["data/cache", "libs/common"]
 
     def test_referenced_paths_only_introduces_remainder(self) -> None:
         """referenced_paths introduces additional root when no manifest files there."""
@@ -1069,7 +1101,9 @@ class TestPartitionManifestAdditionalRoots:
         roots = [r for r, _ in result]
         assert "project" in roots
         # referenced_paths should create additional root
-        assert "output/renders/final" in roots
+        # On Windows, roots are returned with backslash separators
+        expected_ref_root = "output\\renders\\final" if os.name == "nt" else "output/renders/final"
+        assert expected_ref_root in roots
 
     def test_referenced_paths_deepens_remainder_root(self) -> None:
         """referenced_paths affects the depth of remainder root determination."""
@@ -1083,7 +1117,9 @@ class TestPartitionManifestAdditionalRoots:
         # Without referenced_paths, remainder root would be data/assets
         result_without = partition_manifest(manifest, roots=["project"])
         roots_without = [r for r, _ in result_without]
-        assert "data/assets" in roots_without
+        # On Windows, roots are returned with backslash separators
+        expected_data_assets = "data\\assets" if os.name == "nt" else "data/assets"
+        assert expected_data_assets in roots_without
 
         # With referenced_paths at data level, remainder root should be data
         result_with = partition_manifest(
@@ -1161,10 +1197,17 @@ class TestPartitionManifestAdditionalRoots:
         result = partition_manifest(manifest, roots=["project/src", "project/tests"])
 
         roots = [r for r, _ in result]
-        assert roots[0] == "project/src"
-        assert roots[1] == "project/tests"
-        # Remainder
-        assert "libs/utils" in roots
+        # On Windows, roots are returned with backslash separators
+        if os.name == "nt":
+            assert roots[0] == "project\\src"
+            assert roots[1] == "project\\tests"
+            # Remainder
+            assert "libs\\utils" in roots
+        else:
+            assert roots[0] == "project/src"
+            assert roots[1] == "project/tests"
+            # Remainder
+            assert "libs/utils" in roots
 
     def test_explicit_root_covers_all_no_remainder(self) -> None:
         """Explicit root that covers all paths produces no remainder roots."""
@@ -1215,10 +1258,11 @@ class TestPartitionManifestAdditionalRoots:
             result = partition_manifest(manifest, roots=["C:/projects/scene"])
 
         roots = [r for r, _ in result]
-        assert roots[0] == "C:/projects/scene"
+        # On Windows, roots are returned with backslash separators
+        assert roots[0] == "C:\\projects\\scene"
         remaining = sorted(roots[1:])
         # D: drive, two UNC roots
-        assert remaining == ["//other/backup", "//server/share/lib", "D:/data"]
+        assert remaining == ["D:\\data", "\\\\other\\backup", "\\\\server\\share\\lib"]
 
     def test_remainder_with_common_prefix_at_different_depths(self) -> None:
         """Remainder paths with varying depths find appropriate common prefixes."""
@@ -1236,7 +1280,9 @@ class TestPartitionManifestAdditionalRoots:
         roots = [r for r, _ in result]
         assert roots[0] == "project"
         # Common prefix of all libs paths is libs/a
-        assert "libs/a" in roots
+        # On Windows, roots are returned with backslash separators
+        expected_libs_a = "libs\\a" if os.name == "nt" else "libs/a"
+        assert expected_libs_a in roots
 
     def test_posix_explicit_root_is_subpath_of_potential_remainder(self) -> None:
         """POSIX: explicit root prevents its ancestors from being remainder roots."""

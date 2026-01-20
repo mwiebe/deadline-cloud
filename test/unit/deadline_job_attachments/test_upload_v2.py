@@ -249,7 +249,8 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 1
-        assert result[0].root_path == "C:/Users/artist/project"
+        # On Windows, root_path uses backslash separators
+        assert result[0].root_path == "C:\\Users\\artist\\project"
         assert len(result[0].manifest.files) == 2
         assert result[0].outputs == ["outputs"]
 
@@ -269,6 +270,7 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 2
+        # On Windows, root_path uses backslash separators
         c_group = next(g for g in result if g.root_path.startswith("C:"))
         d_group = next(g for g in result if g.root_path.startswith("D:"))
 
@@ -290,7 +292,8 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 1
-        assert result[0].root_path == "//server/share/project"
+        # On Windows, root_path uses backslash separators
+        assert result[0].root_path == "\\\\server\\share\\project"
         assert len(result[0].manifest.files) == 2
         assert result[0].outputs == ["outputs"]
 
@@ -309,8 +312,9 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 2
+        # On Windows, root_path uses backslash separators
         c_group = next(g for g in result if g.root_path.startswith("C:"))
-        unc_group = next(g for g in result if g.root_path.startswith("//"))
+        unc_group = next(g for g in result if g.root_path.startswith("\\\\"))
 
         assert len(c_group.manifest.files) == 1
         assert len(unc_group.manifest.files) == 1
@@ -344,7 +348,8 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 2
-        movie1_group = next(g for g in result if g.root_path == "C:/Users/artist/movie1")
+        # On Windows, root_path uses backslash separators
+        movie1_group = next(g for g in result if g.root_path == "C:\\Users\\artist\\movie1")
         assert movie1_group.file_system_location_name == "Movie 1 - Local"
         assert len(movie1_group.manifest.files) == 1
 
@@ -377,7 +382,8 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 1
-        assert result[0].root_path == "C:/projects/scene"
+        # On Windows, root_path uses backslash separators
+        assert result[0].root_path == "C:\\projects\\scene"
         assert len(result[0].manifest.files) == 1
 
     def test_multiple_unc_shares_same_server(self):
@@ -397,10 +403,11 @@ class TestPartitionSnapshotByStorageProfileWindows:
         )
 
         assert len(result) == 2
+        # On Windows, root_path uses backslash separators
         share1_group = next(g for g in result if "share1" in g.root_path)
         share2_group = next(g for g in result if "share2" in g.root_path)
 
-        assert share1_group.root_path == "//server/share1/project"
+        assert share1_group.root_path == "\\\\server\\share1\\project"
         assert len(share1_group.manifest.files) == 2
-        assert share2_group.root_path == "//server/share2/data"
+        assert share2_group.root_path == "\\\\server\\share2\\data"
         assert len(share2_group.manifest.files) == 2

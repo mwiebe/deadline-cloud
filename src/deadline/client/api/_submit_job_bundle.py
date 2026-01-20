@@ -54,6 +54,7 @@ from ...job_attachments.models import (
 )
 from ...job_attachments.progress_tracker import ProgressReportMetadata, ProgressStatus
 from ...job_attachments.upload import S3AssetManager
+from ...job_attachments._utils import _get_long_path_compatible_path
 from ._session import session_context
 from ._job_attachment import _hash_attachments  # type: ignore[import]
 from ...job_attachments._path_summarization import human_readable_file_size, summarize_path_list
@@ -869,8 +870,12 @@ def _process_job_attachments_with_snapshots(
                 Body=manifest_str.encode("utf-8"),
             )
         else:
-            manifest_file = Path(debug_snapshot_dir) / "Manifests" / partial_manifest_key
-            manifest_file.parent.mkdir(parents=True, exist_ok=True)
+            # Convert S3-style forward slashes to OS-native path separators for local file system
+            local_manifest_path = partial_manifest_key.replace("/", os.sep)
+            manifest_file = Path(debug_snapshot_dir) / "Manifests" / local_manifest_path
+            # Use long path compatible path for Windows
+            manifest_file = _get_long_path_compatible_path(manifest_file)
+            _get_long_path_compatible_path(manifest_file.parent).mkdir(parents=True, exist_ok=True)
             manifest_file.write_text(manifest_str)
 
         manifests_list.append(

@@ -914,7 +914,11 @@ def download_files_from_manifests(
             for local_root in manifests_by_root.keys():
                 # Get all file paths under this root from the manifest
                 manifest = manifests_by_root[local_root]
-                file_paths = [os.path.join(local_root, entry.path) for entry in manifest.paths]
+                # Convert manifest paths (forward slashes) to OS-native paths
+                file_paths = [
+                    os.path.join(local_root, entry.path.replace("/", os.sep))
+                    for entry in manifest.paths
+                ]
                 _set_fs_group(
                     file_paths=file_paths,
                     local_root=local_root,

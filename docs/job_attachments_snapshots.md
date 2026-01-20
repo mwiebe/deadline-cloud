@@ -2882,6 +2882,15 @@ def partition_manifest(
 | `symlink_policy=PRESERVE` | Raises `ValueError` |
 | `symlink_policy=TRANSITIVE_INCLUDE_TARGETS` | Raises `ValueError` |
 
+**Path Separator Behavior:**
+
+| Platform | Input (`roots`, `referenced_paths`) | Output (`root` in returned tuples) |
+|----------|-------------------------------------|-----------------------------------|
+| Windows | Either `\` or `/` separators accepted | Always uses Windows `\` separators |
+| POSIX | `/` separators | `/` separators |
+
+On Windows, the function normalizes returned root paths to use native backslash separators, regardless of whether the input used forward or backslashes. This ensures consistency when the returned roots are used with Windows filesystem APIs.
+
 **Output Ordering:**
 
 1. First: Entries for each explicitly provided root (in the same order as `roots` parameter)
