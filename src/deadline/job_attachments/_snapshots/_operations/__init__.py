@@ -13,7 +13,6 @@ from ._hash_upload_abs_manifest_pipeline import (
 from ._download_abs_manifest import (
     download_abs_manifest,
     DownloadResult,
-    DownloadSummaryStatistics,
 )
 from ._download_abs_manifest_pipeline import (
     DownloadProgressMetadata,
@@ -37,7 +36,6 @@ __all__ = [
     "DownloadResult",
     "DownloadProgressMetadata",
     "DownloadProgressCallback",
-    "DownloadSummaryStatistics",
     "filter_manifest",
     "diff_snapshots",
     "compose_manifests",

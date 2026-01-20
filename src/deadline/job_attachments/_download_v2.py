@@ -113,15 +113,16 @@ def download_files_from_manifests_v2(
             on_progress=on_progress,
         )
 
-    # Convert snapshots DownloadSummaryStatistics to progress_tracker version
+    # Convert snapshots DownloadProgressMetadata to progress_tracker DownloadSummaryStatistics
     stats = result.statistics
+
     return DownloadSummaryStatistics(
         total_time=stats.total_time,
-        total_files=stats.total_files,
+        total_files=stats.total_file_chunks,
         total_bytes=stats.total_bytes,
-        processed_files=stats.processed_files,
-        processed_bytes=stats.processed_bytes,
-        skipped_files=stats.skipped_files,
+        processed_files=stats.downloaded_file_chunks,
+        processed_bytes=stats.downloaded_bytes,
+        skipped_files=stats.skipped_file_chunks,
         skipped_bytes=stats.skipped_bytes,
         transfer_rate=stats.transfer_rate,
     )

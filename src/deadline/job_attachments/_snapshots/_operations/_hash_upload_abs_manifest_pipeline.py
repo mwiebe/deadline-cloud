@@ -61,6 +61,10 @@ class HashUploadProgressMetadata:
     progress: float  # 0-100
     progressMessage: str
 
+    # Timing (only set in final statistics, 0.0 during progress callbacks)
+    total_time: float = 0.0  # Total operation time in seconds
+    transfer_rate: float = 0.0  # Bytes per second
+
 
 # Callback type for hash_upload progress reporting
 # Return True to continue, False to cancel the operation

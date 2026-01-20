@@ -88,7 +88,7 @@ class TestMultipartDownloadRegularFiles:
         # Verify file was downloaded correctly
         assert target_path.exists()
         assert target_path.read_bytes() == file_content
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
         # Verify multiple get_object calls were made (multi-part)
         # 100 bytes / 32 bytes per part = 4 parts
@@ -142,7 +142,7 @@ class TestMultipartDownloadRegularFiles:
         # Verify file was downloaded correctly
         assert target_path.exists()
         assert target_path.read_bytes() == file_content
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
         # Verify only one get_object call was made (no multi-part)
         assert mock_client.get_object.call_count == 1
@@ -215,7 +215,7 @@ class TestMultipartDownloadChunkedFiles:
         # Verify file was downloaded correctly
         assert target_path.exists()
         assert target_path.read_bytes() == chunk_content
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
         # Verify multiple get_object calls were made (multi-part)
         # 100 bytes / 32 bytes per part = 4 parts
@@ -263,7 +263,7 @@ class TestMultipartDownloadChunkedFiles:
         # Verify file was downloaded correctly
         assert target_path.exists()
         assert target_path.read_bytes() == chunk_content
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
         # Verify only one get_object call was made (no multi-part)
         assert mock_client.get_object.call_count == 1
@@ -329,7 +329,7 @@ class TestMultipartDownloadChunkedFiles:
         # Verify chunk1 is at offset 100 (all 0xFF)
         assert downloaded_content[100:] == chunk1_content
 
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 2
 
         # Verify multi-part was used for both chunks
         # Each 100-byte chunk = 4 parts (32 bytes each, last part smaller)
@@ -414,7 +414,7 @@ class TestMultipartDownloadMixedFiles:
         assert small_path.read_bytes() == small_content
         assert large_path.exists()
         assert large_path.read_bytes() == large_content
-        assert result.statistics.processed_files == 2
+        assert result.statistics.downloaded_file_chunks == 2
 
         # Small file = 1 call, Large file = 4 calls (100/32 = 4 parts)
         assert mock_client.get_object.call_count == 5

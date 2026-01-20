@@ -118,8 +118,8 @@ class TestDownloadAbsManifestChunkedHashCacheIntegration:
             )
 
         # File should be skipped (not re-downloaded)
-        assert result.statistics.skipped_files == 1
-        assert result.statistics.processed_files == 0
+        assert result.statistics.skipped_file_chunks == 2
+        assert result.statistics.downloaded_file_chunks == 0
 
     def test_chunked_file_downloaded_when_hash_mismatch(self, tmp_path, setup_data_cache):
         """Chunked file should be downloaded when any chunk hash doesn't match."""
@@ -175,8 +175,8 @@ class TestDownloadAbsManifestChunkedHashCacheIntegration:
             )
 
         # File should be downloaded (not skipped)
-        assert result.statistics.processed_files == 1
-        assert result.statistics.skipped_files == 0
+        assert result.statistics.downloaded_file_chunks == 2
+        assert result.statistics.skipped_file_chunks == 0
 
         # Verify content was downloaded correctly
         assert dest_file.read_bytes() == full_content
@@ -217,7 +217,7 @@ class TestDownloadAbsManifestChunkedHashCacheIntegration:
             )
 
             # Verify file was downloaded
-            assert result.statistics.processed_files == 1
+            assert result.statistics.downloaded_file_chunks == 2
             assert dest_file.read_bytes() == full_content
 
             # Verify hash cache was updated with chunk entries
@@ -280,8 +280,8 @@ class TestDownloadAbsManifestChunkedHashCacheIntegration:
                 hash_cache=hash_cache,
                 file_conflict_resolution=FileConflictResolution.OVERWRITE,
             )
-            assert result1.statistics.processed_files == 1
-            assert result1.statistics.skipped_files == 0
+            assert result1.statistics.downloaded_file_chunks == 2
+            assert result1.statistics.skipped_file_chunks == 0
 
             # Second download should skip
             result2 = download_abs_manifest(
@@ -290,5 +290,5 @@ class TestDownloadAbsManifestChunkedHashCacheIntegration:
                 hash_cache=hash_cache,
                 file_conflict_resolution=FileConflictResolution.OVERWRITE,
             )
-            assert result2.statistics.processed_files == 0
-            assert result2.statistics.skipped_files == 1
+            assert result2.statistics.downloaded_file_chunks == 0
+            assert result2.statistics.skipped_file_chunks == 2

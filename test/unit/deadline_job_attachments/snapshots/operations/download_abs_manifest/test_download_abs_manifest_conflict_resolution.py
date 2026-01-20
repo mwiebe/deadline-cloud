@@ -66,7 +66,7 @@ class TestDownloadAbsManifestFileConflictResolution:
         )
 
         assert existing_file.read_text() == "Existing content"
-        assert result.statistics.skipped_files == 1
+        assert result.statistics.skipped_file_chunks == 1
 
     def test_conflict_overwrite(self, tmp_path: Path) -> None:
         """Test OVERWRITE conflict resolution overwrites existing files."""
@@ -96,7 +96,7 @@ class TestDownloadAbsManifestFileConflictResolution:
         )
 
         assert existing_file.read_text() == "New content"
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
     def test_conflict_create_copy(self, tmp_path: Path) -> None:
         """Test CREATE_COPY conflict resolution creates numbered copies."""
@@ -129,4 +129,4 @@ class TestDownloadAbsManifestFileConflictResolution:
         copy_file = download_dir / "test (1).txt"
         assert copy_file.exists()
         assert copy_file.read_text() == "New content"
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1

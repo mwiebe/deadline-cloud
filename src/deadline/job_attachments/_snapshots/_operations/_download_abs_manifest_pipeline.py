@@ -59,6 +59,10 @@ class DownloadProgressMetadata:
     progress: float  # 0-100
     progressMessage: str
 
+    # Timing (only set in final statistics, 0.0 during progress callbacks)
+    total_time: float = 0.0  # Total operation time in seconds
+    transfer_rate: float = 0.0  # Bytes per second
+
 
 # Callback type for download progress reporting
 # Return True to continue, False to cancel the operation
@@ -92,8 +96,26 @@ class _DownloadProgressState:
     # Thread safety
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
+    def record_bytes_downloaded(self, num_bytes: int) -> None:
+        """Record bytes downloaded (for progress bar smoothness). Does not increment file_chunks."""
+        with self._lock:
+            self.downloaded_bytes += num_bytes
+            self._maybe_invoke_callback()
+
+    def record_file_chunk_complete(self, chunk_bytes: int, skipped: bool) -> None:
+        """Record completion of downloading for a file or chunk (increments file_chunks counter)."""
+        with self._lock:
+            if skipped:
+                self.skipped_bytes += chunk_bytes
+                self.skipped_file_chunks += 1
+            else:
+                # Note: bytes may already be counted via record_bytes_downloaded for multipart
+                # Only increment file_chunks here
+                self.downloaded_file_chunks += 1
+            self._maybe_invoke_callback()
+
     def record_download_complete(self, chunk_bytes: int, skipped: bool) -> None:
-        """Record completion of downloading for a file or chunk."""
+        """Record completion of downloading for a file or chunk (legacy method for non-multipart)."""
         with self._lock:
             if skipped:
                 self.skipped_bytes += chunk_bytes
@@ -632,6 +654,9 @@ class DownloadPipelineBase(ABC):
             return local_path
 
         if self._file_conflict_resolution == FileConflictResolution.SKIP:
+            # Record progress for skipped file
+            if self._progress_state:
+                self._progress_state.record_download_complete(file_size, skipped=True)
             self._record_result(
                 DownloadFileResult(
                     entry=entry,

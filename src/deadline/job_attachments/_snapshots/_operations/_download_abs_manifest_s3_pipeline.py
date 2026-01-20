@@ -101,6 +101,7 @@ class S3DownloadPipeline(DownloadPipelineBase):
             data = response["Body"].read()
             with open(temp_path, "wb") as f:
                 f.write(data)
+            # Small file - record both bytes and file_chunk completion
             if self._progress_state:
                 self._progress_state.record_download_complete(len(data), skipped=False)
             return len(data)
@@ -283,8 +284,9 @@ class S3DownloadPipeline(DownloadPipelineBase):
                 f.seek(offset)
                 f.write(data)
 
+            # Track bytes for progress bar (file_chunk counted at finalization)
             if self._progress_state:
-                self._progress_state.record_download_complete(len(data), skipped=False)
+                self._progress_state.record_bytes_downloaded(len(data))
 
             with state.lock:
                 state.total_bytes_downloaded += len(data)
@@ -358,8 +360,9 @@ class S3DownloadPipeline(DownloadPipelineBase):
                 f.seek(file_offset)
                 f.write(data)
 
+            # Track bytes for progress bar (file_chunk counted at finalization)
             if self._progress_state:
-                self._progress_state.record_download_complete(len(data), skipped=False)
+                self._progress_state.record_bytes_downloaded(len(data))
 
             with state.lock:
                 state.total_bytes_downloaded += len(data)
@@ -438,8 +441,9 @@ class S3DownloadPipeline(DownloadPipelineBase):
                 f.seek(file_offset)
                 f.write(data)
 
+            # Track bytes for progress bar (file_chunk counted at finalization)
             if self._progress_state:
-                self._progress_state.record_download_complete(len(data), skipped=False)
+                self._progress_state.record_bytes_downloaded(len(data))
 
             with state.lock:
                 state.total_bytes_downloaded += len(data)
@@ -497,20 +501,28 @@ class S3DownloadPipeline(DownloadPipelineBase):
 
             if is_chunked:
                 self._update_hash_cache_for_chunked_file(entry, local_path, actual_mtime_ns)
-            elif self._hash_cache is not None and entry.hash is not None:
-                from ...caches.hash_cache import HashCacheEntry, WHOLE_FILE_RANGE_END
+                # Record file_chunk completion for each chunk in the file
+                if self._progress_state and entry.chunkhashes:
+                    for _ in entry.chunkhashes:
+                        self._progress_state.record_file_chunk_complete(0, skipped=False)
+            else:
+                if self._hash_cache is not None and entry.hash is not None:
+                    from ...caches.hash_cache import HashCacheEntry, WHOLE_FILE_RANGE_END
 
-                resolved_path = str(local_path.resolve())
-                self._hash_cache.put_entry(
-                    HashCacheEntry(
-                        file_path=resolved_path,
-                        hash_algorithm=self._hash_alg_enum,
-                        file_hash=entry.hash,
-                        last_modified_time=str(actual_mtime_ns),
-                        range_start=0,
-                        range_end=WHOLE_FILE_RANGE_END,
+                    resolved_path = str(local_path.resolve())
+                    self._hash_cache.put_entry(
+                        HashCacheEntry(
+                            file_path=resolved_path,
+                            hash_algorithm=self._hash_alg_enum,
+                            file_hash=entry.hash,
+                            last_modified_time=str(actual_mtime_ns),
+                            range_start=0,
+                            range_end=WHOLE_FILE_RANGE_END,
+                        )
                     )
-                )
+                # Record file_chunk completion for single file
+                if self._progress_state:
+                    self._progress_state.record_file_chunk_complete(0, skipped=False)
 
             file_type = "chunked file" if is_chunked else "file"
             logger.debug(f"Downloaded {file_type} {entry.path} to {local_path}")

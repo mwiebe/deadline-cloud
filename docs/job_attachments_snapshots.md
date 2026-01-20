@@ -1773,6 +1773,10 @@ class DownloadProgressMetadata:
     # Overall progress
     progress: float  # 0-100
     progressMessage: str
+
+    # Timing (only set in final statistics, 0.0 during progress callbacks)
+    total_time: float = 0.0  # Total operation time in seconds
+    transfer_rate: float = 0.0  # Bytes per second
 ```
 
 The callback type is:
@@ -1797,6 +1801,7 @@ For chunked files, each chunk is counted separately in `total_file_chunks`, `dow
 |-------|------------------|
 | `downloaded_bytes` / `downloaded_file_chunks` | After download completes for a file or chunk |
 | `skipped_bytes` / `skipped_file_chunks` | When hash cache hit or conflict resolution skips the download |
+| `total_time` / `transfer_rate` | Only set in final statistics returned by `download_abs_manifest()` |
 
 **Example - Progress callback:**
 
@@ -1837,17 +1842,20 @@ The hash cache is the same cache used by HASH and HASH_UPLOAD operations, so fil
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `statistics` | `DownloadSummaryStatistics` | Summary statistics about the download operation |
+| `statistics` | `DownloadProgressMetadata` | Final progress metadata with download statistics |
 | `manifest` | `AbsManifest` | A copy of the input manifest with mtime values updated to match the local filesystem |
 
-The `statistics` field contains:
-- `total_files`: Number of files in manifest
+The `statistics` field contains the same fields as the progress callback metadata, with final values:
+- `total_file_chunks`: Total files + chunks to process
 - `total_bytes`: Total bytes to download
-- `processed_files`: Number of files successfully downloaded
-- `processed_bytes`: Bytes successfully downloaded
-- `skipped_files`: Number of files skipped (hash cache match or SKIP resolution)
+- `downloaded_file_chunks`: Number of files/chunks successfully downloaded
+- `downloaded_bytes`: Bytes successfully downloaded
+- `skipped_file_chunks`: Number of files/chunks skipped (hash cache match or SKIP resolution)
 - `skipped_bytes`: Bytes skipped
+- `progress`: Final progress percentage (100.0)
+- `progressMessage`: Summary message with download rate
 - `total_time`: Total operation time in seconds
+- `transfer_rate`: Bytes per second
 - `transfer_rate`: Download throughput in bytes/second
 
 **Why Return an Updated Manifest?**

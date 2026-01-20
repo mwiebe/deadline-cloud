@@ -183,7 +183,7 @@ class TestDownloadAbsManifestFileSystem:
         data_cache = self._create_filesystem_data_cache(cache_root)
         result = download_abs_manifest(manifest=manifest, data_cache=data_cache)
 
-        assert result.statistics.processed_files == 0
+        assert result.statistics.downloaded_file_chunks == 0
         assert result.statistics.total_bytes == 0
 
     def test_download_single_file(self, tmp_path: Path) -> None:
@@ -206,7 +206,7 @@ class TestDownloadAbsManifestFileSystem:
 
         result = download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 
@@ -233,7 +233,7 @@ class TestDownloadAbsManifestFileSystem:
 
         result = download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
-        assert result.statistics.processed_files == 3
+        assert result.statistics.downloaded_file_chunks == 3
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 
@@ -329,7 +329,7 @@ class TestDownloadAbsManifestS3:
 
         result = download_abs_manifest(manifest=download_manifest_obj, data_cache=data_cache)
 
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
         differences = _compare_directory_trees(source_dir, download_dir)
         assert differences == [], f"Directory trees differ: {differences}"
 

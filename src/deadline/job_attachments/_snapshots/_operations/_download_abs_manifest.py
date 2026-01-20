@@ -57,10 +57,12 @@ from ...caches.hash_cache import HashCache
 from ._download_abs_manifest_pipeline import (
     DownloadPipelineBase,
     DownloadProgressCallback,
+    DownloadProgressMetadata,
     _DownloadProgressState,
 )
 from ._download_abs_manifest_s3_pipeline import S3DownloadPipeline
 from ._download_abs_manifest_file_system_pipeline import FileSystemDownloadPipeline
+from ..._path_summarization import human_readable_file_size
 
 logger = logging.getLogger("deadline.job_attachments.download")
 
@@ -69,26 +71,13 @@ DEFAULT_MAX_WORKERS = 10
 
 
 @dataclass
-class DownloadSummaryStatistics:
-    """Summary statistics for a download operation."""
-
-    total_files: int = 0
-    total_bytes: int = 0
-    processed_files: int = 0
-    processed_bytes: int = 0
-    skipped_files: int = 0
-    skipped_bytes: int = 0
-    total_time: float = 0.0
-    transfer_rate: float = 0.0
-
-
-@dataclass
 class DownloadResult:
     """
     Result of a download_abs_manifest operation.
 
     Attributes:
-        statistics: Summary statistics about the download operation.
+        statistics: Progress metadata with final statistics about the download operation
+            including downloaded and skipped counts.
         manifest: A copy of the input manifest with mtime values updated to match
             the actual local filesystem timestamps. This is useful for cross-OS
             scenarios where file system mtime precision differs (e.g., a snapshot
@@ -97,7 +86,7 @@ class DownloadResult:
             for subsequent diff operations ensures reliable change detection.
     """
 
-    statistics: DownloadSummaryStatistics
+    statistics: "DownloadProgressMetadata"
     manifest: AbsManifest
 
 
@@ -419,25 +408,18 @@ def download_abs_manifest(
         (e.size or 0) for e in chunked_files
     )
 
-    # Set up progress state if callback provided
-    progress_state: Optional[_DownloadProgressState] = None
-    if on_progress is not None:
-        progress_state = _DownloadProgressState(
-            total_file_chunks=total_file_chunks,
-            total_bytes=total_bytes,
-            on_progress=on_progress,
-        )
+    # Set up progress state - always create to track statistics, even without callback
+    progress_state = _DownloadProgressState(
+        total_file_chunks=total_file_chunks,
+        total_bytes=total_bytes,
+        on_progress=on_progress,  # May be None
+    )
 
     start_time = time.perf_counter()
 
     collision_lock = Lock()
     collision_file_dict: DefaultDict[str, int] = defaultdict(int)
     updated_mtimes: Dict[str, int] = {}
-
-    processed_files = 0
-    processed_bytes = 0
-    skipped_files = 0
-    skipped_bytes = 0
 
     try:
         # 1. Process deletions first (for diff manifests only)
@@ -507,12 +489,8 @@ def download_abs_manifest(
         # Process results
         for result in results:
             if result.was_skipped:
-                skipped_files += 1
-                skipped_bytes += result.bytes_downloaded
                 logger.debug("Skipped: %s", result.entry.path)
             else:
-                processed_files += 1
-                processed_bytes += result.bytes_downloaded
                 if result.actual_mtime_us is not None:
                     updated_mtimes[result.entry.path] = result.actual_mtime_us
                 file_type = "chunked file" if result.entry.chunkhashes else "file"
@@ -523,35 +501,48 @@ def download_abs_manifest(
             sorted_symlinks = _sort_symlinks_by_dependency(symlinks)
             for entry in sorted_symlinks:
                 _create_symlink(entry)
-                processed_files += 1
                 # Record symlink as downloaded (0 bytes)
-                if progress_state:
-                    progress_state.record_download_complete(0, skipped=False)
+                progress_state.record_download_complete(0, skipped=False)
                 logger.debug("Created symlink: %s", entry.path)
 
     except AssetSyncCancelledError:
+        downloaded = progress_state.downloaded_file_chunks
         raise AssetSyncCancelledError(
             f"Download cancelled. "
-            f"(Downloaded {processed_files} file{'s' if processed_files != 1 else ''} "
+            f"(Downloaded {downloaded} file{'s' if downloaded != 1 else ''} "
             f"before cancellation.)"
         )
 
     # Force final progress callback
-    if progress_state is not None:
+    if progress_state.on_progress is not None:
         progress_state.force_callback()
 
     total_time = time.perf_counter() - start_time
-    transfer_rate = processed_bytes / total_time if total_time > 0 else 0.0
+    transfer_rate = progress_state.total_bytes / total_time if total_time > 0 else 0.0
 
-    updated_manifest = _build_updated_manifest(manifest, updated_mtimes)
-    statistics = DownloadSummaryStatistics(
-        total_files=len(regular_files) + len(chunked_files) + len(symlinks),
-        total_bytes=total_bytes,
-        processed_files=processed_files,
-        processed_bytes=processed_bytes,
-        skipped_files=skipped_files,
-        skipped_bytes=skipped_bytes,
+    # Build summary message - use total_bytes for rate calculation
+    # Use "files" when processing whole files, "chunks" when chunking is enabled
+    unit = "files" if chunk_size_bytes <= 0 else "chunks"
+    summary_parts = [
+        f"Downloaded {human_readable_file_size(progress_state.total_bytes)}",
+        f"({progress_state.total_file_chunks} {unit})",
+        f"in {total_time:.2f}s",
+    ]
+    if total_time > 0:
+        summary_parts.append(f"({human_readable_file_size(int(transfer_rate))}/s)")
+
+    statistics = DownloadProgressMetadata(
+        total_file_chunks=progress_state.total_file_chunks,
+        total_bytes=progress_state.total_bytes,
+        downloaded_file_chunks=progress_state.downloaded_file_chunks,
+        downloaded_bytes=progress_state.downloaded_bytes,
+        skipped_file_chunks=progress_state.skipped_file_chunks,
+        skipped_bytes=progress_state.skipped_bytes,
+        progress=100.0,
+        progressMessage=" ".join(summary_parts),
         total_time=total_time,
         transfer_rate=transfer_rate,
     )
+
+    updated_manifest = _build_updated_manifest(manifest, updated_mtimes)
     return DownloadResult(statistics=statistics, manifest=updated_manifest)

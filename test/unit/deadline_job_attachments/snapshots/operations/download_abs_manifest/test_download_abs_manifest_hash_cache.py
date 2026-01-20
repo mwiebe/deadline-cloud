@@ -69,8 +69,8 @@ class TestDownloadAbsManifestHashCacheSkip:
                 hash_cache=hash_cache,
             )
 
-            assert result1.statistics.processed_files == 2
-            assert result1.statistics.skipped_files == 0
+            assert result1.statistics.downloaded_file_chunks == 2
+            assert result1.statistics.skipped_file_chunks == 0
 
             # Verify files were downloaded
             assert (download_dir / "file1.txt").read_text() == "Content 1"
@@ -83,8 +83,8 @@ class TestDownloadAbsManifestHashCacheSkip:
                 hash_cache=hash_cache,
             )
 
-            assert result2.statistics.processed_files == 0
-            assert result2.statistics.skipped_files == 2
+            assert result2.statistics.downloaded_file_chunks == 0
+            assert result2.statistics.skipped_file_chunks == 2
 
     def test_hash_cache_skip_does_not_call_filesystem_copy(self, tmp_path: Path) -> None:
         """Test that hash cache skip actually avoids filesystem operations."""
@@ -128,8 +128,8 @@ class TestDownloadAbsManifestHashCacheSkip:
 
                 # Verify copy function was NOT called (file was skipped)
                 mock_copy.assert_not_called()
-                assert result.statistics.skipped_files == 1
-                assert result.statistics.processed_files == 0
+                assert result.statistics.skipped_file_chunks == 1
+                assert result.statistics.downloaded_file_chunks == 0
 
     def test_modified_file_is_redownloaded(self, tmp_path: Path) -> None:
         """Test that modifying a file causes it to be re-downloaded."""
@@ -159,7 +159,7 @@ class TestDownloadAbsManifestHashCacheSkip:
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
-            assert result1.statistics.processed_files == 1
+            assert result1.statistics.downloaded_file_chunks == 1
 
             # Modify the downloaded file (changes mtime)
             downloaded_file = download_dir / "test.txt"
@@ -173,8 +173,8 @@ class TestDownloadAbsManifestHashCacheSkip:
             )
 
             # File should be re-downloaded (mtime changed, so cache miss)
-            assert result2.statistics.processed_files == 1
-            assert result2.statistics.skipped_files == 0
+            assert result2.statistics.downloaded_file_chunks == 1
+            assert result2.statistics.skipped_file_chunks == 0
 
             # Content should be restored to original
             assert downloaded_file.read_text() == "Original content"
@@ -207,7 +207,7 @@ class TestDownloadAbsManifestHashCacheSkip:
                 data_cache=data_cache,
                 hash_cache=hash_cache,
             )
-            assert result1.statistics.processed_files == 1
+            assert result1.statistics.downloaded_file_chunks == 1
 
             # Delete the downloaded file
             downloaded_file = download_dir / "test.txt"
@@ -221,8 +221,8 @@ class TestDownloadAbsManifestHashCacheSkip:
                 hash_cache=hash_cache,
             )
 
-            assert result2.statistics.processed_files == 1
-            assert result2.statistics.skipped_files == 0
+            assert result2.statistics.downloaded_file_chunks == 1
+            assert result2.statistics.skipped_file_chunks == 0
             assert downloaded_file.exists()
             assert downloaded_file.read_text() == "Test content"
 
@@ -252,7 +252,7 @@ class TestDownloadAbsManifestHashCacheSkip:
             data_cache=data_cache,
             # No hash_cache provided
         )
-        assert result1.statistics.processed_files == 1
+        assert result1.statistics.downloaded_file_chunks == 1
 
         # Second download without hash cache - still downloads
         result2 = download_abs_manifest(
@@ -262,4 +262,4 @@ class TestDownloadAbsManifestHashCacheSkip:
         )
         # Without hash cache, file conflict resolution (default OVERWRITE) applies
         # File exists but gets overwritten
-        assert result2.statistics.processed_files == 1
+        assert result2.statistics.downloaded_file_chunks == 1

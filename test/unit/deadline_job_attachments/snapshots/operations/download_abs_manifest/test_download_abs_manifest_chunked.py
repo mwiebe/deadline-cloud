@@ -73,7 +73,7 @@ class TestDownloadChunkedFileFileSystem:
 
         assert target_path.exists()
         assert target_path.read_bytes() == chunk_content
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
     def test_download_mixed_regular_and_chunked_files(self, tmp_path: Path) -> None:
         """Download a mix of regular files and chunked files."""
@@ -129,7 +129,7 @@ class TestDownloadChunkedFileFileSystem:
         assert regular_path.read_bytes() == regular_content
         assert chunked_path.exists()
         assert chunked_path.read_bytes() == chunk0_content + chunk1_content
-        assert result.statistics.processed_files == 2
+        assert result.statistics.downloaded_file_chunks == 3
 
     def test_download_chunked_file_conflict_skip(self, tmp_path: Path) -> None:
         """Chunked file download respects SKIP conflict resolution."""
@@ -170,7 +170,7 @@ class TestDownloadChunkedFileFileSystem:
 
         # File should not be overwritten
         assert target_path.read_bytes() == existing_content
-        assert result.statistics.skipped_files == 1
+        assert result.statistics.skipped_file_chunks == 1
 
     def test_download_chunked_file_conflict_overwrite(self, tmp_path: Path) -> None:
         """Chunked file download respects OVERWRITE conflict resolution."""
@@ -210,7 +210,7 @@ class TestDownloadChunkedFileFileSystem:
 
         # File should be overwritten
         assert target_path.read_bytes() == chunk_content
-        assert result.statistics.processed_files == 1
+        assert result.statistics.downloaded_file_chunks == 1
 
     def test_download_chunked_file_preserves_mtime(self, tmp_path: Path) -> None:
         """Chunked file download preserves modification time from manifest."""

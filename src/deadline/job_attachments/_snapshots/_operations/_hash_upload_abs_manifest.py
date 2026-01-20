@@ -519,6 +519,7 @@ def hash_upload_abs_manifest(
     # Build final statistics from progress_state
     end_time = time.perf_counter()
     total_time = end_time - start_time
+    transfer_rate = progress_state.total_bytes / total_time if total_time > 0 else 0.0
 
     # Build summary message - use total_bytes for rate calculation
     # Use "files" when processing whole files, "chunks" when chunking is enabled
@@ -529,8 +530,7 @@ def hash_upload_abs_manifest(
         f"in {total_time:.2f}s",
     ]
     if total_time > 0:
-        rate = progress_state.total_bytes / total_time
-        summary_parts.append(f"({human_readable_file_size(int(rate))}/s)")
+        summary_parts.append(f"({human_readable_file_size(int(transfer_rate))}/s)")
 
     statistics = HashUploadProgressMetadata(
         total_file_chunks=progress_state.total_file_chunks,
@@ -545,6 +545,8 @@ def hash_upload_abs_manifest(
         upload_skipped_bytes=progress_state.upload_skipped_bytes,
         progress=100.0,
         progressMessage=" ".join(summary_parts),
+        total_time=total_time,
+        transfer_rate=transfer_rate,
     )
 
     return UploadResult(
