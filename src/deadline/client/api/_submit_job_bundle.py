@@ -83,6 +83,22 @@ def _summarize_asset_paths(
     return result
 
 
+def _generate_message_for_snapshot_paths(
+    input_paths: Collection[Path | str],
+    output_paths: Collection[Path | str],
+    total_input_files: int,
+    total_input_bytes: int,
+) -> str:
+    """Generate a summary message about snapshot uploads (no warnings, just informational)."""
+    messages = [
+        f"Job submission contains {total_input_files} input files "
+        f"totaling {human_readable_file_size(total_input_bytes)}. "
+        "All input files will be uploaded to S3 if they are not already present in the job attachments bucket.\n\n"
+    ]
+    messages.extend(_summarize_asset_paths(input_paths, output_paths, "Locations"))
+    return "".join(messages)
+
+
 def _generate_message_for_asset_paths(
     upload_group: AssetUploadGroup,
     storage_profile: Optional[StorageProfile],
@@ -748,6 +764,16 @@ def _process_job_attachments_with_snapshots(
                 )
             )
         return None
+
+    # Print pre-upload summary
+    input_paths = {f.path for f in abs_snapshot.files}
+    summary_message = _generate_message_for_snapshot_paths(
+        input_paths=input_paths,
+        output_paths=output_directories,
+        total_input_files=len(abs_snapshot.files),
+        total_input_bytes=abs_snapshot.totalSize,
+    )
+    print_function_callback(summary_message)
 
     # Create data cache
     job_attachment_settings = JobAttachmentS3Settings(**queue["jobAttachmentSettings"])
