@@ -920,11 +920,14 @@ def _process_job_attachments_with_snapshots(
     # Print upload summary
     stats = result.statistics
     if stats.total_files > 0:
-        print_function_callback("Upload Summary:")
-        print_function_callback(f"    Total files: {stats.total_files}")
-        print_function_callback(f"    Total bytes: {stats.total_bytes}")
-        print_function_callback(f"    Processed files: {stats.processed_files}")
-        print_function_callback(f"    Skipped files: {stats.skipped_files}")
+        summary_lines = [
+            "Upload Summary:",
+            f"    Total files: {stats.total_files}",
+            f"    Total bytes: {human_readable_file_size(stats.total_bytes)}",
+            f"    Processed files: {stats.processed_files}",
+            f"    Skipped files: {stats.skipped_files}",
+        ]
+        print_function_callback("\n".join(summary_lines))
 
     # Partition by storage profile
     groups = partition_snapshot_by_storage_profile(
