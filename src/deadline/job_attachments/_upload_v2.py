@@ -146,7 +146,7 @@ def partition_snapshot_by_storage_profile(
             PartitionedAssetGroup(
                 root_path=root,
                 manifest=rel_manifest,
-                outputs=root_outputs,
+                outputs=sorted(root_outputs),
                 file_system_location_name=local_locations.get(root_normalized),
             )
         )

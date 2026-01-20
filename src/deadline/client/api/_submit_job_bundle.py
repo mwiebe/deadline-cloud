@@ -83,45 +83,48 @@ def _summarize_asset_paths(
     return result
 
 
-def _generate_message_for_snapshot_paths(
+def _generate_upload_confirmation_message(
     input_paths: Collection[Path | str],
     output_paths: Collection[Path | str],
     total_input_files: int,
     total_input_bytes: int,
-) -> str:
-    """Generate a summary message about snapshot uploads (no warnings, just informational)."""
-    messages = [
-        f"Job submission contains {total_input_files} input files "
-        f"totaling {human_readable_file_size(total_input_bytes)}. "
-        "All input files will be uploaded to S3 if they are not already present in the job attachments bucket.\n\n"
-    ]
-    messages.extend(_summarize_asset_paths(input_paths, output_paths, "Locations"))
-    return "".join(messages)
-
-
-def _generate_message_for_asset_paths(
-    upload_group: AssetUploadGroup,
     storage_profile: Optional[StorageProfile],
     known_asset_paths: Iterable[str],
 ) -> tuple[str, bool]:
-    """Generate a message about asset uploads and along with a flag indicating if there are warnings."""
-    # Collect all the input and output paths
-    all_input_paths: set[Path | str] = set()
-    all_output_paths: set[Path | str] = set()
-    for group in upload_group.asset_groups:
-        all_input_paths.update(path for path in group.inputs)
-        all_output_paths.update(path for path in group.outputs)
+    """
+    Generate a message about asset uploads and a flag indicating if there are warnings.
+
+    Returns:
+        A tuple of (message, default_prompt_response) where default_prompt_response
+        is True if there are no unknown path warnings, False otherwise.
+    """
+    all_input_paths = set(input_paths)
+    all_output_paths = set(output_paths)
 
     # Filter to get the unknown paths
+    # On Windows, normalize paths to use forward slashes for consistent matching
+    # (snapshots library uses POSIX paths even on Windows)
     if known_asset_paths:
+        if os.name == "nt":
+            normalized_known_paths = [path.replace("\\", "/") for path in known_asset_paths]
+        else:
+            normalized_known_paths = list(known_asset_paths)
         known_path_regex = re.compile(
-            f"{'|'.join(re.escape(path) for path in known_asset_paths)}.*"
+            f"{'|'.join(re.escape(path) for path in normalized_known_paths)}.*"
         )
         unknown_input_paths = {
-            path for path in all_input_paths if not known_path_regex.match(str(path))
+            path
+            for path in all_input_paths
+            if not known_path_regex.match(
+                str(path).replace("\\", "/") if os.name == "nt" else str(path)
+            )
         }
         unknown_output_paths = {
-            path for path in all_output_paths if not known_path_regex.match(str(path))
+            path
+            for path in all_output_paths
+            if not known_path_regex.match(
+                str(path).replace("\\", "/") if os.name == "nt" else str(path)
+            )
         }
     else:
         unknown_input_paths = all_input_paths
@@ -138,8 +141,8 @@ def _generate_message_for_asset_paths(
 
     warning_messages.extend(
         [
-            f"Job submission contains {upload_group.total_input_files} input files "
-            f"totaling {human_readable_file_size(upload_group.total_input_bytes)}. "
+            f"Job submission contains {total_input_files} input files "
+            f"totaling {human_readable_file_size(total_input_bytes)}. "
             "All input files will be uploaded to S3 if they are not already present in the job attachments bucket.\n\n"
         ]
     )
@@ -168,6 +171,29 @@ def _generate_message_for_asset_paths(
             )
 
     return "".join(warning_messages), default_prompt_response
+
+
+def _generate_message_for_asset_paths(
+    upload_group: AssetUploadGroup,
+    storage_profile: Optional[StorageProfile],
+    known_asset_paths: Iterable[str],
+) -> tuple[str, bool]:
+    """Generate a message about asset uploads and a flag indicating if there are warnings."""
+    # Collect all the input and output paths from the upload group
+    all_input_paths: set[Path | str] = set()
+    all_output_paths: set[Path | str] = set()
+    for group in upload_group.asset_groups:
+        all_input_paths.update(path for path in group.inputs)
+        all_output_paths.update(path for path in group.outputs)
+
+    return _generate_upload_confirmation_message(
+        input_paths=all_input_paths,
+        output_paths=all_output_paths,
+        total_input_files=upload_group.total_input_files,
+        total_input_bytes=upload_group.total_input_bytes,
+        storage_profile=storage_profile,
+        known_asset_paths=known_asset_paths,
+    )
 
 
 @api.record_success_fail_telemetry_event(metric_name="asset_upload")
@@ -530,9 +556,13 @@ def _process_job_attachments(
             output_directories=list(asset_references.output_directories),
             referenced_paths=list(asset_references.referenced_paths),
             storage_profile=storage_profile,
+            known_asset_paths=known_asset_paths,
+            config=config,
             debug_snapshot_dir=debug_snapshot_dir,
             job_attachments_file_system=job_attachments_file_system,
+            from_gui=from_gui,
             print_function_callback=print_function_callback,
+            interactive_confirmation_callback=interactive_confirmation_callback,
             hashing_progress_callback=hashing_progress_callback,
             upload_progress_callback=upload_progress_callback,
         )
@@ -706,9 +736,13 @@ def _process_job_attachments_with_snapshots(
     output_directories: List[str],
     referenced_paths: List[str],
     storage_profile: Optional[StorageProfile],
+    known_asset_paths: List[str],
+    config: Optional[ConfigParser],
     debug_snapshot_dir: Optional[str],
     job_attachments_file_system: str,
+    from_gui: bool,
     print_function_callback: Callable[[str], None],
+    interactive_confirmation_callback: Optional[Callable[[str, bool], bool]],
     hashing_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
     upload_progress_callback: Optional[Callable[[ProgressReportMetadata], bool]],
 ) -> Optional[dict]:
@@ -765,15 +799,48 @@ def _process_job_attachments_with_snapshots(
             )
         return None
 
-    # Print pre-upload summary
+    # Print pre-upload summary and get user confirmation
     input_paths = {f.path for f in abs_snapshot.files}
-    summary_message = _generate_message_for_snapshot_paths(
+    asset_path_message, default_prompt_response = _generate_upload_confirmation_message(
         input_paths=input_paths,
         output_paths=output_directories,
         total_input_files=len(abs_snapshot.files),
         total_input_bytes=abs_snapshot.totalSize,
+        storage_profile=storage_profile,
+        known_asset_paths=known_asset_paths,
     )
-    print_function_callback(summary_message)
+
+    if interactive_confirmation_callback is None:
+        # In this case, no user prompt can be presented. The result of the function must
+        # be the default that would be presented to the interactive prompt.
+        print_function_callback(asset_path_message)
+        if not default_prompt_response:
+            print_function_callback("\nJob submission canceled (user input not enabled).")
+            raise DeadlineOperationCanceled()
+    elif config_file.str2bool(get_setting("settings.auto_accept", config=config)):
+        if not default_prompt_response:
+            if from_gui:
+                # In the from_gui case, we present a prompt even though settings.auto_accept is enabled.
+                if not interactive_confirmation_callback(
+                    asset_path_message + "Do you wish to proceed?", default_prompt_response
+                ):
+                    print_function_callback("Job submission canceled (user input).")
+                    raise UserInitiatedCancel()
+            else:
+                # In this case, no user prompt should be presented. The result of the function must
+                # be the default that would be presented to the interactive prompt.
+                print_function_callback(
+                    f"{asset_path_message}\nJob submission canceled (settings.auto_accept enabled and there were unknown paths)."
+                )
+                raise DeadlineOperationCanceled()
+        else:
+            print_function_callback(asset_path_message)
+    else:
+        if not interactive_confirmation_callback(
+            asset_path_message + "\nDo you wish to proceed?", default_prompt_response
+        ):
+            print_function_callback("Job submission canceled (user input).")
+            raise UserInitiatedCancel()
 
     # Create data cache
     job_attachment_settings = JobAttachmentS3Settings(**queue["jobAttachmentSettings"])
