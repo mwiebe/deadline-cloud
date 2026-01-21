@@ -127,6 +127,8 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
                     item.skipped = False
                     if self._progress_state is not None:
                         self._progress_state.record_upload_complete(chunk_size, skipped=False)
+                        # Also record for smoother progress tracking
+                        self._progress_state.record_part_uploaded(chunk_size)
                 except Exception:
                     try:
                         if temp_path.exists():
@@ -199,6 +201,8 @@ class FileSystemHashUploadPipeline(HashUploadPipelineBase):
 
                 if self._progress_state is not None:
                     self._progress_state.record_upload_complete(bytes_written, skipped=False)
+                    # Also record for smoother progress tracking
+                    self._progress_state.record_part_uploaded(bytes_written)
 
                 item.uploaded = True
                 item.skipped = False

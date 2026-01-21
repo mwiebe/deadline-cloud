@@ -360,3 +360,116 @@ class TestHashUploadProgress:
 
         # progressMessage should contain rate in format "(X B/s)" or "(X KB/s)" etc.
         assert "/s)" in result.statistics.progressMessage
+
+    def test_progress_callback_includes_total_time(self, tmp_path: Path) -> None:
+        """Test that progress callbacks include total_time field."""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+        entries = [
+            self._create_test_file(files_dir / f"file{i}.txt", f"content{i}" * 100)
+            for i in range(5)
+        ]
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=entries,
+            total_size=sum(e.size or 0 for e in entries),
+        )
+
+        callbacks: List[HashUploadProgressMetadata] = []
+
+        def on_progress(metadata: HashUploadProgressMetadata) -> bool:
+            callbacks.append(metadata)
+            return True
+
+        data_cache = FileSystemDataCache(root_path=cache_root)
+        result = hash_upload_abs_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+            on_progress=on_progress,
+        )
+
+        # All callbacks should have total_time >= 0
+        for callback in callbacks:
+            assert callback.total_time >= 0
+
+        # Final statistics should have total_time > 0
+        assert result.statistics.total_time > 0
+
+    def test_progress_callback_includes_transfer_rate(self, tmp_path: Path) -> None:
+        """Test that progress callbacks include transfer_rate field."""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+        entries = [
+            self._create_test_file(files_dir / f"file{i}.txt", f"content{i}" * 100)
+            for i in range(5)
+        ]
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=entries,
+            total_size=sum(e.size or 0 for e in entries),
+        )
+
+        callbacks: List[HashUploadProgressMetadata] = []
+
+        def on_progress(metadata: HashUploadProgressMetadata) -> bool:
+            callbacks.append(metadata)
+            return True
+
+        data_cache = FileSystemDataCache(root_path=cache_root)
+        result = hash_upload_abs_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+            on_progress=on_progress,
+        )
+
+        # All callbacks should have transfer_rate >= 0
+        for callback in callbacks:
+            assert callback.transfer_rate >= 0
+
+        # Final statistics should have transfer_rate > 0 (since we processed data)
+        assert result.statistics.transfer_rate > 0
+
+    def test_progress_total_time_increases_monotonically(self, tmp_path: Path) -> None:
+        """Test that total_time increases monotonically across callbacks."""
+        cache_root = tmp_path / "cache"
+        cache_root.mkdir()
+
+        files_dir = tmp_path / "files"
+        files_dir.mkdir()
+        # Create enough files to get multiple callbacks
+        entries = [
+            self._create_test_file(files_dir / f"file{i}.txt", f"content{i}" * 500)
+            for i in range(10)
+        ]
+
+        manifest = AbsSnapshot(
+            hash_alg=HashAlgorithm.XXH128,
+            files=entries,
+            total_size=sum(e.size or 0 for e in entries),
+        )
+
+        callbacks: List[HashUploadProgressMetadata] = []
+
+        def on_progress(metadata: HashUploadProgressMetadata) -> bool:
+            callbacks.append(metadata)
+            return True
+
+        data_cache = FileSystemDataCache(root_path=cache_root)
+        hash_upload_abs_manifest(
+            manifest=manifest,
+            data_cache=data_cache,
+            on_progress=on_progress,
+        )
+
+        # Verify total_time increases monotonically
+        if len(callbacks) > 1:
+            for i in range(1, len(callbacks)):
+                assert callbacks[i].total_time >= callbacks[i - 1].total_time

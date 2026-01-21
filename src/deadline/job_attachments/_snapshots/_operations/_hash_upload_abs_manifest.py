@@ -519,6 +519,9 @@ def hash_upload_abs_manifest(
     # Build final statistics from progress_state
     end_time = time.perf_counter()
     total_time = end_time - start_time
+    # Final transfer rate uses total_bytes / total_time for accuracy.
+    # This differs from incremental progress callbacks which use _uploaded_bytes_for_progress
+    # with a sliding window for smoother real-time display.
     transfer_rate = progress_state.total_bytes / total_time if total_time > 0 else 0.0
 
     # Build summary message - use total_bytes for rate calculation

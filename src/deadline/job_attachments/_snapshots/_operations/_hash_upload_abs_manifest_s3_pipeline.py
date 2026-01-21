@@ -456,6 +456,9 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
 
             if self._progress_state is not None:
                 self._progress_state.record_upload_complete(chunk_size, skipped=item.skipped)
+                # Also record for smoother progress tracking (non-multipart upload)
+                if not item.skipped:
+                    self._progress_state.record_part_uploaded(chunk_size)
 
         finally:
             self._memory_pool.release(chunk_size)
@@ -510,6 +513,8 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
 
             if self._progress_state is not None:
                 self._progress_state.record_upload_complete(len(data), skipped=False)
+                # Also record for smoother progress tracking (non-multipart upload)
+                self._progress_state.record_part_uploaded(len(data))
 
             item.uploaded = True
             item.skipped = False
@@ -565,6 +570,10 @@ class S3HashUploadPipeline(HashUploadPipelineBase):
             )
             item.etag = response["ETag"]
             item.uploaded = True
+
+            # Record part upload for smoother progress tracking
+            if self._progress_state is not None:
+                self._progress_state.record_part_uploaded(part_size)
 
             with state.lock:
                 state.completed_parts.append({"PartNumber": item.part_number, "ETag": item.etag})
