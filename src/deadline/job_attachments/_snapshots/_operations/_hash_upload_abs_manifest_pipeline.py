@@ -266,8 +266,6 @@ class _HashUploadProgressState:
         # Calculate rate based on oldest entry in the window vs current
         if len(self._progress_history) < 2:
             # Not enough data points yet
-            if current_time > 0:
-                return current_bytes / current_time
             return 0.0
 
         oldest = self._progress_history[0]

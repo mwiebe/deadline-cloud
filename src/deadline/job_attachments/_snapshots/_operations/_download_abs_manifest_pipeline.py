@@ -16,10 +16,11 @@ import secrets
 import time
 import threading
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
-from typing import Callable, DefaultDict, List, Optional
+from typing import Callable, DefaultDict, Deque, List, Optional
 
 from .._manifest import ManifestFilePath
 from .._content_addressed_data_cache import ContentAddressedDataCache
@@ -34,6 +35,9 @@ logger = logging.getLogger("deadline.job_attachments.download")
 
 # Default interval for progress callbacks (5 times per second)
 DEFAULT_PROGRESS_CALLBACK_INTERVAL = 0.2  # seconds
+
+# Time window for calculating transfer rate (in seconds)
+TRANSFER_RATE_WINDOW_SECONDS = 12.0
 
 
 @dataclass
@@ -59,14 +63,22 @@ class DownloadProgressMetadata:
     progress: float  # 0-100
     progressMessage: str
 
-    # Timing (only set in final statistics, 0.0 during progress callbacks)
-    total_time: float = 0.0  # Total operation time in seconds
-    transfer_rate: float = 0.0  # Bytes per second
+    # Timing information
+    total_time: float = 0.0  # Elapsed time since operation start (seconds)
+    transfer_rate: float = 0.0  # Current transfer rate (bytes/second)
 
 
 # Callback type for download progress reporting
 # Return True to continue, False to cancel the operation
 DownloadProgressCallback = Callable[[DownloadProgressMetadata], bool]
+
+
+@dataclass
+class _ProgressHistoryEntry:
+    """A single entry in the progress history for transfer rate calculation."""
+
+    timestamp: float  # Time since operation start (seconds)
+    downloaded_bytes: int  # Total downloaded bytes at this point
 
 
 @dataclass
@@ -87,11 +99,23 @@ class _DownloadProgressState:
     skipped_file_chunks: int = 0
     skipped_bytes: int = 0
 
+    # Separate progress tracking for smoother transfer rate calculation.
+    # This is updated on every part download (not just file/chunk completion),
+    # providing more granular updates for transfer rate calculation.
+    _downloaded_bytes_for_progress: int = 0
+
     # Callback and timing
     on_progress: Optional[DownloadProgressCallback] = None
     callback_interval: float = DEFAULT_PROGRESS_CALLBACK_INTERVAL
     _last_callback_time: float = field(default_factory=time.perf_counter)
     _cancelled: bool = False
+
+    # Start time for total_time calculation
+    _start_time: float = field(default_factory=time.perf_counter)
+
+    # Progress history for sliding window transfer rate calculation
+    # Each entry records (timestamp, downloaded_bytes) at a progress update
+    _progress_history: Deque[_ProgressHistoryEntry] = field(default_factory=deque)
 
     # Thread safety
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -100,6 +124,7 @@ class _DownloadProgressState:
         """Record bytes downloaded (for progress bar smoothness). Does not increment file_chunks."""
         with self._lock:
             self.downloaded_bytes += num_bytes
+            self._downloaded_bytes_for_progress += num_bytes
             self._maybe_invoke_callback()
 
     def record_file_chunk_complete(self, chunk_bytes: int, skipped: bool) -> None:
@@ -122,7 +147,18 @@ class _DownloadProgressState:
                 self.skipped_file_chunks += 1
             else:
                 self.downloaded_bytes += chunk_bytes
+                self._downloaded_bytes_for_progress += chunk_bytes
                 self.downloaded_file_chunks += 1
+            self._maybe_invoke_callback()
+
+    def record_part_downloaded(self, part_bytes: int) -> None:
+        """Record bytes downloaded for a part (for smoother progress tracking).
+
+        This is called after each part download completes, providing more granular
+        progress updates than record_download_complete which is called per file/chunk.
+        """
+        with self._lock:
+            self._downloaded_bytes_for_progress += part_bytes
             self._maybe_invoke_callback()
 
     def _maybe_invoke_callback(self) -> None:
@@ -151,10 +187,35 @@ class _DownloadProgressState:
         completed_bytes = self.downloaded_bytes + self.skipped_bytes
         progress = (completed_bytes / self.total_bytes * 100) if self.total_bytes > 0 else 0.0
 
-        msg = (
-            f"Downloaded {human_readable_file_size(completed_bytes)} "
-            f"/ {human_readable_file_size(self.total_bytes)}"
-        )
+        # Calculate total_time since operation started
+        now = time.perf_counter()
+        total_time = now - self._start_time
+
+        # Use _downloaded_bytes_for_progress for smoother transfer rate calculation
+        # This is updated more frequently (per-part) than completed_bytes (per-file/chunk)
+        progress_bytes = self._downloaded_bytes_for_progress
+        transfer_rate = self._calculate_transfer_rate(total_time, progress_bytes)
+
+        # Format elapsed time
+        if total_time < 60:
+            time_str = f"{total_time:.1f}s"
+        else:
+            minutes = int(total_time // 60)
+            seconds = total_time % 60
+            time_str = f"{minutes}:{seconds:04.1f}"
+
+        # Build progress message with rate
+        rate_str = f"{human_readable_file_size(int(transfer_rate))}/s" if transfer_rate > 0 else ""
+
+        msg_parts = [
+            f"Downloaded {human_readable_file_size(completed_bytes)}",
+            f"/ {human_readable_file_size(self.total_bytes)}",
+            f"[{time_str}]",
+        ]
+        if rate_str:
+            msg_parts.append(f"({rate_str})")
+
+        msg = " ".join(msg_parts)
 
         return DownloadProgressMetadata(
             total_file_chunks=self.total_file_chunks,
@@ -165,7 +226,47 @@ class _DownloadProgressState:
             skipped_bytes=self.skipped_bytes,
             progress=progress,
             progressMessage=msg,
+            total_time=total_time,
+            transfer_rate=transfer_rate,
         )
+
+    def _calculate_transfer_rate(self, current_time: float, current_bytes: int) -> float:
+        """
+        Calculate transfer rate using a sliding window approach.
+
+        Uses a deque of progress history entries. The window is TRANSFER_RATE_WINDOW_SECONDS
+        (12s). At the beginning when less than 12s has elapsed, the window extends from
+        start to current time. Once 12s has passed, we use a sliding window by removing
+        entries from the front when the second entry is older than 12s ago.
+
+        Must be called with lock held.
+        """
+        # Add current progress to history
+        self._progress_history.append(
+            _ProgressHistoryEntry(timestamp=current_time, downloaded_bytes=current_bytes)
+        )
+
+        # Remove old entries from the front of the deque
+        # Keep removing while we have at least 2 entries and the second entry
+        # is older than TRANSFER_RATE_WINDOW_SECONDS ago
+        while (
+            len(self._progress_history) > 1
+            and current_time - self._progress_history[1].timestamp > TRANSFER_RATE_WINDOW_SECONDS
+        ):
+            self._progress_history.popleft()
+
+        # Calculate rate based on oldest entry in the window vs current
+        if len(self._progress_history) < 2:
+            # Not enough data points yet
+            return 0.0
+
+        oldest = self._progress_history[0]
+        time_delta = current_time - oldest.timestamp
+        bytes_delta = current_bytes - oldest.downloaded_bytes
+
+        if time_delta > 0:
+            return bytes_delta / time_delta
+        return 0.0
 
     def is_cancelled(self) -> bool:
         """Check if operation was cancelled via callback."""

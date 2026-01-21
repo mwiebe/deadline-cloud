@@ -1809,10 +1809,30 @@ class DownloadProgressMetadata:
     progress: float  # 0-100
     progressMessage: str
 
-    # Timing (only set in final statistics, 0.0 during progress callbacks)
-    total_time: float = 0.0  # Total operation time in seconds
-    transfer_rate: float = 0.0  # Bytes per second
+    # Timing information
+    total_time: float  # Elapsed time since operation start (seconds)
+    transfer_rate: float  # Current transfer rate (bytes/second)
 ```
+
+**Transfer Rate Calculation:**
+
+The `transfer_rate` field uses a sliding window algorithm for smooth, responsive rate estimation:
+
+- Maintains a deque of `(timestamp, downloaded_bytes)` snapshots
+- Window size: 12 seconds (`TRANSFER_RATE_WINDOW_SECONDS`)
+- Rate = `(current_bytes - oldest_bytes) / (current_time - oldest_time)`
+- At operation start (< 12s elapsed), uses all available history from start to current time
+- Updated on every part download for granular progress (not just per-file/chunk completion)
+
+*Window adjustment:* After each progress update, old entries are pruned from the front of the deque.
+Entries are removed while there are at least 2 entries and the second entry is older than 12 seconds ago.
+This keeps the oldest entry just outside the window boundary, ensuring the rate calculation always
+spans approximately the full window duration.
+
+This approach provides:
+- Smooth rate display that doesn't jump erratically
+- Quick response to throughput changes (12s window)
+- Accurate rates even during bursty transfers
 
 The callback type is:
 ```python
@@ -1836,7 +1856,8 @@ For chunked files, each chunk is counted separately in `total_file_chunks`, `dow
 |-------|------------------|
 | `downloaded_bytes` / `downloaded_file_chunks` | After download completes for a file or chunk |
 | `skipped_bytes` / `skipped_file_chunks` | When hash cache hit or conflict resolution skips the download |
-| `total_time` / `transfer_rate` | Only set in final statistics returned by `download_abs_manifest()` |
+| `total_time` | Updated on every progress callback (elapsed time since start) |
+| `transfer_rate` | Updated on every progress callback (sliding window calculation) |
 
 **Example - Progress callback:**
 
@@ -1847,7 +1868,9 @@ from deadline.job_attachments._snapshots import (
 )
 
 def on_progress(metadata: DownloadProgressMetadata) -> bool:
-    print(f"Progress: {metadata.progress:.1f}% - {metadata.progressMessage}")
+    # Access timing information
+    rate_mb_s = metadata.transfer_rate / (1024 * 1024)
+    print(f"Progress: {metadata.progress:.1f}% - {rate_mb_s:.1f} MB/s - {metadata.progressMessage}")
     # Return False to cancel, True to continue
     return True
 
@@ -1856,6 +1879,10 @@ result = download_abs_manifest(
     data_cache=s3_cache,
     on_progress=on_progress,
 )
+
+# Access final timing from statistics
+print(f"Completed in {result.statistics.total_time:.2f}s")
+print(f"Average rate: {result.statistics.transfer_rate / (1024 * 1024):.1f} MB/s")
 ```
 
 **Hash Cache Skip Optimization:**
@@ -1890,8 +1917,10 @@ The `statistics` field contains the same fields as the progress callback metadat
 - `progress`: Final progress percentage (100.0)
 - `progressMessage`: Summary message with download rate
 - `total_time`: Total operation time in seconds
-- `transfer_rate`: Bytes per second
-- `transfer_rate`: Download throughput in bytes/second
+- `transfer_rate`: Final transfer rate in bytes/second (total_bytes / total_time)
+
+Note: In the final statistics, `transfer_rate` is calculated as `total_bytes / total_time` for accuracy,
+which may differ slightly from the sliding window rate shown during progress callbacks.
 
 **Why Return an Updated Manifest?**
 
