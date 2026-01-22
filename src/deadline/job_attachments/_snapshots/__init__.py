@@ -30,6 +30,9 @@ from ._content_addressed_data_cache import (
 from ._operations import (
     collect_abs_snapshot,
     hash_abs_manifest,
+    HashResult,
+    HashProgressMetadata,
+    HashProgressCallback,
     hash_upload_abs_manifest,
     UploadResult,
     HashUploadProgressMetadata,
@@ -79,6 +82,9 @@ __all__ = [
     # Operations
     "collect_abs_snapshot",
     "hash_abs_manifest",
+    "HashResult",
+    "HashProgressMetadata",
+    "HashProgressCallback",
     "hash_upload_abs_manifest",
     "UploadResult",
     "HashUploadProgressMetadata",

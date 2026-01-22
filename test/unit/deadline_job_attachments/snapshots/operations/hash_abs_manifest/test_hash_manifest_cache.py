@@ -51,13 +51,13 @@ class TestHashManifestWithCache:
         cache_key = str(Path(collected.files[0].path).resolve())
 
         with HashCache(str(cache_dir)) as hash_cache:
-            hashed = hash_abs_manifest(collected, hash_cache=hash_cache)
+            result = hash_abs_manifest(collected, hash_cache=hash_cache)
 
-            assert hashed.files[0].hash != ""
+            assert result.manifest.files[0].hash != ""
 
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
             assert cached_entry is not None
-            assert cached_entry.file_hash == hashed.files[0].hash
+            assert cached_entry.file_hash == result.manifest.files[0].hash
 
     def test_cache_hit_uses_cached_hash(self, tmp_path: Path) -> None:
         """On cache hit, cached hash is used without recomputing."""
@@ -86,9 +86,9 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = hash_abs_manifest(collected, hash_cache=hash_cache)
+            result = hash_abs_manifest(collected, hash_cache=hash_cache)
 
-            assert hashed.files[0].hash == fake_hash
+            assert result.manifest.files[0].hash == fake_hash
 
     def test_cache_miss_on_mtime_change(self, tmp_path: Path) -> None:
         """Cache miss when mtime doesn't match."""
@@ -116,9 +116,9 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = hash_abs_manifest(collected, hash_cache=hash_cache)
+            result = hash_abs_manifest(collected, hash_cache=hash_cache)
 
-            assert hashed.files[0].hash != fake_hash
+            assert result.manifest.files[0].hash != fake_hash
 
     def test_force_rehash_ignores_cache(self, tmp_path: Path) -> None:
         """Force rehash ignores cache and recomputes."""
@@ -147,12 +147,12 @@ class TestHashManifestWithCache:
                 )
             )
 
-            hashed = hash_abs_manifest(collected, hash_cache=hash_cache, force_rehash=True)
+            result = hash_abs_manifest(collected, hash_cache=hash_cache, force_rehash=True)
 
-            assert hashed.files[0].hash != fake_hash
+            assert result.manifest.files[0].hash != fake_hash
 
             cached_entry = hash_cache.get_entry(cache_key, HashAlgorithm.XXH128)
-            assert cached_entry.file_hash == hashed.files[0].hash
+            assert cached_entry.file_hash == result.manifest.files[0].hash
 
     def test_no_cache_always_computes(self, tmp_path: Path) -> None:
         """Without cache, hash is always computed."""
@@ -164,10 +164,10 @@ class TestHashManifestWithCache:
             [],
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
-        hashed = hash_abs_manifest(collected, hash_cache=None)
+        result = hash_abs_manifest(collected, hash_cache=None)
 
         expected_hash = hash_file(str(test_file), HashAlgorithm.XXH128)
-        assert hashed.files[0].hash == expected_hash
+        assert result.manifest.files[0].hash == expected_hash
 
 
 class TestGetOrComputeHashWithCache:
@@ -193,7 +193,7 @@ class TestGetOrComputeHashWithCache:
                 )
             )
 
-            result = _get_or_compute_hash(
+            result_hash, skipped = _get_or_compute_hash(
                 file_path=test_file,
                 cache_key=cache_key,
                 mtime=12345,
@@ -202,7 +202,8 @@ class TestGetOrComputeHashWithCache:
                 force_rehash=False,
             )
 
-            assert result == fake_hash
+            assert result_hash == fake_hash
+            assert skipped is True
 
 
 class TestHashManifestCacheMocked:
@@ -247,7 +248,7 @@ class TestHashManifestCacheMocked:
             hash_cache=mock_cache,
         )
 
-        assert result.files[0].hash == cached_hash
+        assert result.manifest.files[0].hash == cached_hash
         mock_cache.get_entry.assert_called()
         mock_cache.put_entry.assert_not_called()
 
@@ -280,12 +281,12 @@ class TestHashManifestCacheMocked:
             hash_cache=mock_cache,
         )
 
-        assert result.files[0].hash is not None
-        assert len(result.files[0].hash) == 32
+        assert result.manifest.files[0].hash is not None
+        assert len(result.manifest.files[0].hash) == 32
 
         mock_cache.put_entry.assert_called_once()
         put_call = mock_cache.put_entry.call_args[0][0]
-        assert put_call.file_hash == result.files[0].hash
+        assert put_call.file_hash == result.manifest.files[0].hash
         assert put_call.last_modified_time == str(mtime)
 
     def test_hash_cache_stale_entry_recomputes_hash(self, tmp_path: Path) -> None:
@@ -325,9 +326,9 @@ class TestHashManifestCacheMocked:
             hash_cache=mock_cache,
         )
 
-        assert result.files[0].hash is not None
-        assert result.files[0].hash != "stale_hash_should_not_be_used"
-        assert len(result.files[0].hash) == 32
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].hash != "stale_hash_should_not_be_used"
+        assert len(result.manifest.files[0].hash) == 32
 
         mock_cache.put_entry.assert_called_once()
 
@@ -360,7 +361,7 @@ class TestHashManifestCacheMocked:
             force_rehash=True,
         )
 
-        assert result.files[0].hash is not None
+        assert result.manifest.files[0].hash is not None
 
         mock_cache.get_entry.assert_not_called()
         mock_cache.put_entry.assert_called_once()

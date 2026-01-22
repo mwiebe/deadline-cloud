@@ -759,7 +759,8 @@ def hash_abs_manifest(
     hash_cache: Optional[HashCache] = None,
     force_rehash: bool = False,
     file_chunk_size_bytes: Optional[int] = None,
-) -> AbsManifest:
+    on_progress: Optional[HashProgressCallback] = None,
+) -> HashResult:
 ```
 
 **Parameters:**
@@ -770,8 +771,121 @@ def hash_abs_manifest(
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
 | `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
+| `on_progress` | Optional callback for progress reporting. Called periodically with `HashProgressMetadata`. Return `True` to continue, `False` to cancel. |
 
-**Returns:** A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in. The manifest type (snapshot/diff) and `parentManifestHash` are preserved from the input.
+**Progress Reporting:**
+
+The `on_progress` callback receives `HashProgressMetadata` with tracking for the hashing phase:
+
+```python
+@dataclass
+class HashProgressMetadata:
+    # Totals
+    total_file_chunks: int  # Total files + chunks to process
+    total_bytes: int
+
+    # Hashing phase progress
+    hashed_file_chunks: int
+    hashed_bytes: int
+    skipped_file_chunks: int  # Skipped due to hash cache hit
+    skipped_bytes: int
+
+    # Overall progress
+    progress: float  # 0-100
+    progressMessage: str
+
+    # Timing information
+    total_time: float  # Elapsed time since operation start (seconds)
+    rate: float  # Current hashing rate (bytes/second)
+```
+
+**Rate Calculation:**
+
+The `rate` field uses a sliding window algorithm for smooth, responsive rate estimation:
+
+- Maintains a deque of `(timestamp, hashed_bytes)` snapshots
+- Window size: 12 seconds (`RATE_WINDOW_SECONDS`)
+- Rate = `(current_bytes - oldest_bytes) / (current_time - oldest_time)`
+- At operation start (< 12s elapsed), uses all available history from start to current time
+
+This approach provides:
+- Smooth rate display that doesn't jump erratically
+- Quick response to throughput changes (12s window)
+- Accurate rates even during bursty I/O
+
+The callback type is:
+```python
+HashProgressCallback = Callable[[HashProgressMetadata], bool]
+```
+
+**Progress Callback Behavior:**
+
+| Behavior | Description |
+|----------|-------------|
+| Invocation interval | Called at most every 0.2 seconds (5 times per second) |
+| Final callback | Always called at operation completion via `force_callback()` |
+| Cancellation | Return `False` from callback to cancel the operation |
+| Thread safety | Callback is invoked from the main thread (hashing is single-threaded) |
+
+**Progress Field Semantics:**
+
+For chunked files, each chunk is counted separately in `total_file_chunks`, `hashed_file_chunks`, etc.
+
+| Field | When Incremented |
+|-------|------------------|
+| `hashed_bytes` / `hashed_file_chunks` | After hash computation completes for a file or chunk |
+| `skipped_bytes` / `skipped_file_chunks` | When hash cache hit allows skipping hash computation |
+
+**Example - Progress callback:**
+
+```python
+from deadline.job_attachments._snapshots import (
+    hash_abs_manifest,
+    HashProgressMetadata,
+)
+
+def on_progress(metadata: HashProgressMetadata) -> bool:
+    # Access timing information
+    rate_mb_s = metadata.rate / (1024 * 1024)
+    print(f"Progress: {metadata.progress:.1f}% - {rate_mb_s:.1f} MB/s - {metadata.progressMessage}")
+    # Return False to cancel, True to continue
+    return True
+
+result = hash_abs_manifest(
+    manifest=abs_manifest,
+    on_progress=on_progress,
+)
+
+# Access final timing from statistics
+print(f"Completed in {result.statistics.total_time:.2f}s")
+print(f"Average rate: {result.statistics.rate / (1024 * 1024):.1f} MB/s")
+```
+
+**Returns:** `HashResult` containing:
+- `statistics`: `HashProgressMetadata` with detailed hash metrics (see below)
+- `manifest`: A NEW `AbsManifest` (either `AbsSnapshot` or `AbsSnapshotDiff`) with all hashes filled in
+
+**HashResult Statistics:**
+
+The `statistics` field contains a `HashProgressMetadata` object with tracking for the hashing phase:
+
+| Field | Description |
+|-------|-------------|
+| `total_file_chunks` | Total files + chunks to process |
+| `total_bytes` | Total size of all files |
+| `hashed_file_chunks` | Number of files/chunks that were hashed |
+| `hashed_bytes` | Bytes that were hashed |
+| `skipped_file_chunks` | Files/chunks skipped due to hash cache hit |
+| `skipped_bytes` | Bytes skipped due to hash cache hit |
+| `progress` | Overall progress percentage (0-100) |
+| `progressMessage` | Human-readable summary message |
+| `total_time` | Total operation time in seconds |
+| `rate` | Final hashing rate in bytes/second (total_bytes / total_time) |
+
+Note: In the final statistics, `rate` is calculated as `total_bytes / total_time` for accuracy,
+which may differ slightly from the sliding window rate shown during progress callbacks.
+
+Files/chunks are skipped when the hash cache has the file's hash and the mtime matches.
 
 **Raises:**
 - `ValueError` if the manifest contains relative paths
@@ -875,14 +989,19 @@ abs_manifest = collect_abs_snapshot(
 
 # Hash with a cache for efficiency
 with HashCache("/tmp/hash_cache") as cache:
-    hashed = hash_abs_manifest(
+    result = hash_abs_manifest(
         manifest=abs_manifest,
         hash_cache=cache,
         force_rehash=False,  # Use cached hashes when available
     )
 
+# Print hash statistics
+stats = result.statistics
+print(f"Hashed {stats.hashed_bytes} bytes, skipped {stats.skipped_bytes} bytes (cache hit)")
+print(f"Completed in {stats.total_time:.2f}s at {stats.rate / (1024 * 1024):.1f} MB/s")
+
 # Now entries have their hashes filled in (paths are still absolute)
-for entry in hashed.files[:2]:
+for entry in result.manifest.files[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
     elif entry.chunkhashes:
@@ -893,6 +1012,8 @@ for entry in hashed.files[:2]:
 
 Output:
 ```
+Hashed 1234567890 bytes, skipped 0 bytes (cache hit)
+Completed in 5.23s at 236.1 MB/s
   file: /projects/my_scene/assets/model.blend hash=a1b2c3d4e5f67890...
   large file: /projects/my_scene/renders/output.exr (3 chunks)
 ```
@@ -914,10 +1035,13 @@ diff = diff_snapshots(
 )
 
 # Now hash the diff to fill in hashes for new/modified files
-hashed_diff = hash_abs_manifest(diff)
+result = hash_abs_manifest(diff)
+
+# Print statistics
+print(f"Hashed {result.statistics.hashed_file_chunks} files/chunks")
 
 # Deleted entries are preserved unchanged
-for entry in hashed_diff.files:
+for entry in result.manifest.files:
     if entry.deleted:
         print(f"  deleted: {entry.path}")
     else:

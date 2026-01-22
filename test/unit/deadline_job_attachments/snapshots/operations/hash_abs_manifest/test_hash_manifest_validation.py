@@ -62,9 +62,9 @@ class TestInputValidation:
             symlink_policy=SymlinkPolicy.COLLAPSE_ALL,
         )
 
-        hashed = hash_abs_manifest(collected)
-        assert hashed.files[0].hash is not None
-        assert hashed.files[0].hash != ""
+        result = hash_abs_manifest(collected)
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].hash != ""
 
     def test_large_file_rejects_non_none_hash(self, tmp_path: Path) -> None:
         """Large file with hash set (not None) raises ValueError."""
@@ -118,10 +118,10 @@ class TestInputValidation:
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
-            hashed = hash_abs_manifest(manifest)
+            result = hash_abs_manifest(manifest)
 
-            assert hashed.files[0].chunkhashes is not None
-            assert len(hashed.files[0].chunkhashes) == 2
+            assert result.manifest.files[0].chunkhashes is not None
+            assert len(result.manifest.files[0].chunkhashes) == 2
 
     def test_large_file_valid_input_passes(self, tmp_path: Path) -> None:
         """Large file with valid input (hash=None, chunkhashes=None) passes."""
@@ -149,10 +149,10 @@ class TestInputValidation:
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2", "hash3"]
 
-            hashed = hash_abs_manifest(manifest)
+            result = hash_abs_manifest(manifest)
 
-            assert hashed.files[0].chunkhashes is not None
-            assert len(hashed.files[0].chunkhashes) == 3
+            assert result.manifest.files[0].chunkhashes is not None
+            assert len(result.manifest.files[0].chunkhashes) == 3
 
     def test_small_file_rejects_non_none_chunkhashes(self, tmp_path: Path) -> None:
         """Small file with chunkhashes set raises ValueError."""
@@ -183,11 +183,11 @@ class TestInputValidation:
         assert collected.files[0].hash is None
         assert collected.files[0].chunkhashes is None
 
-        hashed = hash_abs_manifest(collected)
+        result = hash_abs_manifest(collected)
 
-        assert isinstance(hashed.files[0].hash, str)
-        assert len(hashed.files[0].hash) > 0
-        assert hashed.files[0].chunkhashes is None
+        assert isinstance(result.manifest.files[0].hash, str)
+        assert len(result.manifest.files[0].hash) > 0
+        assert result.manifest.files[0].chunkhashes is None
 
 
 class TestValidationErrorMessages:

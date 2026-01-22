@@ -1,7 +1,12 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 from ._collect_abs_snapshot import collect_abs_snapshot
-from ._hash_abs_manifest import hash_abs_manifest
+from ._hash_abs_manifest import (
+    hash_abs_manifest,
+    HashResult,
+    HashProgressMetadata,
+    HashProgressCallback,
+)
 from ._hash_upload_abs_manifest import (
     hash_upload_abs_manifest,
     UploadResult,
@@ -28,6 +33,9 @@ from ._join_manifest import join_manifest
 __all__ = [
     "collect_abs_snapshot",
     "hash_abs_manifest",
+    "HashResult",
+    "HashProgressMetadata",
+    "HashProgressCallback",
     "hash_upload_abs_manifest",
     "UploadResult",
     "HashUploadProgressMetadata",

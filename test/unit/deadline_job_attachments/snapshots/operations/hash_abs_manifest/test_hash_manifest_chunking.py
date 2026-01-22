@@ -213,10 +213,10 @@ class TestLargeFileChunking:
         ) as mock_chunk:
             mock_chunk.return_value = ["hash1", "hash2"]
 
-            hashed = hash_abs_manifest(manifest)
+            result = hash_abs_manifest(manifest)
 
-            assert hashed.files[0].chunkhashes == ["hash1", "hash2"]
-            assert hashed.files[0].hash is None
+            assert result.manifest.files[0].chunkhashes == ["hash1", "hash2"]
+            assert result.manifest.files[0].hash is None
             mock_chunk.assert_called_once()
 
     def test_small_file_uses_single_hash(self, tmp_path: Path) -> None:
@@ -229,10 +229,10 @@ class TestLargeFileChunking:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_abs_manifest(collected)
+        result = hash_abs_manifest(collected)
 
-        assert hashed.files[0].hash is not None
-        assert hashed.files[0].chunkhashes is None
+        assert result.manifest.files[0].hash is not None
+        assert result.manifest.files[0].chunkhashes is None
 
 
 class TestChunkedFileCacheMocked:
@@ -269,8 +269,8 @@ class TestChunkedFileCacheMocked:
             hash_cache=mock_cache,
         )
 
-        assert result.files[0].chunkhashes is not None
-        assert len(result.files[0].chunkhashes) == 4
+        assert result.manifest.files[0].chunkhashes is not None
+        assert len(result.manifest.files[0].chunkhashes) == 4
 
         assert mock_cache.put_entry.call_count == 4
 

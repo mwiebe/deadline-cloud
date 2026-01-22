@@ -40,15 +40,15 @@ class TestSymlinkPassthrough:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_abs_manifest(collected)
+        result = hash_abs_manifest(collected)
 
         link_path = str(link).replace("\\", "/")
         target_path = str(target).replace("\\", "/")
-        symlink_entry = next(p for p in hashed.files if p.path == link_path)
+        symlink_entry = next(p for p in result.manifest.files if p.path == link_path)
         assert symlink_entry.symlink_target is not None
         assert symlink_entry.hash is None
 
-        target_entry = next(p for p in hashed.files if p.path == target_path)
+        target_entry = next(p for p in result.manifest.files if p.path == target_path)
         assert target_entry.hash is not None
         assert target_entry.symlink_target is None
 
@@ -73,11 +73,11 @@ class TestSymlinkPassthrough:
 
         result = hash_abs_manifest(manifest=input_manifest)
 
-        assert len(result.files) == 1
-        assert result.files[0].path == symlink_path
-        assert result.files[0].symlink_target == target_path
-        assert result.files[0].hash is None
-        assert result.files[0].size is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].path == symlink_path
+        assert result.manifest.files[0].symlink_target == target_path
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].size is None
 
     def test_symlink_with_callback_reports_no_hash(self, tmp_path: Path) -> None:
         """Symlink entries report 'no hash' via callback."""
@@ -95,12 +95,12 @@ class TestSymlinkPassthrough:
             total_size=0,
         )
 
-        hashed = hash_abs_manifest(manifest=input_manifest)
+        result = hash_abs_manifest(manifest=input_manifest)
 
         # Symlink should be passed through unchanged
-        assert len(hashed.files) == 1
-        assert hashed.files[0].symlink_target == target_path
-        assert hashed.files[0].hash is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].symlink_target == target_path
+        assert result.manifest.files[0].hash is None
 
     def test_diff_snapshots_with_symlinks(self, tmp_path: Path) -> None:
         """Diff manifest with symlink entries passes them through unchanged."""
@@ -116,12 +116,12 @@ class TestSymlinkPassthrough:
             total_size=0,
         )
 
-        hashed = hash_abs_manifest(diff_manifest)
+        result = hash_abs_manifest(diff_manifest)
 
-        assert len(hashed.files) == 1
-        assert hashed.files[0].symlink_target == "/some/absolute/target.txt"
-        assert hashed.files[0].hash is None
-        assert isinstance(hashed, AbsSnapshotDiff)
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].symlink_target == "/some/absolute/target.txt"
+        assert result.manifest.files[0].hash is None
+        assert isinstance(result.manifest, AbsSnapshotDiff)
 
 
 class TestDeletedEntryPassthrough:
@@ -144,11 +144,11 @@ class TestDeletedEntryPassthrough:
 
         result = hash_abs_manifest(manifest=input_manifest)
 
-        assert len(result.files) == 1
-        assert result.files[0].path == deleted_path
-        assert result.files[0].deleted is True
-        assert result.files[0].hash is None
-        assert result.files[0].size is None
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].path == deleted_path
+        assert result.manifest.files[0].deleted is True
+        assert result.manifest.files[0].hash is None
+        assert result.manifest.files[0].size is None
 
     def test_diff_snapshots_preserves_deleted_entries(self, tmp_path: Path) -> None:
         """Diff manifest deleted entries are passed through unchanged."""
@@ -165,12 +165,12 @@ class TestDeletedEntryPassthrough:
             parent_manifest_hash="parent456",
         )
 
-        hashed = hash_abs_manifest(diff_manifest)
+        result = hash_abs_manifest(diff_manifest)
 
-        assert len(hashed.files) == 1
-        assert hashed.files[0].deleted is True
-        assert hashed.files[0].path == "/some/deleted/file.txt"
-        assert isinstance(hashed, AbsSnapshotDiff)
+        assert len(result.manifest.files) == 1
+        assert result.manifest.files[0].deleted is True
+        assert result.manifest.files[0].path == "/some/deleted/file.txt"
+        assert isinstance(result.manifest, AbsSnapshotDiff)
 
     def test_diff_snapshots_preserves_deleted_directories(self, tmp_path: Path) -> None:
         """Diff manifest deleted directory entries are passed through unchanged."""
@@ -186,12 +186,12 @@ class TestDeletedEntryPassthrough:
             total_size=0,
         )
 
-        hashed = hash_abs_manifest(diff_manifest)
+        result = hash_abs_manifest(diff_manifest)
 
-        assert len(hashed.dirs) == 1
-        assert hashed.dirs[0].deleted is True
-        assert hashed.dirs[0].path == "/some/deleted/dir"
-        assert isinstance(hashed, AbsSnapshotDiff)
+        assert len(result.manifest.dirs) == 1
+        assert result.manifest.dirs[0].deleted is True
+        assert result.manifest.dirs[0].path == "/some/deleted/dir"
+        assert isinstance(result.manifest, AbsSnapshotDiff)
 
 
 class TestDirectoryEntryHandling:
@@ -208,11 +208,11 @@ class TestDirectoryEntryHandling:
             [],
             symlink_policy=SymlinkPolicy.PRESERVE,
         )
-        hashed = hash_abs_manifest(collected)
+        result = hash_abs_manifest(collected)
 
-        assert len(hashed.dirs) >= 1
+        assert len(result.manifest.dirs) >= 1
         subdir_path = str(subdir).replace("\\", "/")
-        subdir_entries = [d for d in hashed.dirs if d.path == subdir_path]
+        subdir_entries = [d for d in result.manifest.dirs if d.path == subdir_path]
         assert len(subdir_entries) == 1
         assert subdir_entries[0].deleted is False
 
@@ -241,9 +241,9 @@ class TestDirectoryEntryHandling:
 
         result = hash_abs_manifest(manifest=input_manifest)
 
-        assert len(result.dirs) == 1
-        assert result.dirs[0].path == dir_path
-        assert result.dirs[0].deleted is False
+        assert len(result.manifest.dirs) == 1
+        assert result.manifest.dirs[0].path == dir_path
+        assert result.manifest.dirs[0].deleted is False
 
     def test_deleted_directory_entries_preserved(self, tmp_path: Path) -> None:
         """Deleted directory entries are preserved in output."""
@@ -260,9 +260,9 @@ class TestDirectoryEntryHandling:
 
         result = hash_abs_manifest(manifest=input_manifest)
 
-        assert len(result.dirs) == 1
-        assert result.dirs[0].path == dir_path
-        assert result.dirs[0].deleted is True
+        assert len(result.manifest.dirs) == 1
+        assert result.manifest.dirs[0].path == dir_path
+        assert result.manifest.dirs[0].deleted is True
 
 
 class TestMixedEntryTypes:
@@ -300,11 +300,11 @@ class TestMixedEntryTypes:
 
         result = hash_abs_manifest(manifest=input_manifest)
 
-        assert len(result.files) == 3
+        assert len(result.manifest.files) == 3
 
-        symlink_entry = next(e for e in result.files if e.path == symlink_path)
-        deleted_entry = next(e for e in result.files if e.path == deleted_path)
-        regular_entry = next(e for e in result.files if e.path == regular_path)
+        symlink_entry = next(e for e in result.manifest.files if e.path == symlink_path)
+        deleted_entry = next(e for e in result.manifest.files if e.path == deleted_path)
+        regular_entry = next(e for e in result.manifest.files if e.path == regular_path)
 
         # Symlink unchanged
         assert symlink_entry.symlink_target == "/some/target"
