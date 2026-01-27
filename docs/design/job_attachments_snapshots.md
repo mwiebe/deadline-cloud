@@ -213,15 +213,6 @@ SCALING TEST SUMMARY (Duration as M:SS)
 |       16 |             1:43 |             0:04 |           0:00.3 |             0:47 |           0:00.4 |
 |       32 |             1:56 |             0:04 |           0:00.3 |             0:45 |           0:00.4 |
 
-### Why Separate COLLECT, HASH, and HASH_UPLOAD?
-
-Separating structure collection, hashing, and hashing+uploading enables:
-
-- **Fast diff comparison:** Compare manifests by mtime/size without hashing unchanged files
-- **Hash cache integration:** Only hash files with cache misses
-- **Deferred hashing:** Collect structure first, hash only what's needed
-- **Reduced redundant reads:** The HASH_UPLOAD operation combines read+hash into a single stage, computing the hash while bytes stream into the memory buffer, then uploads. This avoids reading files twice (once for hash, once for upload).
-
 ## Operation Details
 
 The detailed documentation for each operation is in these sub-component documents:
@@ -246,18 +237,23 @@ The composable operations are implemented in separate modules under `src/deadlin
 | Module | Operation | Description |
 |--------|-----------|-------------|
 | `_collect_abs_snapshot.py` | COLLECT | Scans directories/files, creates manifest with `hash=None` |
-| `_hash_abs_manifest.py` | HASH | Fills in hashes for collected manifest |
+| `_collect_abs_snapshot_symlinks.py` | COLLECT | Symlink target resolution and policy-based handling |
+| `_hash_abs_manifest.py` | HASH | Fills in hashes for manifests with `hash=None` |
 | `_hash_upload_abs_manifest.py` | HASH_UPLOAD | Main entry point for hash+upload pipeline |
 | `_hash_upload_abs_manifest_pipeline.py` | HASH_UPLOAD | Base pipeline class, progress state, work items, memory pool |
 | `_hash_upload_abs_manifest_s3_pipeline.py` | HASH_UPLOAD | S3-specific upload logic (multipart, streaming) |
 | `_hash_upload_abs_manifest_file_system_pipeline.py` | HASH_UPLOAD | FileSystem-specific upload logic |
-| `_download_abs_manifest.py` | DOWNLOAD | Downloads files from a data cache to local filesystem |
+| `_download_abs_manifest.py` | DOWNLOAD | Main entry point for download pipeline |
+| `_download_abs_manifest_pipeline.py` | DOWNLOAD | Base pipeline class for callback-based downloads |
+| `_download_abs_manifest_s3_pipeline.py` | DOWNLOAD | S3-specific download logic (parallel byte-range requests) |
+| `_download_abs_manifest_file_system_pipeline.py` | DOWNLOAD | FileSystem-specific download logic (copies from local cache) |
 | `_filter_manifest.py` | FILTER | Filters manifest entries using callable filter |
 | `_diff_snapshots.py` | DIFF | Computes difference between two manifests |
-| `_compose_manifest.py` | COMPOSE | Layers manifests together into one |
-| `_subtree_manifest.py` | SUBTREE | Extracts a subtree as a new manifest |
-| `_partition_manifest.py` | PARTITION | Partitions manifest into (root, RelSnapshot) pairs |
-| `_join_manifest.py` | JOIN | Joins a prefix to all paths in a manifest |
+| `_compose_manifest.py` | COMPOSE | Layers manifests together, later entries override earlier |
+| `_subtree_manifest.py` | SUBTREE | Extracts a subtree, rebasing paths relative to new root |
+| `_partition_manifest.py` | PARTITION | Divides manifest into multiple (root, RelManifest) pairs |
+| `_join_manifest.py` | JOIN | Adds a prefix to all paths (inverse of SUBTREE) |
+| `_sparse_file.py` | (utility) | Cross-platform sparse file pre-allocation |
 
 ## Refactoring the Existing Job Attachments Implementation
 
