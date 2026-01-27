@@ -265,6 +265,8 @@ The snapshots library uses multiple caches at different levels:
 | `S3CheckCache` | Per S3 bucket | Tracks which hashes exist in S3 to skip HeadObject calls |
 | `ContentAddressedDataCache` | Remote storage | The actual content storage (S3 or filesystem) |
 
+See [snapshot_hash_cache.md](snapshot_hash_cache.md) for detailed hash cache documentation.
+
 **Upload flow with all caches:**
 1. `HashCache` hit → skip reading file, use cached hash
 2. `S3CheckCache` hit → skip HeadObject, assume exists

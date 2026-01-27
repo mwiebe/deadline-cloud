@@ -423,11 +423,13 @@ When both caches hit (for `S3DataCache`), the file is completely skipped (no rea
 
 For `FileSystemDataCache`, the `object_exists()` method checks the local filesystem directly, so no separate check cache is needed.
 
+See [snapshot_hash_cache.md](snapshot_hash_cache.md) for details on hash cache behavior, including why we re-hash on S3 miss even with a hash cache hit.
+
 **Cache Check Architecture:**
 
 All cache checks (hash cache, S3 check cache, and HeadObject fallback) are performed **inside the
-worker thread pool**, not on the main thread. This design choice provides significant performance
-benefits:
+worker thread pool**, not on the main thread. This parallelizes HeadObject calls (~15ms each) and
+ensures items that will be skipped never consume memory pool resources.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -451,54 +453,6 @@ benefits:
 │     e. Submit to upload stage                                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
-
-**Why we re-read and re-hash when S3 misses (even with hash cache hit):**
-
-When the hash cache hits but the object doesn't exist in S3, we must re-read the file and
-compute the hash ourselves before uploading. We cannot trust the hash cache alone for uploads
-because:
-
-1. The hash cache could be stale (file changed but mtime check passed due to clock skew)
-2. The hash cache could be corrupted
-3. We need the actual file data to upload anyway
-
-The hash cache is only trusted for **skipping** when the data already exists in S3 (verified
-by HeadObject). For uploads, we always verify by reading and hashing the actual file content.
-
-**Why we re-check HeadObject when hash changes:**
-
-If the computed hash differs from the cached hash, the file content has changed. The new hash
-might already exist in S3 from a previous upload of identical content (content-addressable
-storage). Rather than uploading redundantly, we do one more HeadObject check with the new hash.
-
-This handles the scenario:
-1. Hash cache has stale `hash_A` (file was modified)
-2. HeadObject(`hash_A`) returns 404 (original content deleted or never uploaded)
-3. We read file, compute `hash_B` (current content)
-4. HeadObject(`hash_B`) returns 200 (content exists from another upload)
-5. Skip upload - no redundant transfer
-
-**Why cache checks are in worker threads (not main thread):**
-
-1. **Parallelizes HeadObject calls:** When the S3 check cache misses, HeadObject calls to S3
-   take ~15ms each. With 2000 chunks, serial execution takes ~30 seconds. With 8 workers
-   in parallel, this drops to ~4 seconds.
-
-2. **Memory efficiency:** By checking caches before allocating memory, items that will be
-   skipped never consume memory pool resources.
-
-3. **Thread-safe caches:** Both `HashCache` and `S3CheckCache` use thread-local SQLite
-   connections (`get_local_connection()`), making concurrent access safe and efficient.
-
-4. **Simpler code flow:** Each worker handles its item end-to-end, from cache check through
-   upload, rather than splitting logic between main thread and workers.
-
-**Performance comparison (25GB, 1920 chunks, warm hash cache, cold S3 check cache):**
-
-| Architecture | HeadObject Time | Reason |
-|--------------|-----------------|--------|
-| Main thread (serial) | ~30 seconds | 1920 × 15ms = 28.8s |
-| Worker threads (8 workers) | ~4 seconds | Parallelized across workers |
 
 **Probabilistic S3 Cache Validation:**
 

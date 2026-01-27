@@ -110,6 +110,12 @@ Symlinks are handled via the `SymlinkPolicy` enum, which controls whether symlin
 
 See [snapshot_symlink_handling.md](job_attachments_snapshots_components/snapshot_symlink_handling.md) for detailed documentation.
 
+### Hash Cache
+
+The hash cache is a local SQLite database that stores file hashes keyed by path, modification time, and byte range. It enables HASH, HASH_UPLOAD, and DOWNLOAD operations to skip re-hashing or re-downloading unchanged files.
+
+See [snapshot_hash_cache.md](job_attachments_snapshots_components/snapshot_hash_cache.md) for detailed documentation.
+
 ### Operations
 
 ```

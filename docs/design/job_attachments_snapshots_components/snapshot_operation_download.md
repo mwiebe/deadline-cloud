@@ -133,18 +133,9 @@ print(f"Average rate: {result.statistics.transfer_rate / (1024 * 1024):.1f} MB/s
 
 **Hash Cache Skip Optimization:**
 
-When a `hash_cache` is provided, the DOWNLOAD operation checks each file before downloading:
+When a `hash_cache` is provided, the DOWNLOAD operation checks each file before downloading. If the local file exists and its cached hash matches the manifest hash, the download is skipped.
 
-1. If the local file exists and its path+mtime is in the hash cache
-2. And the cached hash matches the expected hash from the manifest
-3. Then the download is skipped (file already has correct content)
-
-This optimization is particularly useful for:
-- **Repeated downloads:** Downloading the same manifest twice skips all files the second time
-- **Incremental updates:** When downloading a new manifest version, only changed files are downloaded
-- **Resume after interruption:** Files successfully downloaded before interruption are skipped
-
-The hash cache is the same cache used by HASH and HASH_UPLOAD operations, so files that were previously hashed or uploaded will have their hashes available for skip detection.
+This is useful for repeated downloads, incremental updates, and resuming after interruption. The hash cache is shared with HASH and HASH_UPLOAD operations. See [snapshot_hash_cache.md](snapshot_hash_cache.md) for details.
 
 **Returns:** `DownloadResult` dataclass containing:
 
