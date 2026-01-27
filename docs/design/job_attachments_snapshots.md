@@ -32,6 +32,8 @@ AbsSnapshot     - Absolute-path snapshot (for filesystem operations)
 AbsSnapshotDiff - Absolute-path diff (for applying changes to filesystem)
 ```
 
+See [snapshot_manifest_classes.md](job_attachments_snapshots_components/snapshot_manifest_classes.md) for detailed documentation.
+
 ### Type Aliases
 
 Type aliases group manifest classes for use in function signatures:
@@ -507,108 +509,3 @@ diff = diff_snapshots(
 | `DEFAULT_S3_MULTIPART_PART_SIZE` | 32 MB (32 × 1024 × 1024) | Default part size for S3 multipart uploads/downloads |
 | `NO_ACCOUNT_ID_CHECK` | Sentinel object | Disables ExpectedBucketOwner checks when passed as `S3DataCache.account_id` |
 | `WHOLE_FILE_RANGE_END` | -1 | Sentinel value for hash cache `range_end` indicating a whole-file hash |
-
-## Validation Rules
-
-Manifests validate their constraints on construction. However, manifest fields can be modified after construction, which may leave the manifest in an invalid state. Call `validate()` on a manifest to check that it still satisfies all constraints.
-
-### Entry Classes
-
-Manifests contain two types of entries: file entries and directory entries.
-
-#### ManifestFilePath
-
-Represents a file or symlink in the manifest:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `path` | `str` | File path (relative or absolute depending on manifest type) |
-| `hash` | `Optional[str]` | Content hash for small files (None if unhashed, chunked, or symlink) |
-| `size` | `int` | File size in bytes |
-| `mtime` | `int` | Modification time (microseconds since epoch) |
-| `chunkhashes` | `Optional[List[str]]` | Per-chunk hashes for large files (None if unhashed, small, or symlink) |
-| `symlink_target` | `Optional[str]` | Symlink target path (None for regular files) |
-| `runnable` | `bool` | POSIX execute bit (always False on Windows) |
-| `deleted` | `bool` | Deletion marker for diff manifests (v2025 only) |
-
-**Symlinks vs Regular Files:**
-- If `symlink_target` is set, the entry is a symlink and `hash`/`chunkhashes` must both be None
-- If `symlink_target` is None, the entry is a regular file
-
-**Hashed vs Unhashed Files:**
-Regular files can be in one of three states:
-
-| State | `hash` | `chunkhashes` | Description |
-|-------|--------|---------------|-------------|
-| Unhashed | None | None | Created by COLLECT; needs hashing before upload |
-| Hashed (single) | Set | None | Small file or whole-file hashing mode |
-| Hashed (chunked) | None | Set | Large file with per-chunk hashes |
-
-The COLLECT operation produces unhashed manifests (both `hash` and `chunkhashes` are None for regular files). The HASH and HASH_UPLOAD operations populate the appropriate hash field(s) based on file size and chunk settings.
-
-**Clearing Hashes:**
-
-The `clear_hashes()` method on manifest classes sets `hash` and `chunkhashes` to None for all regular file entries, returning the manifest to an unhashed state. Symlinks and deleted entries are unchanged. This is useful when you need to re-hash a manifest after files have been modified.
-
-```python
-# Re-hash a manifest after files have changed
-manifest.clear_hashes()
-hashed = hash_abs_manifest(manifest, hash_cache)
-```
-
-#### ManifestDirectoryPath
-
-Represents a directory in the manifest:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `path` | `str` | Directory path (relative or absolute depending on manifest type) |
-| `deleted` | `bool` | Deletion marker for diff manifests (v2025 only) |
-
-**Implicit vs Explicit Directories:**
-
-- Parent directories of files and symlinks are implicitly part of the manifest, even if not in the `dirs` list. Operations that need directory information expand to include all parent directories of files and symlinks.
-- Empty directories must be explicitly listed in `dirs`, since no files or symlinks imply their existence.
-- The v2023 format does not support empty directories.
-
-**Directory Deletion Semantics:**
-
-A directory marked as `deleted=True` is only considered deleted if no non-deleted file, symlink, or subdirectory exists under it. If any non-deleted entry exists as a subpath, the directory deletion is effectively ignored.
-
-### Symlink Validation (v2025-12-04-beta)
-
-- Target must be within the manifest root
-- If target is absolute, it is converted to relative
-
-### Chunked File Validation (v2025-12-04-beta)
-
-For **hashed** regular files, chunking behavior is controlled by the manifest's `fileChunkSizeBytes` field:
-
-| `fileChunkSizeBytes` | File Size | Required Field |
-|---------------------|-----------|----------------|
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | `hash` |
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | `chunkhashes` |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | `hash` (no chunking) |
-| Positive int (chunk size) | ≤ chunk size | `hash` |
-| Positive int (chunk size) | > chunk size | `chunkhashes` |
-
-When `chunkhashes` is used:
-- Chunk count must equal `ceil(size / fileChunkSizeBytes)`
-- Each chunk hash corresponds to exactly `fileChunkSizeBytes` bytes (except possibly the last chunk)
-
-### Deleted Entry Validation (v2025-12-04-beta)
-
-Deleted entries can only have:
-- `path` (required)
-- `deleted=True` (required)
-
-All other fields must be None/False.
-
-### Directory Deletion Semantics (v2025-12-04-beta)
-
-A directory deletion marker means "delete this empty directory". To delete a non-empty directory, you must explicitly delete all its contents first:
-- All files and symlinks within the directory
-- All subdirectories (recursively, following the same rule)
-- Finally, the directory itself
-
-This explicit deletion requirement ensures that diff manifests are fully composable—each deletion is self-contained and doesn't depend on knowing the parent snapshot's contents.
