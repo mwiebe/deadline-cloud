@@ -19,22 +19,6 @@ The library provides four concrete manifest classes organized by two dimensions:
 - **Relative paths** (`Snapshot`, `SnapshotDiff`) - Paths relative to an unspecified root, portable across systems
 - **Absolute paths** (`AbsSnapshot`, `AbsSnapshotDiff`) - Full filesystem paths, required for file system operations
 
-**Path Normalization:**
-
-Within a single manifest, all paths (file paths, directory paths, and symlink targets) share these properties:
-- All paths use the same style—either all absolute, or all relative to the same root
-- Paths are normalized and cannot contain `.` or `..` components
-- Path separators are always forward slash `/` (even on Windows, e.g., `C:/path/to/file.txt`)
-- Windows long-path prefix (`//?/`) is stripped during normalization
-
-**Windows Absolute Paths:**
-
-Windows absolute paths in manifests can take two forms:
-- Drive letter paths: `C:`, `C:/`, `X:/path/to/file.txt`
-- UNC paths: `//server/share/path/to/file.txt`
-
-Note that UNC paths use forward slashes like all other manifest paths (not the native `\\server\share` format).
-
 **Manifest Type:**
 - **Snapshot** - Complete point-in-time capture of a directory tree
 - **Diff** - Changes between two snapshots (additions, modifications, deletions)
@@ -173,24 +157,34 @@ ContentAddressedDataCache
 2. File system operations only work with absolute path manifests. This simplifies the definition and implementation
    of these operations. Conversion to/from relative path manifests is via the SUBTREE and JOIN operations.
 3. Path separators are always POSIX forward slash '/' in manifest path strings. E.g. on Windows,
-   an absolute path can look like "C:/path/to/file.txt". On Windows, operations should convert '\\'
-   path separators to '/', while on POSIX operations should preserve '\\' within file and directory names.
-4. Symlink targets are always absolute paths, or always relative to the same root that file and directory
-   paths are relative to. This is different than symlink representations on file systems, where they are
-   relative to the symlink's parent directory.
-5. In diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
-   This is necessary for the COMPOSE operation to correctly compose multiple diffs. When applying a diff,
-   a directory deletion means to delete the directory if it is empty, not to recursively delete its contents.
-6. There is no operation that uploads a hashed manifest. When we perform an upload, we always hash the data
-   on its way into the content-addressed data cache in order to guarantee that it always satisfies that hashing
-   the data stored for a hash key always equals that hash. Currently hash_upload requires that the provided manifest
-   has no hashes, but we could add a mode to it that validates existing hashes and fails if the content differs.
-7. **Support v2023 on-disk format via lossy conversion.** When serializing to v2023 format, the following occurs:
-   - Symlinks are collapsed to files/directories or excluded (symlink_policy decides)
-   - Empty directories are not preserved
-   - Deletions are not preserved
-   - Chunk size must be set to WHOLE_FILE_CHUNK_SIZE.
-   - Runnable flags are not preserved
+   an absolute path can look like "C:/path/to/file.txt".
+    1. On Windows, operations should convert '\\' path separators to '/'.
+    2. On POSIX, operations should preserve '\\' within file and directory names.
+4. Within a single manifest, all paths (file paths, directory paths, and symlink targets) share these properties:
+    1. All paths use the same style. Either all are absolute, or all are relative to the same root. This is
+       important to note for symlinks, as this is different from on-disk symlinks and does not preserve
+       the absolute vs relative symlink distinction on the file system.
+    2. Paths are normalized and cannot contain `.` or `..` components
+    3. Windows long-path prefix (`//?/`) is stripped during normalization. Windows absolute paths can look like
+       these examples: `C:`, `C:/`, `X:/path/to/file.txt`, `//server/share`, `//server/share/path/to/file.txt`.
+5. In snapshot diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
+    1. This is necessary for the COMPOSE operation to correctly compose multiple diffs without a snapshot present.
+    2. When applying a diff,a directory deletion means to delete the directory if it is empty, not
+       to recursively delete its contents. This means that applying a snapshot diff to a file system requires that
+       the paths being deleted must be sorted so that deeper directories are always processed before their parents.
+6. There is no operation that uploads a hashed manifest. When we perform an upload, we always hash the data on
+   its way into the content-addressed data cache. The manifest classes include a clear_hashes() method to make
+   re-uploading with potentially new data easy.
+    1. This guarantees that the data cache maintains its content-addressed storage invariant that data stored for
+       a hash key always equals its hash. If we do a two-pass hash and then upload, concurrent processes could write
+       to files in between, causing a content mismatch. This is true even if we lock the files, because file systems
+       may not support the locking, or have options to disable it for higher performance.
+7. Support for the v2023 on-disk format is via lossy conversion. When serializing to v2023 format, the following occurs:
+    1. Symlinks are collapsed to files/directories or excluded (symlink_policy decides)
+    2. Empty directories are not preserved
+    3. Deletions are not preserved
+    4. Chunk size must be set to WHOLE_FILE_CHUNK_SIZE.
+    5. Runnable flags are not preserved
 
 ### Benefits of Composable Design
 
