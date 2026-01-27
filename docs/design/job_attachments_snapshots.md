@@ -11,6 +11,49 @@ but without the actual file content. It records metadata for each file (path, si
 in newer formats, directories and symlinks. Operations on these manifests provide efficient change detection, uploads,
 downloads, and content-addressable storage workflows.
 
+## Quick Start
+
+The most common workflow is collecting files, hashing, and uploading to S3:
+
+```python
+import boto3
+from deadline.job_attachments._snapshots import (
+    collect_abs_snapshot,
+    hash_upload_abs_manifest,
+    subtree_manifest,
+    S3DataCache,
+)
+
+# 1. Collect directory tree into a manifest (no hashing yet)
+manifest = collect_abs_snapshot(
+    directories=["/projects/my_scene"],
+    filenames=[],
+)
+
+# 2. Hash and upload to S3 in a single pipelined pass
+data_cache = S3DataCache(
+    s3_bucket="my-bucket",
+    s3_key_prefix="Data",
+    s3_client=boto3.client("s3"),
+)
+result = hash_upload_abs_manifest(manifest, data_cache)
+
+# 3. Extract as relative-path manifest for storage/transport
+relative_manifest = subtree_manifest(result.manifest, "/projects/my_scene")
+
+print(f"Uploaded {result.statistics.uploaded_bytes} bytes")
+```
+
+To download files from a manifest:
+
+```python
+from deadline.job_attachments._snapshots import download_abs_manifest, join_manifest
+
+# Convert relative-path manifest to absolute paths, then download
+abs_manifest = join_manifest(relative_manifest, "/local/destination")
+download_abs_manifest(abs_manifest, data_cache)
+```
+
 ## Overview
 
 The library provides four concrete manifest classes organized by two dimensions:
@@ -124,34 +167,44 @@ See [snapshot_data_cache_classes.md](job_attachments_snapshots_components/snapsh
     3. Use PARTITION to divide up the absolute_manifest into a collection of
        (root_path, relative_manifest) pairs. This is the input format needed by
        the Deadline Cloud CreateJob API.
-2. (TBD - `deadline queue upload-cache-inputs`) Before submitting a job, you have much of
-   the asset data ready and would like to pre-populate your render farm data cache
-   in the cloud.
-    1. Use COLLECT, providing the directories and individual filenames of the
-       asset data. Use COLLAPSE_ESCAPING for the symlink_policy.
-    2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
-       cache. There's no need to convert the manifest to relative paths, as what's
-       important for this use case is populating the local hash cache and the
-       cloud data cache.
-3. (`deadline bundle submit --save-debug-snapshot`) When debugging a job, create
+2. (`deadline bundle submit --save-debug-snapshot`) When debugging a job, create
    a portable debug snapshot of all the input asset files. With a debug snapshot
    in hand, you can provide a reproducible artifact to a render TD or to
    vendor support personnel.
     1. Same as for submitting a job to a cloud render farm with COLLECT/HASH_UPLOAD/PARTITION,
        but when using HASH_UPLOAD provide a `FileSystemDataCache` that writes to your local file system
        to place in a zip file instead of uploading to the cloud.
-5. (`deadline job download-output`) To download the output of a single Deadline Cloud job,
+3. (`deadline job download-output`) To download the output of a single Deadline Cloud job,
    take all the output manifests, join them to have absolute paths, compose them into
    a single manifest, and then download.
    1. Use JOIN make each task output manifest have absolute paths.
    2. Order the manifests by their S3 last-modified timestamp, then COMPOSE them into a single manifest.
    3. Use DOWNLOAD to apply the changes locally.
-4. To collect a single directory tree into a manifest with relative paths:
+4. (`deadline queue upload` - implementation TBD) Before submitting a job to your queue,
+   you have much of the asset data ready and would like to pre-populate your render farm
+   data cache in the cloud. This case doesn't need the manifest, just the data uploads.
+    1. Use COLLECT, providing the directories and individual filenames of the
+       asset data. Use COLLAPSE_ESCAPING for the symlink_policy.
+    2. Use HASH_UPLOAD to hash and upload the files that aren't already in the data
+       cache. There's no need to convert the manifest to relative paths, as what's
+       important for this use case is populating the local hash cache and the
+       cloud data cache.
+5. (`deadline manifest snapshot`) To collect a single directory tree into a manifest with relative paths:
     1. Use COLLECT with a single directory to collect, with COLLAPSE_ESCAPING as
        the symlink_policy
     2. (Optional) Use HASH to populate the hash values in the manifest. Run this
        while the manifest has absolute paths.
     3. Use SUBTREE to extract the directory as a relative-path manifest.
+6. (`deadline attachment upload`) To hash and upload data for a manifest.
+    1. Use JOIN to prepend the absolute root path to the provided manifest so it has absolute paths.
+    2. Call clear_hashes() on the manifest to remove any pre-existing hashes.
+    3. Use HASH_UPLOAD to hash and upload all the files to the data cache.
+    4. Use SUBTREE to extract the directory as a relative-path manifest with hashes included.
+7. (`deadline manifest diff`) To compute the changes that occurred in a directory since a snapshot was collected.
+    1. Use COLLECT to collect an absolute manifest of the directory.
+    2. If the original manifest was filtered, use FILTER to apply the exact same filter to the newly collected manifest.
+    3. Use DIFF to take the difference between the two manifests.
+    4. Use SUBTREE to extract the directory as a relative-path diff of that directory.
 
 ### Design Choices
 
