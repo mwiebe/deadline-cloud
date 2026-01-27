@@ -59,6 +59,8 @@ ContentAddressedDataCache
 └── FileSystemDataCache (data on a file system)
 ```
 
+See [snapshot_data_cache_classes.md](job_attachments_snapshots_components/snapshot_data_cache_classes.md) for detailed documentation.
+
 ### Operations
 
 ```
@@ -273,124 +275,20 @@ See [snapshot_job_attachments_refactor.md](job_attachments_snapshots_components/
 
 **Location:** `_content_addressed_data_cache.py`
 
-The `ContentAddressedDataCache` is an abstract base class that defines the interface for content-addressable storage backends. It encapsulates the destination-specific parameters needed by the HASH_UPLOAD operation.
+The `ContentAddressedDataCache` is an abstract base class for content-addressable storage backends. Content is stored using its hash as the key, enabling deduplication and efficient retrieval.
 
-```python
-# In _content_addressed_data_cache.py
-
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
-
-from ...caches.s3_check_cache import S3CheckCache
-
-@dataclass
-class ContentAddressedDataCache(ABC):
-    """Abstract base class for content-addressable data caches."""
-
-    @abstractmethod
-    def get_object_key(self, hash_value: str, algorithm: str) -> str:
-        """Returns the storage key/path for a given hash."""
-        ...
-
-    @abstractmethod
-    def object_exists(self, hash_value: str, algorithm: str) -> bool:
-        """Checks if an object with the given hash already exists."""
-        ...
-
-
-@dataclass
-class S3DataCache(ContentAddressedDataCache):
-    """
-    Content-addressable data cache backed by Amazon S3.
-
-    Files are stored with keys in the format:
-        {s3_key_prefix}/{hash}.{algorithm}
-
-    Example: Data/a1b2c3d4e5f67890abcdef1234567890.xxh128
-    """
-    s3_bucket: str
-    s3_key_prefix: str
-    s3_client: Any  # boto3 S3 client with permissions for GetObject, PutObject, HeadObject
-    s3_check_cache: Optional[S3CheckCache] = field(default=None)
-    multipart_part_size: int = field(default=32 * 1024 * 1024)  # 32MB default
-    force_s3_check: bool = field(default=False)
-    account_id: Any = field(default=None)  # None = auto-detect, NO_ACCOUNT_ID_CHECK = disable
-
-    @property
-    def expected_bucket_owner(self) -> Optional[str]:
-        """Returns the account ID to use for ExpectedBucketOwner, or None if disabled."""
-        ...
-
-    def get_object_key(self, hash_value: str, algorithm: str) -> str:
-        """Returns the S3 key for a given hash."""
-        return f"{self.s3_key_prefix}/{hash_value}.{algorithm}"
-
-    def get_cache_key(self, hash_value: str, algorithm: str) -> str:
-        """Returns the cache key for a given hash (bucket/key format)."""
-        return f"{self.s3_bucket}/{self.get_object_key(hash_value, algorithm)}"
-
-    def get_check_cache_entry(self, hash_value: str, algorithm: str) -> Optional[S3CheckCacheEntry]:
-        """Check if hash exists in the S3 check cache (without HeadObject)."""
-        ...
-
-    def head_object_exists(self, hash_value: str, algorithm: str) -> bool:
-        """Check if object exists in S3 using HeadObject (bypassing cache)."""
-        ...
-
-    def object_exists(self, hash_value: str, algorithm: str) -> bool:
-        """Check local cache first, then fall back to HeadObject."""
-        ...
-
-**Fields:**
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `s3_bucket` | `str` | (required) | The S3 bucket name |
-| `s3_key_prefix` | `str` | (required) | Key prefix for content-addressable storage (e.g., `"Data"`) |
-| `s3_client` | boto3 S3 client | (required) | Client with GetObject, PutObject, HeadObject permissions |
-| `s3_check_cache` | `Optional[S3CheckCache]` | `None` | Cache to avoid redundant S3 existence checks |
-| `multipart_part_size` | `int` | 32MB | Part size for multipart uploads/downloads |
-| `force_s3_check` | `bool` | `False` | If True, skip s3_check_cache and always make HeadObject calls |
-| `account_id` | `Any` | `None` | AWS account ID for ExpectedBucketOwner. `None` = auto-detect from credentials. `NO_ACCOUNT_ID_CHECK` = disable the check. |
-
-**Account ID Handling:**
-
-The `account_id` field controls the `ExpectedBucketOwner` parameter on S3 API calls, which prevents confused deputy attacks:
-- `None` (default): Auto-detect from credentials at construction time
-- `NO_ACCOUNT_ID_CHECK`: Disable ExpectedBucketOwner checks entirely
-- String value: Use the provided account ID
-
-
-@dataclass
-class FileSystemDataCache(ContentAddressedDataCache):
-    """
-    Content-addressable data cache backed by a local or network file system.
-
-    Files are stored with paths in the format:
-        {root_path}/{hash}.{algorithm}
-
-    Example: /mnt/cache/a1b2c3d4e5f67890abcdef1234567890.xxh128
-
-    This is useful for:
-    - Creating portable debug snapshots (zip files)
-    - Local testing without S3
-    - Network-attached storage caches
-    """
-    root_path: Path
-
-    def __post_init__(self) -> None:
-        # Ensure root_path is absolute
-        if not self.root_path.is_absolute():
-            raise ValueError(f"root_path must be absolute, got: {self.root_path}")
-
-    def get_object_key(self, hash_value: str, algorithm: str) -> str:
-        return str(self.root_path / f"{hash_value}.{algorithm}")
-
-    def object_exists(self, hash_value: str, algorithm: str) -> bool:
-        return (self.root_path / f"{hash_value}.{algorithm}").exists()
 ```
+ContentAddressedDataCache (abstract)
+├── S3DataCache         - Amazon S3 storage with multipart transfer support
+└── FileSystemDataCache - Local or network filesystem storage
+```
+
+Key design principles:
+- **Hash-then-upload invariant**: Content is always hashed while being read for upload, never uploaded based on a pre-computed hash alone. This guarantees data integrity.
+- **Existence checking**: Before uploading, checks if content already exists (S3CheckCache + HeadObject for S3, filesystem exists() for local).
+- **Multipart transfers**: S3DataCache uses parallel multipart uploads/downloads for files larger than 64MB (configurable).
+
+See [snapshot_data_cache_classes.md](job_attachments_snapshots_components/snapshot_data_cache_classes.md) for detailed documentation including fields, methods, security considerations, and usage examples.
 
 ## Workflow Examples
 
