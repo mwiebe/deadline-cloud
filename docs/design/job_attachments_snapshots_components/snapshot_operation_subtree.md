@@ -1,5 +1,8 @@
 # SUBTREE Operation: `subtree_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_subtree_manifest.py`
 
 Extracts a subtree from a manifest, producing a new manifest rooted at the specified subdirectory:

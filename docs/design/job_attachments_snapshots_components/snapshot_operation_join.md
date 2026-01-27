@@ -1,5 +1,8 @@
 # JOIN Operation: `join_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_join_manifest.py`
 
 Joins a prefix to all paths in a manifest, producing a new manifest with prefixed paths:

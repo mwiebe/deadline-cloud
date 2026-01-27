@@ -1,5 +1,8 @@
 # DIFF Operation: `diff_snapshots()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_diff_snapshots.py`
 
 Computes the difference between two snapshot manifests:

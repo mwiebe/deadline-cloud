@@ -1,5 +1,8 @@
 # FILTER Operation: `filter_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_filter_manifest.py`
 
 Applies a filter to manifest entries, returning a new manifest with only matching entries:

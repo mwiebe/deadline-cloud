@@ -1,5 +1,8 @@
 # HASH Operation: `hash_abs_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_hash_abs_manifest.py`
 
 Fills in hashes for a manifest that was created by `collect_abs_snapshot()` or `diff_snapshots()`. The input manifest must have absolute paths.

@@ -1,5 +1,8 @@
 # COMPOSE Operation: `compose_manifests()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_compose_manifest.py`
 
 Layers multiple manifests together into a single manifest, as if applying each manifest as a set of changes in order:

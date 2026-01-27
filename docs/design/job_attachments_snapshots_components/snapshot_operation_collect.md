@@ -1,5 +1,8 @@
 # COLLECT Operation: `collect_abs_snapshot()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_collect_abs_snapshot.py`
 
 Collects provided lists of paths into a manifest with absolute paths, WITHOUT computing hashes:

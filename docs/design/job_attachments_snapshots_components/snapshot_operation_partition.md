@@ -1,5 +1,8 @@
 # PARTITION Operation: `partition_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_partition_manifest.py`
 
 Partitions a manifest into multiple (root, RelSnapshot) pairs, dividing entries by their root paths. Each RelSnapshot is an extracted subtree per the SUBTREE operation, with paths relative to its root:

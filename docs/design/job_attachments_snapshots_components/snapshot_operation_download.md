@@ -1,5 +1,8 @@
 # DOWNLOAD Operation: `download_abs_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_download_abs_manifest.py`
 
 Downloads files from a data cache (S3 or filesystem) to the local filesystem. For snapshot manifests (`AbsSnapshot`), recreates the directory structure specified in the manifest. For diff manifests (`AbsSnapshotDiff`), applies changes by downloading new/modified files and deleting removed files. The manifest must have absolute paths.

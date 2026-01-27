@@ -1,5 +1,8 @@
 # HASH_UPLOAD Operation: `hash_upload_abs_manifest()`
 
+*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+
+
 **Location:** `_hash_upload_abs_manifest.py` (main entry point), with pipeline implementation split across:
 - `_hash_upload_abs_manifest_pipeline.py` - Base pipeline class, progress state, work items, memory pool
 - `_hash_upload_abs_manifest_s3_pipeline.py` - S3-specific upload logic (multipart, streaming)
