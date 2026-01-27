@@ -188,16 +188,18 @@ scene/models/character.fbx
 
 ## SymlinkPolicy Enum
 
-Controls symlink handling during COLLECT:
+Controls symlink handling during COLLECT, SUBTREE, PARTITION, and DOWNLOAD operations:
 
 | Policy | Description |
 |--------|-------------|
-| `COLLAPSE_ESCAPING` | Follow symlinks pointing outside root; preserve internal symlinks |
-| `COLLAPSE_ALL` | Follow all symlinks, turning them into files/directories |
-| `EXCLUDE_ESCAPING` | Exclude symlinks pointing outside root; preserve internal symlinks |
-| `EXCLUDE_ALL` | Exclude all symlinks from the manifest |
-| `PRESERVE` | Keep all symlinks as-is (absolute paths only) |
-| `TRANSITIVE_INCLUDE_TARGETS` | Keep symlinks and add their targets (absolute paths only) |
+| `COLLAPSE_ESCAPING` | Preserve symlinks whose targets are included; collapse escaping symlinks. |
+| `COLLAPSE_ALL` | Collapse all symlinks to files/directories. |
+| `EXCLUDE_ESCAPING` | Preserve symlinks whose targets are included; exclude escaping symlinks. |
+| `EXCLUDE_ALL` | Exclude all symlinks. |
+| `PRESERVE` | Keep all symlinks as-is (absolute paths only). |
+| `TRANSITIVE_INCLUDE_TARGETS` | Keep symlinks and add their targets (COLLECT only). |
+
+See [snapshot_symlink_handling.md](snapshot_symlink_handling.md) for detailed documentation on symlink policies, escaping detection, collapsing behavior, and cycle handling.
 
 ## Usage Examples
 

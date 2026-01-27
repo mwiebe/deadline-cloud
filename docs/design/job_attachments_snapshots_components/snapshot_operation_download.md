@@ -240,20 +240,14 @@ with HashCache() as hash_cache:
 |------------|--------|
 | Regular file | Download from data cache using hash as key |
 | Large file (chunkhashes) | Download each chunk, concatenate to target file |
-| Symlink | Create symlink pointing to `symlink_target` (see ordering below) |
+| Symlink | Create symlink pointing to `symlink_target` (topologically sorted) |
 | Deleted file marker (diff) | Delete the file at the path if it exists |
 | Deleted directory marker (diff) | Delete the directory only if empty (see below) |
 | Directory | Create directory (with parents) if it doesn't exist |
 
-**Symlink Ordering:**
+**Symlink Handling:**
 
-For chained symlinks (e.g., `A -> B -> C` where A points to B and B points to C), the operation ensures targets are created before the symlinks that point to them. This is achieved through topological sorting of the symlink dependency graph:
-
-1. Build a dependency graph where symlink A depends on symlink B if A's target is B's path
-2. Perform topological sort to determine creation order
-3. Create symlinks in sorted order (targets first, then dependents)
-
-This ensures that when symlink A is created, its target B already exists (if B is also a symlink in the manifest).
+Only `PRESERVE` (default) and `EXCLUDE_ALL` are supported. For chained symlinks, targets are created before symlinks that point to them via topological sorting. See [snapshot_symlink_handling.md](snapshot_symlink_handling.md) for details.
 
 **Diff Manifest Behavior:**
 

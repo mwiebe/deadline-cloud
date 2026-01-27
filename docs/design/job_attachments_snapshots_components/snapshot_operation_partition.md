@@ -24,7 +24,7 @@ def partition_manifest(
 | `manifest` | Source manifest (absolute or relative paths) |
 | `roots` | Optional list of root paths to partition by. No root may be a subpath of another. |
 | `referenced_paths` | Optional list of paths referenced by the workload. These paths must be within one of the resulting roots, affecting auto-root determination even if no files exist under them. |
-| `symlink_policy` | How to handle symlinks that escape their partition root. Only COLLAPSE_ALL, COLLAPSE_ESCAPING, and EXCLUDE_ALL are supported. |
+| `symlink_policy` | How to handle symlinks that escape their partition root. Default `COLLAPSE_ESCAPING`. Only `COLLAPSE_ALL`, `COLLAPSE_ESCAPING`, and `EXCLUDE_ALL` are supported. |
 
 **Returns:** A list of `(root, RelManifest)` tuples where:
 - Each `root` is an absolute or relative path string
@@ -87,9 +87,7 @@ Without this, a manifest with files under `/a/b` and an empty directory at `/a/c
 
 **Symlink Handling:**
 
-Symlinks are handled per-partition using the same logic as SUBTREE:
-- Symlinks pointing within their partition root are preserved (rebased)
-- Symlinks escaping their partition root are handled per `symlink_policy`
+Symlinks are handled per-partition using the same logic as SUBTREE. See [snapshot_symlink_handling.md](snapshot_symlink_handling.md) for details.
 
 **Example - Auto-partition on POSIX (no roots provided):**
 

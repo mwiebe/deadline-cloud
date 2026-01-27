@@ -104,6 +104,12 @@ ContentAddressedDataCache
 
 See [snapshot_data_cache_classes.md](job_attachments_snapshots_components/snapshot_data_cache_classes.md) for detailed documentation.
 
+### Symlink Handling
+
+Symlinks are handled via the `SymlinkPolicy` enum, which controls whether symlinks are preserved, collapsed to files/directories, or excluded. The default policy `COLLAPSE_ESCAPING` preserves symlinks whose targets are included and collapses those whose targets escape.
+
+See [snapshot_symlink_handling.md](job_attachments_snapshots_components/snapshot_symlink_handling.md) for detailed documentation.
+
 ### Operations
 
 ```

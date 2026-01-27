@@ -22,7 +22,7 @@ def subtree_manifest(
 |-----------|-------------|
 | `manifest` | The source manifest to extract from |
 | `subtree` | Path to the subtree root, or `"."` or `""` for identity transformation (see below) |
-| `symlink_policy` | How to handle symlinks that escape the new subtree root (see below) |
+| `symlink_policy` | How to handle symlinks that escape the new subtree root. Default `COLLAPSE_ESCAPING`. |
 
 **Identity Subtree (`subtree="."` or `subtree=""`):**
 
@@ -83,81 +83,18 @@ The `fileChunkSizeBytes` field IS preserved in the output manifest, ensuring chu
 
 When re-rooting a manifest, symlinks that were previously "within root" may now "escape" the new subtree root. The `symlink_policy` parameter controls how these are handled:
 
-| Policy | Behavior for Escaping Symlinks |
-|--------|-------------------------------|
-| `COLLAPSE_ALL` | Collapse every symlink in the result (regardless of whether it escapes). |
-| `COLLAPSE_ESCAPING` | Collapse only symlinks escaping the new subtree; preserve symlinks within subtree |
-| `EXCLUDE_ALL` | Exclude every symlink from the result (regardless of whether it escapes). |
-| `EXCLUDE_ESCAPING` | Exclude only symlinks escaping the new subtree; preserve symlinks within subtree |
-
-**Note:** `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported for SUBTREE. Since the output always uses relative paths, escaping symlinks cannot be represented—a relative symlink target like `../outside/file.txt` would point outside the manifest root, which is invalid. Therefore, escaping symlinks must either be collapsed or excluded.
-
-**Symlink Policy Behavior in SUBTREE:**
-
 | Policy | Symlinks within subtree | Symlinks escaping subtree |
 |--------|------------------------|---------------------------|
-| `COLLAPSE_ALL` | Collapsed to file/directory | Collapsed to file/directory |
-| `COLLAPSE_ESCAPING` | Preserved (target rebased) | Collapsed to file/directory |
+| `COLLAPSE_ALL` | Collapsed | Collapsed |
+| `COLLAPSE_ESCAPING` | Preserved (target rebased) | Collapsed |
 | `EXCLUDE_ALL` | Excluded | Excluded |
 | `EXCLUDE_ESCAPING` | Preserved (target rebased) | Excluded |
 
-**Note:** Unlike COLLECT, SUBTREE operates purely on manifest data—it never accesses the filesystem. When a symlink is "collapsed," the operation looks up the target path in the original manifest and copies that entry's data (hash, size, mtime, etc.) to replace the symlink entry.
+`PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported—escaping symlinks cannot be represented in relative-path output.
 
-**Important: Symlink Target Storage Format:**
+Unlike COLLECT, SUBTREE operates purely on manifest data without filesystem access. When collapsing, it looks up targets in the original manifest.
 
-In our manifest format, symlink targets are stored **relative to the manifest root**, not relative to the symlink location (unlike POSIX filesystem symlinks). For example, a symlink at `assets/textures/current` pointing to `assets/shared/latest.png` stores the target as `assets/shared/latest.png`, not as `../shared/latest.png`.
-
-This design choice simplifies manifest operations since targets can be looked up directly in the manifest's path index without needing to resolve relative paths from the symlink's location.
-
-**Symlink Collapse Behavior:**
-
-When collapsing a symlink, the operation looks up the target path in the original manifest:
-
-- **File target:** The symlink entry is replaced with a copy of the target file entry (using the symlink's path, but the target's hash, size, mtime, runnable)
-- **Directory target:** The symlink entry is replaced with all entries under that directory in the original manifest, recursively. Paths are rebased so the symlink path becomes the new prefix (e.g., symlink `current` with target `assets/shared/v2` containing `assets/shared/v2/a.txt` and `assets/shared/v2/sub/b.txt` produces `current/a.txt` and `current/sub/b.txt`)
-- **Missing target:** If the target doesn't exist in the manifest (e.g., it was an escaping symlink that was already collapsed during COLLECT), the symlink is excluded with a warning
-
-**Symlink Cycle Handling:**
-
-Symlink cycles occur when following symlinks leads back to a previously visited target. Examples:
-- Self-referential: `A -> A` (length 1)
-- Direct cycle: `A -> B -> A` (length 2)
-- Longer cycles: `A -> B -> C -> A` (length 3+)
-
-When collapsing symlinks, SUBTREE detects cycles and handles them gracefully:
-
-| Policy | Cycle Behavior |
-|--------|----------------|
-| `COLLAPSE_ALL` | Cycles detected during collapse; cyclic symlink skipped with warning |
-| `COLLAPSE_ESCAPING` | Cycles detected when collapsing escaping symlinks; cyclic symlink skipped with warning |
-| `EXCLUDE_ALL` | No collapse needed; all symlinks excluded |
-| `EXCLUDE_ESCAPING` | Cycles detected when collapsing escaping symlinks; cyclic symlink skipped with warning |
-
-When a cycle is detected:
-1. A warning is logged identifying the cyclic symlink
-2. The cyclic symlink is skipped (produces no output entries)
-3. Processing continues with remaining entries
-
-**Preserved Symlink Target Rebasing:**
-
-Symlinks that are preserved (not collapsed) must have their `symlink_target` rebased relative to the new subtree root. Since targets are stored relative to the manifest root, rebasing simply strips the subtree prefix from the target path. For example:
-
-```
-Original manifest (rooted at /projects/scene):
-  assets/textures/wood.png
-  assets/textures/current -> assets/shared/v2/latest.png  (target outside subtree - escapes)
-  assets/textures/alt -> assets/textures/variants/dark.png  (target within subtree)
-  assets/shared/v2/latest.png
-
-SUBTREE(manifest, "assets/textures") with COLLAPSE_ESCAPING:
-
-Result (rooted at /projects/scene/assets/textures):
-  wood.png
-  current                    (collapsed: now a file with latest.png's content)
-  alt -> variants/dark.png   (preserved: target rebased from assets/textures/variants/dark.png)
-```
-
-The preserved symlink `alt` originally had target `assets/textures/variants/dark.png`. After rebasing (stripping the `assets/textures/` prefix), it becomes `variants/dark.png`.
+See [snapshot_symlink_handling.md](snapshot_symlink_handling.md) for detailed documentation on collapsing behavior, target rebasing, and cycle handling.
 
 **Example - Basic Subtree Extraction:**
 
