@@ -129,9 +129,9 @@ The `statistics` field contains a `HashProgressMetadata` object with tracking fo
 |-------|-------------|
 | `total_file_chunks` | Total files + file chunks to process |
 | `total_bytes` | Total size of all files |
-| `hashed_file_chunks` | Number of files/chunks that were hashed |
+| `hashed_file_chunks` | Number of files/file chunks that were hashed |
 | `hashed_bytes` | Bytes that were hashed |
-| `skipped_file_chunks` | Files/chunks skipped due to hash cache hit |
+| `skipped_file_chunks` | Files/file chunks skipped due to hash cache hit |
 | `skipped_bytes` | Bytes skipped due to hash cache hit |
 | `progress` | Overall progress percentage (0-100) |
 | `progressMessage` | Human-readable summary message |
@@ -141,7 +141,7 @@ The `statistics` field contains a `HashProgressMetadata` object with tracking fo
 Note: In the final statistics, `rate` is calculated as `total_bytes / total_time` for accuracy,
 which may differ slightly from the sliding window rate shown during progress callbacks.
 
-Files/chunks are skipped when the hash cache has the file's hash and the mtime matches.
+Files/file chunks are skipped when the hash cache has the file's hash and the mtime matches.
 
 ## Raises
 
@@ -276,7 +276,7 @@ diff = diff_snapshots(
 result = hash_abs_manifest(diff)
 
 # Print statistics
-print(f"Hashed {result.statistics.hashed_file_chunks} files/chunks")
+print(f"Hashed {result.statistics.hashed_file_chunks} files/file chunks")
 
 # Deleted entries are preserved unchanged
 for entry in result.manifest.files:

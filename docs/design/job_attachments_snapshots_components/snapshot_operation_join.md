@@ -98,6 +98,33 @@ combined = compose_manifests([textures_abs, models_abs, scripts_abs])
 # Now 'combined' has all files with absolute paths for unified processing
 ```
 
+**Example - Download Workflow:**
+
+A common pattern is joining manifests before downloading:
+
+```python
+from deadline.job_attachments._snapshots import (
+    join_manifest,
+    compose_manifests,
+    download_abs_manifest,
+    S3DataCache,
+)
+
+# Load output manifests from multiple render tasks
+task1_output = decode_manifest(fetch_from_s3("task1_output.manifest"))
+task2_output = decode_manifest(fetch_from_s3("task2_output.manifest"))
+
+# Join to local destination paths
+task1_abs = join_manifest(task1_output, "/renders/shot01/task1")
+task2_abs = join_manifest(task2_output, "/renders/shot01/task2")
+
+# Compose and download in one operation
+combined = compose_manifests([task1_abs, task2_abs])
+download_abs_manifest(combined, s3_cache)
+
+# All files now at /renders/shot01/task1/* and /renders/shot01/task2/*
+```
+
 **Use Cases:**
 
 1. **Unified download:** Join manifests to absolute paths, compose them, then download all files from S3 in one operation

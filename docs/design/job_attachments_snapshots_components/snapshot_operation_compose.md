@@ -103,6 +103,8 @@ After diff2, `/dir/` must NOT be marked as deleted because it has a non-deleted 
 
 **Examples:**
 
+**Composing a snapshot with diffs:**
+
 ```python
 from deadline.job_attachments._snapshots import compose_manifests
 from deadline.job_attachments.asset_manifests.decode import decode_manifest
@@ -117,6 +119,46 @@ with open("day2.manifest") as f:
 
 # Compose into a single snapshot representing the final state
 final = compose_manifests([base, diff1, diff2])
+
+print(f"Final manifest has {len(final.files)} entries")
+print(f"Manifest type: {type(final).__name__}")  # Snapshot (deletions applied)
+```
+
+**Understanding deletion handling:**
+
+```python
+# Base snapshot: a.txt, b.txt, c.txt
+# diff1: modifies a.txt, deletes b.txt
+# diff2: adds d.txt, deletes c.txt
+
+final = compose_manifests([base, diff1, diff2])
+
+# Result contains only: a.txt (modified), d.txt (new)
+# b.txt and c.txt are removed (deletions applied)
+for f in final.files:
+    print(f"  {f.path}")
+```
+
+**Composing multiple diffs (no base snapshot):**
+
+```python
+# When composing diffs without a base, result is a combined diff
+# that preserves deletion markers
+
+combined_diff = compose_manifests([diff1, diff2, diff3])
+
+# Result is a SnapshotDiff with:
+# - All additions/modifications from the diffs
+# - Deletion markers for removed files
+# - parentManifestHash from diff1
+print(f"Combined diff type: {type(combined_diff).__name__}")  # SnapshotDiff
+
+for f in combined_diff.files:
+    if f.deleted:
+        print(f"  deleted: {f.path}")
+    else:
+        print(f"  present: {f.path}")
+```
 
 print(f"Final manifest has {len(final.files)} entries")
 print(f"Manifest type: {type(final).__name__}")  # AbsSnapshot or Snapshot

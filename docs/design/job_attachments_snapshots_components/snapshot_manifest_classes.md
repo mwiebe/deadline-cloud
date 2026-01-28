@@ -97,7 +97,7 @@ Represents a file, symlink, or deletion marker:
 | `hash` | `Optional[str]` | Content hash (None if unhashed, file chunked, symlink, or deleted) |
 | `size` | `Optional[int]` | File size in bytes (None for symlinks and deleted entries) |
 | `mtime` | `Optional[int]` | Modification time in microseconds since epoch (None for symlinks and deleted) |
-| `chunkhashes` | `Optional[List[str]]` | Per-chunk hashes for large files |
+| `chunkhashes` | `Optional[List[str]]` | Per-file-chunk hashes for large files |
 | `symlink_target` | `Optional[str]` | Symlink target path (None for regular files) |
 | `runnable` | `bool` | POSIX execute bit (always False on Windows) |
 | `deleted` | `bool` | Deletion marker for diff manifests |

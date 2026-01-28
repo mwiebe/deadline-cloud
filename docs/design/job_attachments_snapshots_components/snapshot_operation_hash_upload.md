@@ -149,6 +149,34 @@ with HashCache() as hash_cache:
 print(f"Uploaded {result.statistics.uploaded_bytes} bytes")
 ```
 
+## Progress Reporting Example
+
+```python
+from deadline.job_attachments._snapshots import (
+    hash_upload_abs_manifest,
+    HashUploadProgressMetadata,
+)
+
+def on_progress(metadata: HashUploadProgressMetadata) -> bool:
+    rate_mb_s = metadata.transfer_rate / (1024 * 1024)
+    print(f"{metadata.progress:.1f}% - {rate_mb_s:.1f} MB/s")
+    print(f"  Hashed: {metadata.hashed_bytes / 1e6:.1f} MB")
+    print(f"  Uploaded: {metadata.uploaded_bytes / 1e6:.1f} MB")
+    print(f"  Skipped: {metadata.upload_skipped_bytes / 1e6:.1f} MB (already in cache)")
+    return True  # Return False to cancel
+
+result = hash_upload_abs_manifest(
+    manifest=abs_manifest,
+    data_cache=data_cache,
+    on_progress=on_progress,
+)
+
+# Final statistics
+stats = result.statistics
+print(f"Completed in {stats.total_time:.1f}s")
+print(f"Total: {stats.uploaded_bytes + stats.upload_skipped_bytes} bytes")
+```
+
 ## Writing to Local Filesystem
 
 For debug snapshots, use `FileSystemDataCache`:
