@@ -34,9 +34,6 @@ from .._manifest import (
     ManifestFilePath,
 )
 
-# Type alias for manifest entries
-ManifestEntry = Union[ManifestFilePath, ManifestDirectoryPath]
-
 # TypeVar for preserving manifest type through filter
 M = TypeVar("M", bound=AnyManifest)
 
@@ -77,7 +74,7 @@ class IncludeExcludePathsFilter:
         self.include_patterns: List[str] = include if include else []
         self.exclude_patterns: List[str] = exclude if exclude else []
 
-    def __call__(self, entry: ManifestEntry) -> bool:
+    def __call__(self, entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
         """
         Check if a manifest entry matches the include/exclude patterns.
 
@@ -122,7 +119,7 @@ def _matches_patterns(path: str, include: List[str], exclude: List[str]) -> bool
 
 def filter_manifest(
     manifest: M,
-    entry_filter: Callable[[ManifestEntry], bool],
+    entry_filter: Callable[[Union[ManifestFilePath, ManifestDirectoryPath]], bool],
 ) -> M:
     """
     Apply a filter to a manifest's entries.
@@ -146,7 +143,7 @@ def filter_manifest(
         filtered = filter_manifest(manifest, filter)
 
         # Using a custom filter
-        def large_files_only(entry: ManifestEntry) -> bool:
+        def large_files_only(entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
             if isinstance(entry, ManifestFilePath) and entry.size is not None:
                 return entry.size > 1_000_000  # > 1MB
             return False

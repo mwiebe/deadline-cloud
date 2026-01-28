@@ -15,7 +15,7 @@ These tests cover:
 - Custom filter callables
 """
 
-from typing import List
+from typing import List, Union
 
 from deadline.job_attachments._snapshots import (
     filter_manifest,
@@ -30,7 +30,6 @@ from deadline.job_attachments._snapshots import (
 )
 from deadline.job_attachments._snapshots._operations._filter_manifest import (
     _matches_patterns,
-    ManifestEntry,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 
@@ -696,7 +695,7 @@ class TestCustomFilterCallables:
             total_size=11100,
         )
 
-        def size_filter(entry: ManifestEntry) -> bool:
+        def size_filter(entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
             if isinstance(entry, ManifestFilePath) and entry.size is not None:
                 return entry.size >= 1000
             return True  # Keep directories
@@ -719,7 +718,7 @@ class TestCustomFilterCallables:
             total_size=600,
         )
 
-        def blend_filter(entry: ManifestEntry) -> bool:
+        def blend_filter(entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
             return entry.path.lower().endswith(".blend")
 
         filtered = filter_manifest(manifest, blend_filter)
@@ -739,7 +738,7 @@ class TestCustomFilterCallables:
             total_size=300,
         )
 
-        def non_executable_filter(entry: ManifestEntry) -> bool:
+        def non_executable_filter(entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
             if isinstance(entry, ManifestFilePath):
                 return not entry.runnable
             return True
@@ -758,7 +757,7 @@ class TestCustomFilterCallables:
             total_size=100,
         )
 
-        def accept_all(entry: ManifestEntry) -> bool:
+        def accept_all(entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
             return True
 
         filtered = filter_manifest(manifest, accept_all)
@@ -775,7 +774,7 @@ class TestCustomFilterCallables:
             total_size=100,
         )
 
-        def reject_all(entry: ManifestEntry) -> bool:
+        def reject_all(entry: Union[ManifestFilePath, ManifestDirectoryPath]) -> bool:
             return False
 
         filtered = filter_manifest(manifest, reject_all)
