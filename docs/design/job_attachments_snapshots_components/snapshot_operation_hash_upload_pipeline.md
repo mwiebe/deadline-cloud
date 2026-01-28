@@ -50,11 +50,11 @@ The operation uses two thread pools connected by a bounded memory pool:
 The pipeline constrains total memory usage across both stages:
 
 - When `max_memory_bytes` is reached, the READ+HASH stage blocks until UPLOAD completes and frees memory
-- Each chunk occupies memory from READ+HASH through UPLOAD completion
+- Each file chunk occupies memory from READ+HASH through UPLOAD completion
 
-When chunking is enabled (positive `fileChunkSizeBytes`):
+When file chunking is enabled (positive `fileChunkSizeBytes`):
 - `max_memory_bytes` must be >= `fileChunkSizeBytes` (raises `ValueError` otherwise)
-- Large files are processed chunk by chunk through the pipeline
+- Large files are processed file chunk by file chunk through the pipeline
 
 ## Cache Check Architecture
 
@@ -85,8 +85,8 @@ All cache checks (hash cache, S3 check cache, and HeadObject fallback) are perfo
 
 ## Concurrent Upload Deduplication
 
-When multiple files or chunks have identical content (same hash), the pipeline prevents redundant concurrent uploads. This is valuable for:
-- Files with repeated chunks (e.g., sparse files)
+When multiple files or file chunks have identical content (same hash), the pipeline prevents redundant concurrent uploads. This is valuable for:
+- Files with repeated file chunks (e.g., sparse files)
 - Multiple files with identical content in the same batch
 - Large datasets with many duplicate files
 
@@ -136,7 +136,7 @@ Files are stored in content-addressable format:
 | `S3DataCache` | `{s3_key_prefix}/{hash}.{algorithm}` | `Data/a1b2c3d4...xxh128` |
 | `FileSystemDataCache` | `{root_path}/{hash}.{algorithm}` | `/mnt/cache/a1b2c3d4...xxh128` |
 
-For chunked files, each chunk is stored separately.
+For file chunked files, each file chunk is stored separately.
 
 ## Error Handling
 

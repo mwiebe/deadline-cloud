@@ -22,7 +22,7 @@ The DOWNLOAD operation uses a `ThreadPoolExecutor` with callbacks to coordinate 
 │  │  3. Last part (counter reaches 0) → atomic replace + mtime       │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
-│  Chunked Files (file chunks stored separately in data cache):           │
+│  File Chunked Files (file chunks stored separately in data cache):      │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │  1. executor.submit() → pre-allocate temp file + handle conflicts│   │
 │  │     └─► Fan-out: submit all file chunk downloads to executor     │   │
@@ -39,8 +39,8 @@ The DOWNLOAD operation uses a `ThreadPoolExecutor` with callbacks to coordinate 
 ```
 
 This architecture maximizes throughput by:
-- Downloading multiple files simultaneously (regular and chunked)
-- Downloading all file chunks of chunked files in parallel
+- Downloading multiple files simultaneously (regular and file chunked)
+- Downloading all file chunks of file chunked files in parallel
 - Using parallel part downloads for large files/file chunks (S3 byte-range requests)
 - Using callbacks instead of async/await for lower overhead
 
@@ -71,7 +71,7 @@ All downloads are atomic to ensure target files are never partial or corrupt:
 | File Type | Behavior |
 |-----------|----------|
 | Regular file | Pre-allocate temp, download (multi-part for large), atomic move |
-| Chunked file | Pre-allocate temp, download all file chunks in parallel, atomic move after all complete |
+| File chunked file | Pre-allocate temp, download all file chunks in parallel, atomic move after all complete |
 
 ## S3 Multi-Part Download
 
@@ -101,13 +101,13 @@ For S3 downloads, files and file chunks larger than `2 × multipart_part_size` (
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Parallel Chunked File Downloads
+## Parallel File Chunked File Downloads
 
 Large files exceeding the file chunk size (default 256MB) are stored as multiple file chunks. All file chunks download in parallel:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                    CHUNKED FILE DOWNLOAD                                │
+│                    FILE CHUNKED FILE DOWNLOAD                           │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  1. Pre-allocate temp file to exact size (using truncate)               │

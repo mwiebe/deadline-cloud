@@ -87,8 +87,8 @@ The `transfer_rate` uses a 12-second sliding window for smooth, responsive estim
 | Entry Type | Action |
 |------------|--------|
 | Regular file | Read+Hash → Upload (single pass) |
-| Large file (chunking enabled) | Read+Hash → Upload (per chunk) |
-| Large file (no chunking, > memory) | Two-pass: hash first, then verify hash+upload |
+| Large file (file chunking enabled) | Read+Hash → Upload (per file chunk) |
+| Large file (no file chunking, > memory) | Two-pass: hash first, then verify hash+upload |
 | Symlink | Pass through unchanged (no upload) |
 | Deleted marker | Pass through unchanged (no upload) |
 | Directory | Pass through unchanged (no upload) |

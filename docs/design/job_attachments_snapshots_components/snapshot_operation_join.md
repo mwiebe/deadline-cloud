@@ -54,7 +54,7 @@ New manifest (absolute paths):
 
 **What Gets Preserved:**
 
-- `fileChunkSizeBytes` - Chunk size settings are preserved
+- `fileChunkSizeBytes` - File chunk size settings are preserved
 - `totalSize` - Total size is preserved
 - All file metadata (hash, size, mtime, runnable, chunkhashes)
 

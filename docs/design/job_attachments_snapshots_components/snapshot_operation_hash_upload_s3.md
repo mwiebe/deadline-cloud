@@ -6,7 +6,7 @@ This document describes S3-specific behavior of the HASH_UPLOAD operation, inclu
 
 ## Multipart Upload
 
-Multipart upload is used when uploading to `S3DataCache` and the file/chunk size exceeds `2 × multipart_part_size` (default threshold: 64MB with 32MB parts).
+Multipart upload is used when uploading to `S3DataCache` and the file/file chunk size exceeds `2 × multipart_part_size` (default threshold: 64MB with 32MB parts).
 
 ### File Chunking and Multipart Behavior
 

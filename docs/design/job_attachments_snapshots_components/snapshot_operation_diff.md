@@ -98,7 +98,7 @@ New files always use the current manifest's `runnable` value (which will be `Fal
 - On Windows when computing diffs against a parent manifest that may have come from POSIX
 - In any cross-platform workflow where you want to preserve execute bits through modifications
 
-**Example:**
+**Examples:**
 
 ```python
 from deadline.job_attachments._snapshots import diff_snapshots

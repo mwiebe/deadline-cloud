@@ -101,7 +101,7 @@ After diff2, `/dir/` must NOT be marked as deleted because it has a non-deleted 
 | Snapshot+diffs: non-diff after first | Raises `ValueError` |
 | Diff composition: non-diff in list | Raises `ValueError` |
 
-**Example:**
+**Examples:**
 
 ```python
 from deadline.job_attachments._snapshots import compose_manifests

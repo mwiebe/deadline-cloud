@@ -75,7 +75,7 @@ The `subtree` path must match the path style used in the manifest:
 
 The output manifest always uses relative paths, regardless of whether the input used absolute paths. This makes the result suitable for storage or transport.
 
-The `fileChunkSizeBytes` field IS preserved in the output manifest, ensuring chunk size settings are maintained through subtree operations.
+The `fileChunkSizeBytes` field IS preserved in the output manifest, ensuring file chunk size settings are maintained through subtree operations.
 
 **Note:** The `parentManifestHash` field is NOT preserved in the output manifest. Since the subtree operation changes the root path, the original parent manifest hash would be invalid for the new subtree manifest.
 

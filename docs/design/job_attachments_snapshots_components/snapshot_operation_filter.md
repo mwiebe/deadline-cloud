@@ -50,7 +50,7 @@ Pattern matching rules:
 When computing a diff of filtered manifests, BOTH parent and current manifests must be filtered with the SAME filter before comparison.
 This ensures deletions are computed correctly within the filtered view.
 
-**Example:**
+**Examples:**
 
 ```python
 from deadline.job_attachments._snapshots import (

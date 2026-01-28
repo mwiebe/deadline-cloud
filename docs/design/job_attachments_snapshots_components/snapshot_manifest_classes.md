@@ -60,7 +60,7 @@ All four manifest classes share these fields from `_BaseManifest`:
 | `dirs` | `List[ManifestDirectoryPath]` | List of directory entries (for empty dirs) |
 | `totalSize` | `int` | Total size of all files in bytes |
 | `parentManifestHash` | `Optional[str]` | Hash of parent manifest (for diffs) |
-| `fileChunkSizeBytes` | `int` | Chunk size for large file hashing |
+| `fileChunkSizeBytes` | `int` | File chunk size for large file hashing |
 
 ### Constructor
 
@@ -94,7 +94,7 @@ Represents a file, symlink, or deletion marker:
 | Field | Type | Description |
 |-------|------|-------------|
 | `path` | `str` | File path (relative or absolute depending on manifest type) |
-| `hash` | `Optional[str]` | Content hash (None if unhashed, chunked, symlink, or deleted) |
+| `hash` | `Optional[str]` | Content hash (None if unhashed, file chunked, symlink, or deleted) |
 | `size` | `Optional[int]` | File size in bytes (None for symlinks and deleted entries) |
 | `mtime` | `Optional[int]` | Modification time in microseconds since epoch (None for symlinks and deleted) |
 | `chunkhashes` | `Optional[List[str]]` | Per-chunk hashes for large files |
@@ -142,22 +142,22 @@ Represents a directory entry:
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `DEFAULT_FILE_CHUNK_SIZE` | 256 MB | Default file chunk size for chunked hashing |
+| `DEFAULT_FILE_CHUNK_SIZE` | 256 MB | Default file chunk size for file chunked hashing |
 | `WHOLE_FILE_CHUNK_SIZE` | -1 | Sentinel: Means to always hash whole file, no file chunks |
 
-## Chunked File Hashing
+## File Chunked File Hashing
 
 The `fileChunkSizeBytes` field controls how large files are hashed:
 
 | `fileChunkSizeBytes` | File Chunk Size | Hash Field |
 |---------------------|-----------|------------|
 | `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | `hash` (whole file) |
-| Positive value | ≤ chunk size | `hash` |
-| Positive value | > chunk size | `chunkhashes` |
+| Positive value | ≤ file chunk size | `hash` |
+| Positive value | > file chunk size | `chunkhashes` |
 
 When `chunkhashes` is used:
-- Chunk count = `ceil(size / fileChunkSizeBytes)`
-- Each chunk hash represents exactly `fileChunkSizeBytes` bytes except the last chunk that may be smaller.
+- File chunk count = `ceil(size / fileChunkSizeBytes)`
+- Each file chunk hash represents exactly `fileChunkSizeBytes` bytes except the last file chunk that may be smaller.
 
 ## Path Normalization
 

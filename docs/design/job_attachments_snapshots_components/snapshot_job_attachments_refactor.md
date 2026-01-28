@@ -30,7 +30,7 @@ manifest_json = v2023_manifest.encode()
 snapshot = v2023_manifest_to_snapshot(v2023_manifest)
 ```
 
-Note: The v2023 format is lossy—it cannot represent symlinks, empty directories, deletions, or chunked files.
+Note: The v2023 format is lossy—it cannot represent symlinks, empty directories, deletions, or file chunked files.
 
 ## upload.py S3AssetManager.prepare_paths_for_upload() - DONE
 

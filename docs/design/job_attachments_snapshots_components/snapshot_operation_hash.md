@@ -24,7 +24,7 @@ def hash_abs_manifest(
 | `manifest` | Manifest with absolute paths and `hash=None` for unhashed files. Can be either a snapshot (from `collect_abs_snapshot`) or a diff (from `diff_snapshots` with `ignore_hashes=True`) |
 | `hash_cache` | Optional hash cache for efficiency |
 | `force_rehash` | If `True`, ignore cache and recalculate all hashes |
-| `file_chunk_size_bytes` | Chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
+| `file_chunk_size_bytes` | File chunk size for output manifest. `None` = preserve from input manifest. `WHOLE_FILE_CHUNK_SIZE` (-1) = no file chunking. Positive int = file chunk size in bytes. |
 | `on_progress` | Optional callback for progress reporting. Called periodically with `HashProgressMetadata`. Return `True` to continue, `False` to cancel. |
 
 ## Progress Reporting
@@ -35,7 +35,7 @@ The `on_progress` callback receives `HashProgressMetadata` with tracking for the
 @dataclass
 class HashProgressMetadata:
     # Totals
-    total_file_chunks: int  # Total files + chunks to process
+    total_file_chunks: int  # Total files + file chunks to process
     total_bytes: int
 
     # Hashing phase progress
@@ -83,11 +83,11 @@ HashProgressCallback = Callable[[HashProgressMetadata], bool]
 
 ### Progress Field Semantics
 
-For chunked files, each chunk is counted separately in `total_file_chunks`, `hashed_file_chunks`, etc.
+For file chunked files, each file chunk is counted separately in `total_file_chunks`, `hashed_file_chunks`, etc.
 
 | Field | When Incremented |
 |-------|------------------|
-| `hashed_bytes` / `hashed_file_chunks` | After hash computation completes for a file or chunk |
+| `hashed_bytes` / `hashed_file_chunks` | After hash computation completes for a file or file chunk |
 | `skipped_bytes` / `skipped_file_chunks` | When hash cache hit allows skipping hash computation |
 
 ### Example - Progress callback
@@ -127,7 +127,7 @@ The `statistics` field contains a `HashProgressMetadata` object with tracking fo
 
 | Field | Description |
 |-------|-------------|
-| `total_file_chunks` | Total files + chunks to process |
+| `total_file_chunks` | Total files + file chunks to process |
 | `total_bytes` | Total size of all files |
 | `hashed_file_chunks` | Number of files/chunks that were hashed |
 | `hashed_bytes` | Bytes that were hashed |
@@ -165,31 +165,31 @@ To re-hash a manifest (e.g., after file modifications), call `clear_hashes()` on
 | `hash_cache` provided, `force_rehash=True` | Always compute hash, update cache |
 | `hash_cache` is None | Always compute hash |
 
-The hash cache supports both whole-file and byte-range hashes, enabling efficient caching for chunked files. See [snapshot_hash_cache.md](snapshot_hash_cache.md) for details on cache structure, thread safety, and performance characteristics.
+The hash cache supports both whole-file and byte-range hashes, enabling efficient caching for file chunked files. See [snapshot_hash_cache.md](snapshot_hash_cache.md) for details on cache structure, thread safety, and performance characteristics.
 
-## Chunking Behavior
+## File chunking Behavior
 
 Controlled by `manifest.fileChunkSizeBytes`:
 
 | `fileChunkSizeBytes` | File Size | Behavior |
 |---------------------|-----------|----------|
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ chunk size | Compute single `hash` (default) |
-| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
-| `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | Hash entire file as a whole (no chunking) |
-| Positive int (e.g., 64MB) | ≤ chunk size | Compute single `hash` |
-| Positive int (e.g., 64MB) | > chunk size | Compute `chunkhashes` (one per chunk) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | ≤ file chunk size | Compute single `hash` (default) |
+| `DEFAULT_FILE_CHUNK_SIZE` (256MB) | > file chunk size | Compute `chunkhashes` (one per file chunk) |
+| `WHOLE_FILE_CHUNK_SIZE` (-1) | Any | Hash entire file as a whole (no file chunking) |
+| Positive int (e.g., 64MB) | ≤ file chunk size | Compute single `hash` |
+| Positive int (e.g., 64MB) | > file chunk size | Compute `chunkhashes` (one per file chunk) |
 
-When chunking is enabled and a file is larger than the chunk size:
+When file chunking is enabled and a file is larger than the file chunk size:
 - `hash` field is `None`
-- `chunkhashes` contains list of hashes, one per chunk
-- Chunk count equals `ceil(size / fileChunkSizeBytes)`
+- `chunkhashes` contains list of hashes, one per file chunk
+- File chunk count equals `ceil(size / fileChunkSizeBytes)`
 
 ## Entry Type Handling
 
 | Entry Type | Action |
 |------------|--------|
-| Regular file (no chunking or ≤ chunk size) | Compute single hash |
-| Large file (> chunk size, when chunking enabled) | Compute chunkhashes |
+| Regular file (no file chunking or ≤ file chunk size) | Compute single hash |
+| Large file (> file chunk size, when file chunking enabled) | Compute chunkhashes |
 | Symlink | Pass through unchanged |
 | Deleted marker | Pass through unchanged (diff manifests only) |
 | Directory | Pass through unchanged |
@@ -206,7 +206,7 @@ The `parentManifestHash` field is preserved from the input manifest. The manifes
 ## Helper Functions
 
 - `_get_or_compute_hash()` - Gets hash from cache or computes it (supports byte ranges)
-- `_hash_file_chunked()` - Hashes large file in chunks with cache support
+- `_hash_file_chunked()` - Hashes large file in file chunks with cache support
 
 ## Examples
 
@@ -243,7 +243,7 @@ for entry in result.manifest.files[:2]:
     if entry.symlink_target:
         print(f"  symlink: {entry.path} -> {entry.symlink_target}")
     elif entry.chunkhashes:
-        print(f"  large file: {entry.path} ({len(entry.chunkhashes)} chunks)")
+        print(f"  large file: {entry.path} ({len(entry.chunkhashes)} file chunks)")
     else:
         print(f"  file: {entry.path} hash={entry.hash[:16]}...")
 ```
@@ -253,7 +253,7 @@ Output:
 Hashed 1234567890 bytes, skipped 0 bytes (cache hit)
 Completed in 5.23s at 236.1 MB/s
   file: /projects/my_scene/assets/model.blend hash=a1b2c3d4e5f67890...
-  large file: /projects/my_scene/renders/output.exr (3 chunks)
+  large file: /projects/my_scene/renders/output.exr (3 file chunks)
 ```
 
 ### Hashing a diff manifest

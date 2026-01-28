@@ -92,7 +92,7 @@ Note: When `hash_cache` is provided, files with matching hashes are skipped rega
 | Entry Type | Action |
 |------------|--------|
 | Regular file | Download using hash as key |
-| Large file (chunkhashes) | Download each chunk, concatenate |
+| Large file (chunkhashes) | Download each file chunk, concatenate |
 | Symlink | Create symlink (topologically sorted) |
 | Deleted file marker (diff) | Delete file if exists |
 | Deleted directory marker (diff) | Delete directory if empty |
@@ -182,7 +182,7 @@ DOWNLOAD is the inverse of HASH_UPLOAD:
 
 ## Related Documentation
 
-- [Pipeline Architecture](snapshot_operation_download_pipeline.md) - Threading, atomicity, chunked files, S3 multi-part
+- [Pipeline Architecture](snapshot_operation_download_pipeline.md) - Threading, atomicity, file chunked files, S3 multi-part
 - [Hash Cache](snapshot_hash_cache.md) - Skip optimization for unchanged files
 - [Data Cache Classes](snapshot_data_cache_classes.md) - S3DataCache and FileSystemDataCache
 - [Symlink Handling](snapshot_symlink_handling.md) - Symlink policies

@@ -26,7 +26,7 @@ def collect_abs_snapshot(
 | `filenames` | (positional) List of file/symlink paths that must exist. Raises `FileNotFoundError` if any file does not exist. |
 | `optional_filenames` | List of file/symlink paths to include if they exist. Missing files are silently ignored. |
 | `symlink_policy` | How to handle symlinks during collection (see below). Default `COLLAPSE_ESCAPING`. |
-| `file_chunk_size_bytes` | Chunk size for large file hashing. `None` = use `DEFAULT_FILE_CHUNK_SIZE` (256MB). `WHOLE_FILE_CHUNK_SIZE` (-1) = no chunking. Positive int = chunk size in bytes. |
+| `file_chunk_size_bytes` | File chunk size for large file hashing. `None` = use `DEFAULT_FILE_CHUNK_SIZE` (256MB). `WHOLE_FILE_CHUNK_SIZE` (-1) = no file chunking. Positive int = file chunk size in bytes. |
 
 ## Symlink Policy Options
 
@@ -40,6 +40,13 @@ def collect_abs_snapshot(
 | `EXCLUDE_ESCAPING` | Preserve symlinks whose targets are included; exclude escaping symlinks. |
 
 See [snapshot_symlink_handling.md](snapshot_symlink_handling.md) for detailed documentation on symlink policies, the escaping detection algorithm, collapsing behavior, and cycle handling.
+
+## Returns
+
+`AbsSnapshot` - A manifest with absolute paths containing:
+- File entries with `hash=None` (unhashed)
+- Symlink entries with `symlink_target` set to absolute paths
+- Directory entries for empty directories
 
 ## Validation Rules
 

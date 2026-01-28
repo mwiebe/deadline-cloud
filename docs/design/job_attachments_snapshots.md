@@ -169,6 +169,38 @@ The hash cache is a local SQLite database that stores file hashes keyed by path,
 
 See [snapshot_hash_cache.md](job_attachments_snapshots_components/snapshot_hash_cache.md) for detailed documentation.
 
+### Design Choices
+
+1. Simple and flexible in-memory snapshots and diffs shared by composable operations. Code can modify values
+   in ways that doesn't strictly follow the on-disk manifest storage, but the operations and I/O accept
+   and use the data where it makes sense.
+2. File system operations only work with absolute path manifests. This simplifies the definition and implementation
+   of these operations. Conversion to/from relative path manifests is via the SUBTREE and JOIN operations.
+3. Path separators are always POSIX forward slash '/' in manifest path strings. See
+   [snapshot_manifest_classes.md](job_attachments_snapshots_components/snapshot_manifest_classes.md#path-normalization)
+   for complete path normalization rules.
+4. Within a single manifest, all paths (file paths, directory paths, and symlink targets) share the same style—either
+   all absolute or all relative to the same root. Symlink targets are stored relative to the manifest root, not
+   relative to the symlink location.
+5. In snapshot diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
+    1. This is necessary for the COMPOSE operation to correctly compose multiple diffs without a snapshot present.
+    2. When applying a diff, a directory deletion means to delete the directory if it is empty, not
+       to recursively delete its contents. This means that applying a snapshot diff to a file system requires that
+       the paths being deleted must be sorted so that deeper directories are always processed before their parents.
+6. There is no operation that uploads a hashed manifest. When we perform an upload, we always hash the data on
+   its way into the content-addressed data cache. The manifest classes include a clear_hashes() method to make
+   re-uploading with potentially new data easy.
+    1. This guarantees that the data cache maintains its content-addressed storage invariant that data stored for
+       a hash key always equals its hash. If we do a two-pass hash and then upload, concurrent processes could write
+       to files in between, causing a content mismatch. This is true even if we lock the files, because file systems
+       may not support the locking, or have options to disable it for higher performance.
+7. Support for the v2023 on-disk format is via lossy conversion. When serializing to v2023 format, the following occurs:
+    1. Symlinks are collapsed to files/directories or excluded (symlink_policy decides)
+    2. Empty directories are not preserved
+    3. Deletions are not preserved
+    4. File chunk size must be set to WHOLE_FILE_CHUNK_SIZE.
+    5. Runnable flags are not preserved
+
 ### Operations
 
 ```
@@ -217,38 +249,6 @@ See [snapshot_hash_cache.md](job_attachments_snapshots_components/snapshot_hash_
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
-
-### Design Choices
-
-1. Simple and flexible in-memory snapshots and diffs shared by composable operations. Code can modify values
-   in ways that doesn't strictly follow the on-disk manifest storage, but the operations and I/O accept
-   and use the data where it makes sense.
-2. File system operations only work with absolute path manifests. This simplifies the definition and implementation
-   of these operations. Conversion to/from relative path manifests is via the SUBTREE and JOIN operations.
-3. Path separators are always POSIX forward slash '/' in manifest path strings. See
-   [snapshot_manifest_classes.md](job_attachments_snapshots_components/snapshot_manifest_classes.md#path-normalization)
-   for complete path normalization rules.
-4. Within a single manifest, all paths (file paths, directory paths, and symlink targets) share the same style—either
-   all absolute or all relative to the same root. Symlink targets are stored relative to the manifest root, not
-   relative to the symlink location.
-5. In snapshot diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
-    1. This is necessary for the COMPOSE operation to correctly compose multiple diffs without a snapshot present.
-    2. When applying a diff, a directory deletion means to delete the directory if it is empty, not
-       to recursively delete its contents. This means that applying a snapshot diff to a file system requires that
-       the paths being deleted must be sorted so that deeper directories are always processed before their parents.
-6. There is no operation that uploads a hashed manifest. When we perform an upload, we always hash the data on
-   its way into the content-addressed data cache. The manifest classes include a clear_hashes() method to make
-   re-uploading with potentially new data easy.
-    1. This guarantees that the data cache maintains its content-addressed storage invariant that data stored for
-       a hash key always equals its hash. If we do a two-pass hash and then upload, concurrent processes could write
-       to files in between, causing a content mismatch. This is true even if we lock the files, because file systems
-       may not support the locking, or have options to disable it for higher performance.
-7. Support for the v2023 on-disk format is via lossy conversion. When serializing to v2023 format, the following occurs:
-    1. Symlinks are collapsed to files/directories or excluded (symlink_policy decides)
-    2. Empty directories are not preserved
-    3. Deletions are not preserved
-    4. Chunk size must be set to WHOLE_FILE_CHUNK_SIZE.
-    5. Runnable flags are not preserved
 
 ### Benefits of Composable Design
 
@@ -302,7 +302,7 @@ For HASH_UPLOAD and DOWNLOAD, additional documents cover internal architecture:
 |----------|-------------|
 | [snapshot_operation_hash_upload_pipeline.md](job_attachments_snapshots_components/snapshot_operation_hash_upload_pipeline.md) | Threading model, memory management, deduplication |
 | [snapshot_operation_hash_upload_s3.md](job_attachments_snapshots_components/snapshot_operation_hash_upload_s3.md) | S3 multipart uploads, cache validation, streaming files |
-| [snapshot_operation_download_pipeline.md](job_attachments_snapshots_components/snapshot_operation_download_pipeline.md) | Threading, atomicity, chunked files, S3 multi-part downloads |
+| [snapshot_operation_download_pipeline.md](job_attachments_snapshots_components/snapshot_operation_download_pipeline.md) | Threading, atomicity, file chunked files, S3 multi-part downloads |
 
 ## Module Organization
 
@@ -472,8 +472,8 @@ diff = diff_snapshots(
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `DEFAULT_FILE_CHUNK_SIZE` | 256 MB (256 × 1024 × 1024) | Default threshold for chunked hashing |
-| `WHOLE_FILE_CHUNK_SIZE` | -1 | Sentinel value meaning "no chunking, hash whole file" |
+| `DEFAULT_FILE_CHUNK_SIZE` | 256 MB (256 × 1024 × 1024) | Default threshold for file chunked hashing |
+| `WHOLE_FILE_CHUNK_SIZE` | -1 | Sentinel value meaning "no file chunking, hash whole file" |
 | `DEFAULT_S3_MULTIPART_PART_SIZE` | 32 MB (32 × 1024 × 1024) | Default part size for S3 multipart uploads/downloads |
 | `NO_ACCOUNT_ID_CHECK` | Sentinel object | Disables ExpectedBucketOwner checks when passed as `S3DataCache.account_id` |
 | `WHOLE_FILE_RANGE_END` | -1 | Sentinel value for hash cache `range_end` indicating a whole-file hash |

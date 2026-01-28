@@ -38,7 +38,7 @@ The cache supports two types of entries:
 | Whole-file | 0 | -1 | Hash of entire file |
 | Byte-range | ≥ 0 | > 0 | Hash of bytes in range [start, end) |
 
-Byte-range support enables efficient caching for chunked files. Different chunk sizes can coexist in the cache—entries are keyed by their exact byte range.
+Byte-range support enables efficient caching for file chunked files. Different file chunk sizes can coexist in the cache—entries are keyed by their exact byte range.
 
 ## Cache Lookup Behavior
 
@@ -88,12 +88,12 @@ The hash cache enables skipping downloads for files that already have correct co
 2. If exists, look up `(path, mtime)` in hash cache
 3. If cached hash matches manifest hash, skip download
 
-For chunked files, all chunk hashes must match:
-1. For each chunk, look up `(path, mtime, range_start, range_end)` in hash cache
-2. If any chunk's cached hash is missing or doesn't match, download the entire file
-3. If all chunks match, skip the download
+For file chunked files, all file chunk hashes must match:
+1. For each file chunk, look up `(path, mtime, range_start, range_end)` in hash cache
+2. If any file chunk's cached hash is missing or doesn't match, download the entire file
+3. If all file chunks match, skip the download
 
-After downloading a chunked file, all chunk hashes are stored in the cache for future skip detection.
+After downloading a file chunked file, all file chunk hashes are stored in the cache for future skip detection.
 
 This is useful for:
 - **Repeated downloads:** Downloading the same manifest twice skips all files the second time
