@@ -41,12 +41,12 @@ def partition_manifest(
 
 **Path Separator Behavior:**
 
-| Platform | Input (`roots`, `referenced_paths`) | Output (`root` in returned tuples) |
-|----------|-------------------------------------|-----------------------------------|
-| Windows | Either `\` or `/` separators accepted | Always uses Windows `\` separators |
-| POSIX | `/` separators | `/` separators |
+Paths within manifests use POSIX forward slashes (see [Path Normalization](snapshot_manifest_classes.md#path-normalization)). However, PARTITION returns root paths using the platform's native separator for filesystem API compatibility:
 
-On Windows, the function normalizes returned root paths to use native backslash separators, regardless of whether the input used forward or backslashes. This ensures consistency when the returned roots are used with Windows filesystem APIs.
+| Platform | Output (`root` in returned tuples) |
+|----------|-----------------------------------|
+| Windows | Uses native `\` separators |
+| POSIX | Uses `/` separators |
 
 **Output Ordering:**
 

@@ -189,7 +189,7 @@ SUBTREE operates on manifest data without filesystem access. When re-rooting a m
 - Missing targets (e.g., already collapsed during COLLECT) are excluded with a warning
 - `PRESERVE` and `TRANSITIVE_INCLUDE_TARGETS` are not supported (escaping symlinks cannot be represented in relative-path output)
 
-**Target rebasing:** Preserved symlinks have their targets rebased by stripping the subtree prefix:
+**Target rebasing:** Preserved symlinks have their targets rebased by removing the subtree prefix:
 
 ```
 Original: assets/textures/alt -> assets/textures/variants/dark.png

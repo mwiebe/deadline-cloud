@@ -191,21 +191,20 @@ def _collect_abs_snapshot_impl(
     total_size = 0
     followlinks = symlink_policy == SymlinkPolicy.COLLAPSE_ALL
     collected_paths: Set[str] = set()
-    transitive_targets: List[Path] = []
+    transitive_targets: List[str] = []
 
     # For COLLAPSE_ESCAPING, we need to track symlinks for deferred processing
     deferred_symlinks: List[Tuple[Path, str, bool]] = []  # (full_path, entry_path, is_dir)
-    escaping_dir_symlinks: List[Tuple[str, Path]] = []
+    escaping_dir_symlinks: List[Tuple[str, str]] = []
 
-    def is_path_in_collected_set(target_path: Path) -> bool:
+    def is_path_in_collected_set(target_path: str) -> bool:
         """Check if a path or any of its parents is in the collected set."""
-        target_posix = target_path.as_posix()
         # Direct match
-        if target_posix in collected_paths:
+        if target_path in collected_paths:
             return True
         # Check if target is under any collected directory
         for collected in collected_paths:
-            if target_posix.startswith(collected + "/"):
+            if target_path.startswith(collected + "/"):
                 return True
         return False
 

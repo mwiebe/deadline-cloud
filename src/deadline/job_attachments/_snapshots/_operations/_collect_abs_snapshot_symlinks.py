@@ -24,6 +24,7 @@ from .._manifest import (
     ManifestDirectoryPath,
     ManifestFilePath,
     SymlinkPolicy,
+    _normalize_path_in_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,18 +33,14 @@ logger = logging.getLogger(__name__)
 FileEntryCreator = Callable[[Path, str, Optional[os.stat_result]], ManifestFilePath]
 
 
-def _remove_longpath_prefix(path: Path) -> Path:
-    """Returns a copy with '\\\\?\\' longpath prefix removed if the path has it."""
-    if os.name == "nt" and path.parts[0].startswith("\\\\?\\"):
-        return Path(path.parts[0][4:], *path.parts[1:])
-    return path
+def _get_symlink_absolute_target(full_path: Path) -> str:
+    """Get the absolute path of a symlink's target as a normalized string.
 
-
-def _get_symlink_absolute_target(full_path: Path) -> Path:
-    """Get the absolute path of a symlink's target without resolving symlink chains."""
+    Returns a normalized path string suitable for use in manifests and
+    string-based path comparisons.
+    """
     target = full_path.parent / os.readlink(full_path)
-    target_clean = _remove_longpath_prefix(target)
-    return Path(os.path.normpath(target_clean.absolute()))
+    return _normalize_path_in_manifest(str(target.absolute()))
 
 
 def _symlink_target_is_directory(full_path: Path) -> bool:
@@ -59,7 +56,7 @@ def _handle_symlink(
     full_path: Path,
     symlink_policy: SymlinkPolicy,
     is_directory: bool,
-) -> Optional[Tuple[Optional[ManifestFilePath], bool, Optional[Path]]]:
+) -> Optional[Tuple[Optional[ManifestFilePath], bool, Optional[str]]]:
     """Handle a symlink according to the symlink policy.
 
     Returns:
@@ -67,7 +64,7 @@ def _handle_symlink(
         Otherwise a tuple of:
         - entry: ManifestFilePath to add (or None if no entry)
         - should_follow: Whether to follow the symlink (for COLLAPSE_ALL)
-        - transitive_target: Path to add transitively (for TRANSITIVE_INCLUDE_TARGETS)
+        - transitive_target: Path string to add transitively (for TRANSITIVE_INCLUDE_TARGETS)
     """
     entry_path = full_path.absolute().as_posix()
 
@@ -83,7 +80,7 @@ def _handle_symlink(
         target = _get_symlink_absolute_target(full_path)
         entry = ManifestFilePath(
             path=entry_path,
-            symlink_target=target.as_posix(),
+            symlink_target=target,
         )
         return (entry, False, None)
 
@@ -91,7 +88,7 @@ def _handle_symlink(
         target = _get_symlink_absolute_target(full_path)
         entry = ManifestFilePath(
             path=entry_path,
-            symlink_target=target.as_posix(),
+            symlink_target=target,
         )
         return (entry, False, target)
 
@@ -113,9 +110,9 @@ def process_deferred_symlink(
     is_directory: bool,
     symlink_policy: SymlinkPolicy,
     collected_paths: Set[str],
-    is_path_in_collected_set: Callable[[Path], bool],
+    is_path_in_collected_set: Callable[[str], bool],
     file_entries: List[ManifestFilePath],
-    escaping_dir_symlinks: List[Tuple[str, Path]],
+    escaping_dir_symlinks: List[Tuple[str, str]],
     create_file_entry: FileEntryCreator,
 ) -> int:
     """Process a deferred symlink for COLLAPSE_ESCAPING or EXCLUDE_ESCAPING policy.
@@ -144,7 +141,7 @@ def process_deferred_symlink(
         # Target is within collected paths - preserve as symlink
         entry = ManifestFilePath(
             path=entry_path,
-            symlink_target=target.as_posix(),
+            symlink_target=target,
         )
         file_entries.append(entry)
         collected_paths.add(entry_path)
@@ -175,7 +172,7 @@ def process_deferred_symlink(
 
 
 def _collect_transitive_target(
-    target_path: Path,
+    target_path: str,
     collected_paths: Set[str],
     create_file_entry: FileEntryCreator,
     _visiting: Optional[Set[str]] = None,
@@ -186,7 +183,7 @@ def _collect_transitive_target(
     targets are also preserved and their targets are transitively included.
 
     Args:
-        target_path: The symlink target path to collect.
+        target_path: The symlink target path string to collect.
         collected_paths: Set of already collected paths (modified in place).
         create_file_entry: Function to create an unhashed file entry.
         _visiting: Internal parameter for cycle detection - paths currently being visited.
@@ -204,68 +201,61 @@ def _collect_transitive_target(
     dir_entries: List[ManifestDirectoryPath] = []
     total_size = 0
     # Track additional transitive targets discovered from nested symlinks
-    nested_transitive_targets: List[Path] = []
+    nested_transitive_targets: List[str] = []
 
-    if not target_path.exists():
+    if not os.path.exists(target_path):
         logger.warning("Skipping broken symlink target: %s", target_path)
         return (file_entries, dir_entries, total_size)
 
-    # Normalize path for cycle detection
-    target_posix = target_path.as_posix()
-
     # Check for cycle
-    if target_posix in _visiting:
-        logger.warning("Symlink cycle detected, skipping: %s", target_posix)
+    if target_path in _visiting:
+        logger.warning("Symlink cycle detected, skipping: %s", target_path)
         return (file_entries, dir_entries, total_size)
 
     # Mark as visiting
-    _visiting.add(target_posix)
+    _visiting.add(target_path)
 
     try:
-        if target_path.is_symlink():
+        if os.path.islink(target_path):
             # Target is itself a symlink - preserve it and transitively include its target
-            entry_path = target_path.as_posix()
-            if entry_path not in collected_paths:
-                symlink_target = _get_symlink_absolute_target(target_path)
+            if target_path not in collected_paths:
+                symlink_target = _get_symlink_absolute_target(Path(target_path))
                 entry = ManifestFilePath(
-                    path=entry_path,
-                    symlink_target=symlink_target.as_posix(),
+                    path=target_path,
+                    symlink_target=symlink_target,
                 )
                 file_entries.append(entry)
-                collected_paths.add(entry_path)
+                collected_paths.add(target_path)
                 # Queue the symlink's target for transitive collection
                 nested_transitive_targets.append(symlink_target)
 
-        elif target_path.is_file():
-            entry_path = target_path.as_posix()
-            if entry_path not in collected_paths:
+        elif os.path.isfile(target_path):
+            if target_path not in collected_paths:
                 try:
-                    entry = create_file_entry(target_path, entry_path, None)
+                    entry = create_file_entry(Path(target_path), target_path, None)
                     file_entries.append(entry)
-                    collected_paths.add(entry_path)
+                    collected_paths.add(target_path)
                     total_size += entry.size or 0
                 except OSError as e:
-                    logger.warning("Skipping inaccessible transitive target %s: %s", entry_path, e)
+                    logger.warning("Skipping inaccessible transitive target %s: %s", target_path, e)
 
-        elif target_path.is_dir():
+        elif os.path.isdir(target_path):
             for dirpath, dirnames, filenames in os.walk(target_path, followlinks=False):
-                dir_abs = Path(dirpath).absolute()
-                if dir_abs != target_path:
-                    dir_path = dir_abs.as_posix()
-                    if dir_path not in collected_paths:
-                        dir_entries.append(ManifestDirectoryPath(path=dir_path))
-                        collected_paths.add(dir_path)
+                dir_path = _normalize_path_in_manifest(os.path.abspath(dirpath))
+                if dir_path != target_path and dir_path not in collected_paths:
+                    dir_entries.append(ManifestDirectoryPath(path=dir_path))
+                    collected_paths.add(dir_path)
 
                 for name in list(dirnames):
                     full_path = Path(dirpath) / name
                     if full_path.is_symlink():
                         # Preserve the symlink and queue its target for transitive collection
-                        entry_path = full_path.absolute().as_posix()
+                        entry_path = _normalize_path_in_manifest(str(full_path.absolute()))
                         if entry_path not in collected_paths:
                             symlink_target = _get_symlink_absolute_target(full_path)
                             entry = ManifestFilePath(
                                 path=entry_path,
-                                symlink_target=symlink_target.as_posix(),
+                                symlink_target=symlink_target,
                             )
                             file_entries.append(entry)
                             collected_paths.add(entry_path)
@@ -276,7 +266,7 @@ def _collect_transitive_target(
 
                 for name in filenames:
                     full_path = Path(dirpath) / name
-                    entry_path = full_path.absolute().as_posix()
+                    entry_path = _normalize_path_in_manifest(str(full_path.absolute()))
                     if entry_path in collected_paths:
                         continue
                     if full_path.is_symlink():
@@ -284,7 +274,7 @@ def _collect_transitive_target(
                         symlink_target = _get_symlink_absolute_target(full_path)
                         entry = ManifestFilePath(
                             path=entry_path,
-                            symlink_target=symlink_target.as_posix(),
+                            symlink_target=symlink_target,
                         )
                         file_entries.append(entry)
                         collected_paths.add(entry_path)
@@ -316,14 +306,14 @@ def _collect_transitive_target(
 
     finally:
         # Remove from visiting set when done
-        _visiting.discard(target_posix)
+        _visiting.discard(target_path)
 
     return (file_entries, dir_entries, total_size)
 
 
 def _collect_escaping_dir_symlink(
     symlink_path: str,
-    target_abs_path: Path,
+    target_abs_path: str,
     collected_paths: Set[str],
     create_file_entry: FileEntryCreator,
     _visiting: Optional[Set[str]] = None,
@@ -341,7 +331,7 @@ def _collect_escaping_dir_symlink(
 
     Args:
         symlink_path: The path where the symlink appears in the manifest.
-        target_abs_path: The absolute path of the symlink's target directory.
+        target_abs_path: The absolute path string of the symlink's target directory.
         collected_paths: Set of already collected paths (modified in place).
         create_file_entry: Function to create an unhashed file entry.
         _visiting: Internal parameter for cycle detection - target paths currently being visited.
@@ -367,24 +357,23 @@ def _collect_escaping_dir_symlink(
     dir_entries: List[ManifestDirectoryPath] = []
     total_size = 0
 
-    if not target_abs_path.exists():
+    if not os.path.exists(target_abs_path):
         logger.warning("Skipping broken escaping symlink: %s", symlink_path)
         return (file_entries, dir_entries, total_size)
 
-    if not target_abs_path.is_dir():
+    if not os.path.isdir(target_abs_path):
         logger.warning("Skipping non-directory escaping symlink target: %s", symlink_path)
         return (file_entries, dir_entries, total_size)
 
-    # Normalize path for cycle detection
-    target_posix = target_abs_path.as_posix()
-
     # Check for cycle
-    if target_posix in _visiting:
-        logger.warning("Symlink cycle detected, skipping: %s -> %s", symlink_path, target_posix)
+    if target_abs_path in _visiting:
+        logger.warning("Symlink cycle detected, skipping: %s -> %s", symlink_path, target_abs_path)
         return (file_entries, dir_entries, total_size)
 
     # Mark as visiting
-    _visiting.add(target_posix)
+    _visiting.add(target_abs_path)
+
+    target_path_obj = Path(target_abs_path)
 
     try:
 
@@ -394,7 +383,7 @@ def _collect_escaping_dir_symlink(
                 raw_target = os.readlink(link_path)
                 resolved_target = (link_path.parent / raw_target).resolve()
                 try:
-                    rel_to_target = resolved_target.relative_to(target_abs_path)
+                    rel_to_target = resolved_target.relative_to(target_path_obj)
                     translated = f"{symlink_path}/{rel_to_target.as_posix()}"
                     return (True, translated)
                 except ValueError:
@@ -403,7 +392,7 @@ def _collect_escaping_dir_symlink(
                 return (False, None)
 
         for dirpath, dirnames, filenames in os.walk(target_abs_path, followlinks=False):
-            rel_within_target = Path(dirpath).relative_to(target_abs_path)
+            rel_within_target = Path(dirpath).relative_to(target_path_obj)
 
             if rel_within_target == Path("."):
                 dir_entry_path = symlink_path
@@ -433,8 +422,8 @@ def _collect_escaping_dir_symlink(
                             collected_paths.add(entry_path)
                     else:
                         try:
-                            nested_target = full_path.resolve()
-                            if nested_target.exists() and nested_target.is_dir():
+                            nested_target = _normalize_path_in_manifest(str(full_path.resolve()))
+                            if os.path.exists(nested_target) and os.path.isdir(nested_target):
                                 nested_files, nested_dirs, nested_size = (
                                     _collect_escaping_dir_symlink(
                                         symlink_path=entry_path,
@@ -497,6 +486,6 @@ def _collect_escaping_dir_symlink(
                     )
 
     finally:
-        _visiting.discard(target_posix)
+        _visiting.discard(target_abs_path)
 
     return (file_entries, dir_entries, total_size)

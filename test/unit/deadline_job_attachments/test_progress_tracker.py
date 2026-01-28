@@ -8,7 +8,7 @@ from deadline.job_attachments.progress_tracker import (
     ProgressStatus,
 )
 import pytest
-import concurrent
+import concurrent.futures
 
 
 # += operator doesn't seem to be non-threadsafe in python 3.10 or later, but can be an issue in earlier versions.

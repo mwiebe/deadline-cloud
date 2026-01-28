@@ -161,21 +161,41 @@ When `chunkhashes` is used:
 
 ## Path Normalization
 
-All paths are normalized on construction:
-- POSIX forward slash `/` is the path separator in all manifest paths
-- On Windows, backslashes are converted to forward slashes
-- On POSIX, backslashes are preserved, they can be used in both directory names and filenames.
-- `.` and `..` components are collapsed via `posixpath.normpath`
-- Windows long-path prefix (`//?/`) is stripped
+All paths in manifests use a consistent normalized format. Normalization is applied automatically when constructing `ManifestFilePath` and `ManifestDirectoryPath` entries.
 
-User code can modify an in-memory manifest object, so all the operations that accept
-manifests must be robust and perform this normalization as well.
+### Path Separator
+
+POSIX forward slash `/` is the path separator in all manifest paths, regardless of platform:
+- On Windows, backslashes are converted to forward slashes (they are directory separators)
+- On POSIX, backslashes are preserved (they are valid filename characters)
+
+This means a Windows path like `C:\Users\name\file.txt` becomes `C:/Users/name/file.txt` in the manifest.
+
+### Path Components
+
+- `.` and `..` components are collapsed via `posixpath.normpath`
+- Windows long-path prefix (`\\?\`) is removed on Windows
+- Trailing slashes are removed (except for root paths)
+
+### Path Style Consistency
+
+Within a single manifest, all paths share the same style:
+- Either all paths are absolute, or all are relative to the same root
+- This applies to file paths, directory paths, and symlink targets
+- Symlink targets are stored relative to the manifest root, not relative to the symlink location
+
+### Absolute Path Detection
+
+A path is considered absolute if:
+- It starts with `/` (POSIX or Windows UNC)
+- On Windows: it starts with a drive letter followed by `:` (e.g., `C:`, `C:/`)
 
 ### Absolute Path Examples
 
 ```
 /home/user/project/file.txt     # POSIX
 C:/Users/name/project/file.txt  # Windows drive
+C:                              # Windows drive root
 //server/share/path/file.txt    # Windows UNC
 ```
 
@@ -185,6 +205,12 @@ C:/Users/name/project/file.txt  # Windows drive
 project/assets/texture.png
 scene/models/character.fbx
 ```
+
+### Operations and Path Normalization
+
+Operations that accept manifests are robust to non-normalized paths—they apply normalization as needed. However, for best performance and consistency, paths should be normalized at construction time.
+
+The PARTITION operation is a special case: it returns root paths using the platform's native separator (backslashes on Windows) for compatibility with filesystem APIs, even though paths within the manifest use forward slashes.
 
 ## SymlinkPolicy Enum
 

@@ -57,7 +57,7 @@ New manifest root: /projects/scene/assets/textures
 
 The operation:
 1. Filters to entries within the subtree
-2. Rebases paths relative to the new root (strips the subtree prefix)
+2. Rebases paths relative to the new root (removes the subtree prefix)
 3. Handles symlinks according to `symlink_policy`
 
 **Path Style Requirements:**

@@ -23,11 +23,11 @@ from deadline.job_attachments._snapshots import (
 )
 from deadline.job_attachments._snapshots._manifest import (
     _is_absolute_path,
+    _normalize_path_in_manifest,
 )
 from deadline.job_attachments._snapshots._operations._subtree_manifest import (
     _is_within_subtree,
     _rebase_path,
-    _normalize_subtree_path,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
@@ -104,9 +104,9 @@ class TestHelperFunctions:
 
     def test_normalize_subtree_path(self) -> None:
         """Subtree paths are normalized."""
-        assert _normalize_subtree_path("assets/textures/") == "assets/textures"
-        assert _normalize_subtree_path("assets//textures") == "assets/textures"
-        assert _normalize_subtree_path("assets/./textures") == "assets/textures"
+        assert _normalize_path_in_manifest("assets/textures/") == "assets/textures"
+        assert _normalize_path_in_manifest("assets//textures") == "assets/textures"
+        assert _normalize_path_in_manifest("assets/./textures") == "assets/textures"
 
 
 class TestSubtreeManifestRelative:
@@ -911,7 +911,7 @@ class TestPathSeparatorHandling:
     def test_normalize_subtree_path_converts_backslashes_on_windows(self) -> None:
         """On Windows, backslashes in subtree path are converted to forward slashes."""
         with patch("os.name", "nt"):
-            result = _normalize_subtree_path("assets\\textures\\wood")
+            result = _normalize_path_in_manifest("assets\\textures\\wood")
             # On Windows, backslashes should be converted to forward slashes
             assert result == "assets/textures/wood"
 
@@ -923,7 +923,7 @@ class TestPathSeparatorHandling:
         ):
             # On POSIX, a backslash is a valid filename character
             # "assets\\textures" is a single directory name containing a backslash
-            result = _normalize_subtree_path("assets\\textures")
+            result = _normalize_path_in_manifest("assets\\textures")
             # On POSIX, backslashes should NOT be converted - they're valid filename chars
             assert result == "assets\\textures"
 

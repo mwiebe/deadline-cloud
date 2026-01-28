@@ -225,20 +225,15 @@ See [snapshot_hash_cache.md](job_attachments_snapshots_components/snapshot_hash_
    and use the data where it makes sense.
 2. File system operations only work with absolute path manifests. This simplifies the definition and implementation
    of these operations. Conversion to/from relative path manifests is via the SUBTREE and JOIN operations.
-3. Path separators are always POSIX forward slash '/' in manifest path strings. E.g. on Windows,
-   an absolute path can look like "C:/path/to/file.txt".
-    1. On Windows, operations should convert '\\' path separators to '/'.
-    2. On POSIX, operations should preserve '\\' within file and directory names.
-4. Within a single manifest, all paths (file paths, directory paths, and symlink targets) share these properties:
-    1. All paths use the same style. Either all are absolute, or all are relative to the same root. This is
-       important to note for symlinks, as this is different from on-disk symlinks and does not preserve
-       the absolute vs relative symlink distinction on the file system.
-    2. Paths are normalized and cannot contain `.` or `..` components
-    3. Windows long-path prefix (`//?/`) is stripped during normalization. Windows absolute paths can look like
-       these examples: `C:`, `C:/`, `X:/path/to/file.txt`, `//server/share`, `//server/share/path/to/file.txt`.
+3. Path separators are always POSIX forward slash '/' in manifest path strings. See
+   [snapshot_manifest_classes.md](job_attachments_snapshots_components/snapshot_manifest_classes.md#path-normalization)
+   for complete path normalization rules.
+4. Within a single manifest, all paths (file paths, directory paths, and symlink targets) share the same style—either
+   all absolute or all relative to the same root. Symlink targets are stored relative to the manifest root, not
+   relative to the symlink location.
 5. In snapshot diffs, directory deletions must be accompanied by deletion of all the contents of the directory.
     1. This is necessary for the COMPOSE operation to correctly compose multiple diffs without a snapshot present.
-    2. When applying a diff,a directory deletion means to delete the directory if it is empty, not
+    2. When applying a diff, a directory deletion means to delete the directory if it is empty, not
        to recursively delete its contents. This means that applying a snapshot diff to a file system requires that
        the paths being deleted must be sorted so that deeper directories are always processed before their parents.
 6. There is no operation that uploads a hashed manifest. When we perform an upload, we always hash the data on

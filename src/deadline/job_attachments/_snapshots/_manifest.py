@@ -38,21 +38,64 @@ from ..exceptions import ManifestDecodeValidationError
 
 def _normalize_path_in_manifest(path: str) -> str:
     """
-    Normalize path in manifest to POSIX format.
+    Normalize a path for storage in a manifest.
 
-    On Windows, backslashes are converted to forward slashes (they are directory separators).
-    On POSIX, backslashes are preserved (they are valid filename characters).
+    All paths in manifests use a consistent normalized format:
 
-    Also collapses '..' and '.' components using posixpath.normpath.
+    Path Separator:
+        - POSIX forward slash '/' is used as the path separator on all platforms
+        - On Windows, backslashes are converted to forward slashes (directory separators)
+        - On POSIX, backslashes are preserved (valid filename characters)
+
+    Path Components:
+        - '.' and '..' components are collapsed via posixpath.normpath
+        - Trailing slashes are removed (except for root paths)
+
+    Windows Long-Path Prefix:
+        - The '\\\\?\\' prefix is stripped on Windows
+
+    Examples:
+        - 'C:\\Users\\name\\file.txt' -> 'C:/Users/name/file.txt' (Windows)
+        - '\\\\?\\C:\\Users\\name\\file.txt' -> 'C:/Users/name/file.txt' (Windows)
+        - '/home/user/../user/file.txt' -> '/home/user/file.txt' (POSIX)
+        - 'path/to/./file.txt' -> 'path/to/file.txt'
+
+    See docs/design/job_attachments_snapshots_components/snapshot_manifest_classes.md
+    for the complete path normalization specification.
     """
     if os.name == "nt":
+        # Strip Windows long-path prefix if present
+        if path.startswith("\\\\?\\"):
+            path = path[4:]
+        elif path.startswith("//?/"):
+            path = path[4:]
         path = path.replace("\\", "/")
     normalized = posixpath.normpath(path)
     return normalized
 
 
 def _is_absolute_path(path: str) -> bool:
-    """Check if a path string represents an absolute path."""
+    """
+    Check if a path string represents an absolute path.
+
+    A path is considered absolute if:
+        - It starts with '/' (POSIX absolute or Windows UNC path)
+        - On Windows: it starts with a drive letter followed by ':' (e.g., 'C:', 'C:/')
+
+    Examples of absolute paths:
+        - '/home/user/file.txt' (POSIX)
+        - 'C:/Users/name/file.txt' (Windows drive)
+        - 'C:' (Windows drive root)
+        - '//server/share/file.txt' (Windows UNC)
+
+    Examples of relative paths:
+        - 'project/file.txt'
+        - './file.txt'
+        - '../parent/file.txt'
+
+    See docs/design/job_attachments_snapshots_components/snapshot_manifest_classes.md
+    for the complete path normalization specification.
+    """
     # The "/" check catches both POSIX and Windows UNC paths,
     # and the drive-letter check is Windows-specific.
     # On Windows, "C:" alone (drive letter without path) is also absolute.

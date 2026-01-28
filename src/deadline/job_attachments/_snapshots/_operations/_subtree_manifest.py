@@ -30,7 +30,6 @@ All composable operations use unified manifest classes from manifest.py internal
 from __future__ import annotations
 
 import logging
-import os
 import posixpath
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -44,6 +43,7 @@ from .._manifest import (
     RelManifest,
     SymlinkPolicy,
     _is_absolute_path,
+    _normalize_path_in_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ def subtree_manifest(
         )
 
     # Normalize subtree path
-    subtree = _normalize_subtree_path(subtree)
+    subtree = _normalize_path_in_manifest(subtree)
 
     # Special case: "" or "." means identity subtree (apply symlink_policy only)
     if not subtree or subtree == ".":
@@ -111,23 +111,6 @@ def subtree_manifest(
         subtree=subtree,
         symlink_policy=symlink_policy,
     )
-
-
-def _normalize_subtree_path(subtree: str) -> str:
-    """Normalize the subtree path, removing trailing slashes and normalizing separators.
-
-    On Windows, backslashes are converted to forward slashes (they are directory separators).
-    On POSIX, backslashes are preserved (they are valid filename characters).
-    """
-    # Only convert backslashes to forward slashes on Windows
-    if os.name == "nt":
-        subtree = subtree.replace("\\", "/")
-    # Normalize path components (collapse .., ., etc.)
-    subtree = posixpath.normpath(subtree)
-    # Remove trailing slash, but preserve root "/"
-    if subtree != "/":
-        subtree = subtree.rstrip("/")
-    return subtree
 
 
 def _validate_path_style_consistency(manifest: AnyManifest, subtree: str) -> None:

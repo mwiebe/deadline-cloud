@@ -25,10 +25,12 @@ from deadline.job_attachments._snapshots._operations._partition_manifest import 
     _is_absolute_path,
     _is_path_under_root,
     _longest_common_path_prefix,
-    _normalize_path,
     _to_native_separators,
     _collect_all_dirs,
     _get_windows_drive_root,
+)
+from deadline.job_attachments._snapshots._manifest import (
+    _normalize_path_in_manifest,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
@@ -44,16 +46,16 @@ class TestHelperFunctions:
 
     def test_normalize_path_removes_trailing_slash(self) -> None:
         """Trailing slashes are removed."""
-        assert _normalize_path("assets/textures/") == "assets/textures"
+        assert _normalize_path_in_manifest("assets/textures/") == "assets/textures"
 
     def test_normalize_path_collapses_dots(self) -> None:
         """Dot components are collapsed."""
-        assert _normalize_path("assets/./textures") == "assets/textures"
-        assert _normalize_path("assets/../assets/textures") == "assets/textures"
+        assert _normalize_path_in_manifest("assets/./textures") == "assets/textures"
+        assert _normalize_path_in_manifest("assets/../assets/textures") == "assets/textures"
 
     def test_normalize_path_empty_becomes_dot(self) -> None:
         """Empty path becomes '.'."""
-        assert _normalize_path("") == "."
+        assert _normalize_path_in_manifest("") == "."
 
     def test_to_native_separators_windows(self) -> None:
         """On Windows, forward slashes are converted to backslashes."""

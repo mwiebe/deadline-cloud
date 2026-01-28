@@ -45,6 +45,7 @@ from .._manifest import (
     RelManifest,
     SymlinkPolicy,
     _is_absolute_path,
+    _normalize_path_in_manifest,
 )
 from ._subtree_manifest import subtree_manifest
 
@@ -93,12 +94,12 @@ def partition_manifest(
     # Normalize roots
     if roots is None:
         roots = []
-    roots = [_normalize_path(r) for r in roots]
+    roots = [_normalize_path_in_manifest(r) for r in roots]
 
     # Normalize referenced_paths
     if referenced_paths is None:
         referenced_paths = []
-    referenced_paths = [_normalize_path(p) for p in referenced_paths]
+    referenced_paths = [_normalize_path_in_manifest(p) for p in referenced_paths]
 
     # Validate no root is a subpath of another
     _validate_roots_no_overlap(roots)
@@ -175,25 +176,6 @@ def partition_manifest(
             logger.debug("Partitioned root '%s' with %d entries", output_root, len(subtree.files))
 
     return result
-
-
-def _normalize_path(path: str) -> str:
-    """Normalize a path, removing trailing slashes and normalizing separators.
-
-    On Windows, backslashes are converted to forward slashes (they are directory separators).
-    On POSIX, backslashes are preserved (they are valid filename characters).
-    """
-    # Only convert backslashes to forward slashes on Windows
-    if os.name == "nt":
-        path = path.replace("\\", "/")
-    # Normalize path components (collapse .., ., etc.)
-    path = posixpath.normpath(path)
-    # Remove trailing slash (but preserve root slash for absolute paths)
-    path = path.rstrip("/")
-    # Handle edge case where path becomes empty
-    if not path:
-        path = "."
-    return path
 
 
 def _to_native_separators(path: str) -> str:

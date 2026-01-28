@@ -23,7 +23,7 @@ def join_manifest(
 
 **Conceptual Model:**
 
-JOIN is the inverse of SUBTREE. While SUBTREE strips a prefix from paths (re-rooting to a subdirectory), JOIN adds a prefix to paths (re-rooting to a parent directory).
+JOIN is the inverse of SUBTREE. While SUBTREE removes a prefix from paths (re-rooting to a subdirectory), JOIN adds a prefix to paths (re-rooting to a parent directory).
 
 ```
 Original manifest (relative paths):
@@ -111,7 +111,7 @@ JOIN and SUBTREE are inverse operations:
 
 | Operation | Input | Output | Path Transformation |
 |-----------|-------|--------|---------------------|
-| SUBTREE | Manifest + subtree path | Manifest | Strips prefix from paths |
+| SUBTREE | Manifest + subtree path | Manifest | Removes prefix from paths |
 | JOIN | Manifest + prefix | Manifest | Adds prefix to paths |
 
 ```python

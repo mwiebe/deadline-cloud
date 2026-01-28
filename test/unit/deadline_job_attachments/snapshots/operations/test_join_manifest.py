@@ -21,10 +21,12 @@ from deadline.job_attachments._snapshots import (
     join_manifest,
 )
 from deadline.job_attachments._snapshots._operations._join_manifest import (
-    _normalize_prefix,
     _join_path,
     _is_absolute_path,
     _get_output_manifest_type,
+)
+from deadline.job_attachments._snapshots._manifest import (
+    _normalize_path_in_manifest,
 )
 from deadline.job_attachments.asset_manifests.hash_algorithms import HashAlgorithm
 from deadline.job_attachments._snapshots import (
@@ -40,14 +42,14 @@ from deadline.job_attachments._snapshots import (
 class TestHelperFunctions:
     """Tests for helper functions."""
 
-    def test_normalize_prefix_removes_trailing_slash(self) -> None:
+    def test_normalize_path_removes_trailing_slash(self) -> None:
         """Trailing slashes are removed."""
-        assert _normalize_prefix("assets/textures/") == "assets/textures"
-        assert _normalize_prefix("/projects/scene/") == "/projects/scene"
+        assert _normalize_path_in_manifest("assets/textures/") == "assets/textures"
+        assert _normalize_path_in_manifest("/projects/scene/") == "/projects/scene"
 
-    def test_normalize_prefix_preserves_leading_slash(self) -> None:
+    def test_normalize_path_preserves_leading_slash(self) -> None:
         """Leading slash for absolute paths is preserved."""
-        assert _normalize_prefix("/projects/scene") == "/projects/scene"
+        assert _normalize_path_in_manifest("/projects/scene") == "/projects/scene"
 
     def test_join_path_relative(self) -> None:
         """Relative paths are joined correctly."""
@@ -443,14 +445,14 @@ class TestJoinManifestWindowsPaths:
 class TestPathSeparatorHandling:
     """Tests for path separator handling across platforms."""
 
-    def test_normalize_prefix_converts_backslashes_on_windows(self) -> None:
+    def test_normalize_path_converts_backslashes_on_windows(self) -> None:
         """On Windows, backslashes in prefix are converted to forward slashes."""
         with patch("os.name", "nt"):
-            result = _normalize_prefix("C:\\projects\\scene")
+            result = _normalize_path_in_manifest("C:\\projects\\scene")
             assert result == "C:/projects/scene"
 
-    def test_normalize_prefix_preserves_backslashes_on_posix(self) -> None:
+    def test_normalize_path_preserves_backslashes_on_posix(self) -> None:
         """On POSIX, backslashes in prefix are preserved as valid filename characters."""
         with patch("os.name", "posix"):
-            result = _normalize_prefix("dir\\name")
+            result = _normalize_path_in_manifest("dir\\name")
             assert result == "dir\\name"

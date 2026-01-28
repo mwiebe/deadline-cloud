@@ -23,7 +23,6 @@ deletions, and other v2025-only features.
 from __future__ import annotations
 
 import logging
-import os
 import posixpath
 from typing import List
 
@@ -37,6 +36,7 @@ from .._manifest import (
     SnapshotDiff,
     RelManifest,
     _is_absolute_path,
+    _normalize_path_in_manifest,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,10 +62,11 @@ def join_manifest(
     Raises:
         ValueError: If prefix is empty
     """
-    # Normalize prefix path
-    prefix = _normalize_prefix(prefix)
+    # Validate prefix before normalization (normpath converts "" to ".")
     if not prefix:
         raise ValueError("prefix cannot be empty")
+    # Normalize prefix path
+    prefix = _normalize_path_in_manifest(prefix)
 
     result_paths: List[ManifestFilePath] = []
     result_dirs: List[ManifestDirectoryPath] = []
@@ -120,20 +121,6 @@ def join_manifest(
         total_size=manifest.totalSize,
         file_chunk_size_bytes=manifest.fileChunkSizeBytes,
     )
-
-
-def _normalize_prefix(prefix: str) -> str:
-    """Normalize the prefix path, removing trailing slashes and normalizing separators.
-
-    On Windows, backslashes are converted to forward slashes (they are directory separators).
-    On POSIX, backslashes are preserved (they are valid filename characters).
-    """
-    # Only convert backslashes to forward slashes on Windows
-    if os.name == "nt":
-        prefix = prefix.replace("\\", "/")
-    # Remove trailing slash (but preserve leading slash for absolute paths)
-    prefix = prefix.rstrip("/")
-    return prefix
 
 
 def _get_output_manifest_type(

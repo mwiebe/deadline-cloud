@@ -361,24 +361,27 @@ class TestWindowsLongPathPrefix:
 
     def test_longpath_prefix_removal_mocked(self, tmp_path: Path) -> None:
         """Test that Windows long path prefix is handled (mocked for cross-platform)."""
-        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot_symlinks import (
-            _remove_longpath_prefix,
+        from deadline.job_attachments._snapshots._manifest import (
+            _normalize_path_in_manifest,
         )
 
         # Test with mock Windows path
         with patch("os.name", "nt"):
-            # Path with long path prefix
-            long_path = Path("\\\\?\\C:\\Users\\test\\file.txt")
-            result = _remove_longpath_prefix(long_path)
-            # The prefix should be removed
-            assert not str(result).startswith("\\\\?\\")
+            # Path with long path prefix (backslash form)
+            result = _normalize_path_in_manifest("\\\\?\\C:\\Users\\test\\file.txt")
+            # The prefix should be removed and backslashes converted
+            assert result == "C:/Users/test/file.txt"
+
+            # Path with long path prefix (forward slash form)
+            result = _normalize_path_in_manifest("//?/C:/Users/test/file.txt")
+            assert result == "C:/Users/test/file.txt"
 
     def test_normal_path_unchanged(self, tmp_path: Path) -> None:
-        """Normal paths are unchanged by _remove_longpath_prefix."""
-        from deadline.job_attachments._snapshots._operations._collect_abs_snapshot_symlinks import (
-            _remove_longpath_prefix,
+        """Normal paths are unchanged by _normalize_path_in_manifest."""
+        from deadline.job_attachments._snapshots._manifest import (
+            _normalize_path_in_manifest,
         )
 
-        normal_path = tmp_path / "file.txt"
-        result = _remove_longpath_prefix(normal_path)
+        normal_path = str(tmp_path / "file.txt")
+        result = _normalize_path_in_manifest(normal_path)
         assert result == normal_path
