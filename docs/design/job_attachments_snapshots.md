@@ -11,6 +11,24 @@ but without the actual file content. It records metadata for each file (path, si
 in newer formats, directories and symlinks. Operations on these manifests provide efficient change detection, uploads,
 downloads, and content-addressable storage workflows.
 
+## Glossary
+
+| Term | Definition |
+|------|------------|
+| **Manifest** | A data structure describing a set of files, directories, and symlinks with their metadata. The general term encompassing both snapshots and diffs. |
+| **Snapshot** | A manifest representing a complete point-in-time capture of a directory tree. Contains all entries that exist at that moment. |
+| **Diff** | A manifest representing changes between two snapshots. Contains additions, modifications, and deletions (v2025+ format only). |
+| **Absolute manifest** | A manifest where all paths are absolute filesystem paths (e.g., `/home/user/project/file.txt`). Required for filesystem operations. |
+| **Relative manifest** | A manifest where all paths are relative to an unspecified root (e.g., `project/file.txt`). Portable across systems. |
+| **File chunk** | A portion of a large file when file chunking is enabled. Large files are split into file chunks for parallel processing and storage. |
+| **File chunking** | The process of splitting large files into smaller file chunks for hashing and storage. Controlled by `fileChunkSizeBytes`. |
+| **Data cache** | Content-addressable storage where file data is stored using content hashes as keys. Can be S3 (`S3DataCache`) or local filesystem (`FileSystemDataCache`). |
+| **Hash cache** | A local SQLite database that caches file hashes keyed by path, mtime, and byte range to avoid re-hashing unchanged files. |
+| **S3 check cache** | A local SQLite database tracking which hashes are known to exist in S3, avoiding redundant HeadObject calls. |
+| **Content-addressable storage** | Storage where data is keyed by its content hash, enabling deduplication and integrity verification. |
+| **Escaping symlink** | A symlink whose target is outside the manifest's root directory or collected paths. |
+| **Collapsing** | Replacing a symlink with the actual content at its target (file data or directory tree). |
+
 ## Quick Start
 
 The most common workflow is collecting files, hashing, and uploading to S3:
