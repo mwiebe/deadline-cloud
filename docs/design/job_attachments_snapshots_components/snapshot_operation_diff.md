@@ -1,6 +1,6 @@
 # DIFF Operation: `diff_snapshots()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · DIFF Operation
 
 
 **Location:** `_diff_snapshots.py`

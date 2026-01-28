@@ -1,6 +1,6 @@
 # SUBTREE Operation: `subtree_manifest()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · SUBTREE Operation
 
 
 **Location:** `_subtree_manifest.py`

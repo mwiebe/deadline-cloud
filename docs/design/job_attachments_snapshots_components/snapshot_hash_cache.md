@@ -1,6 +1,6 @@
 # Hash Cache
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · Hash Cache
 
 The hash cache is a local SQLite database that stores file hashes keyed by path, modification time, and byte range. It enables operations to skip re-hashing or re-downloading unchanged files, significantly improving performance for repeated operations on the same files.
 

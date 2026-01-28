@@ -1,6 +1,6 @@
 # Symlink Handling
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · Symlink Handling
 
 This document describes how symlinks are represented in manifests and how the `SymlinkPolicy` enum controls symlink handling across operations.
 

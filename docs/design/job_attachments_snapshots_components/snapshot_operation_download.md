@@ -1,6 +1,6 @@
 # DOWNLOAD Operation: `download_abs_manifest()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · DOWNLOAD Operation
 
 **Location:** `_download_abs_manifest.py`
 

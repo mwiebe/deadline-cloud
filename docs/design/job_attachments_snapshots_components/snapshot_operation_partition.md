@@ -1,6 +1,6 @@
 # PARTITION Operation: `partition_manifest()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · PARTITION Operation
 
 
 **Location:** `_partition_manifest.py`

@@ -1,6 +1,6 @@
 # Manifest Classes
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · Manifest Classes
 
 **Location:** `_manifest.py`
 

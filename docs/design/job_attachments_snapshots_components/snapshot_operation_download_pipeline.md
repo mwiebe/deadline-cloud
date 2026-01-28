@@ -1,6 +1,6 @@
 # DOWNLOAD Pipeline Architecture
 
-*← [Back to DOWNLOAD Operation](snapshot_operation_download.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · [DOWNLOAD Operation](snapshot_operation_download.md) · Pipeline Architecture
 
 This document describes the internal pipeline architecture, threading model, atomicity guarantees, and S3-specific behavior of the DOWNLOAD operation.
 

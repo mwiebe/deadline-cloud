@@ -1,6 +1,6 @@
 # COLLECT Operation: `collect_abs_snapshot()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · COLLECT Operation
 
 
 **Location:** `_collect_abs_snapshot.py`

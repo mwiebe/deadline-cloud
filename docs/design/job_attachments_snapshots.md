@@ -294,6 +294,16 @@ The detailed documentation for each operation is in these sub-component document
 | 9. PARTITION | Splits a manifest into multiple (root, manifest) pairs | [snapshot_operation_partition.md](job_attachments_snapshots_components/snapshot_operation_partition.md) |
 | 10. JOIN | Prepends a prefix to all paths | [snapshot_operation_join.md](job_attachments_snapshots_components/snapshot_operation_join.md) |
 
+### Implementation Details
+
+For HASH_UPLOAD and DOWNLOAD, additional documents cover internal architecture:
+
+| Document | Description |
+|----------|-------------|
+| [snapshot_operation_hash_upload_pipeline.md](job_attachments_snapshots_components/snapshot_operation_hash_upload_pipeline.md) | Threading model, memory management, deduplication |
+| [snapshot_operation_hash_upload_s3.md](job_attachments_snapshots_components/snapshot_operation_hash_upload_s3.md) | S3 multipart uploads, cache validation, streaming files |
+| [snapshot_operation_download_pipeline.md](job_attachments_snapshots_components/snapshot_operation_download_pipeline.md) | Threading, atomicity, chunked files, S3 multi-part downloads |
+
 ## Module Organization
 
 The composable operations are implemented in separate modules under `src/deadline/job_attachments/_snapshots/_operations/`:

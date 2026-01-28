@@ -1,6 +1,6 @@
 # Content-Addressed Data Cache Classes
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · Data Cache Classes
 
 **Location:** `_content_addressed_data_cache.py`
 

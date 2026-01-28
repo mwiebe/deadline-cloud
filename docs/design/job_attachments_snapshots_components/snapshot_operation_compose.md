@@ -1,6 +1,6 @@
 # COMPOSE Operation: `compose_manifests()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · COMPOSE Operation
 
 
 **Location:** `_compose_manifest.py`

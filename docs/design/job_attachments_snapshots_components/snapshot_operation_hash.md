@@ -1,6 +1,6 @@
 # HASH Operation: `hash_abs_manifest()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · HASH Operation
 
 
 **Location:** `_hash_abs_manifest.py`

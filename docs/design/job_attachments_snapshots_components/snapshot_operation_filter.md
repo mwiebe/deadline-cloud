@@ -1,6 +1,6 @@
 # FILTER Operation: `filter_manifest()`
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · FILTER Operation
 
 
 **Location:** `_filter_manifest.py`

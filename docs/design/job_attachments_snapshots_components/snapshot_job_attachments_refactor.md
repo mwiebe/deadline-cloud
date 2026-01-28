@@ -1,6 +1,6 @@
 # Refactoring the Existing Job Attachments Implementation
 
-*← [Back to Job Attachments Snapshots](../job_attachments_snapshots.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · Refactoring Guide
 
 This document describes how to refactor the existing job attachments implementation to use the new snapshots library.
 

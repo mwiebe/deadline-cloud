@@ -1,6 +1,6 @@
 # HASH_UPLOAD Pipeline Architecture
 
-*← [Back to HASH_UPLOAD Operation](snapshot_operation_hash_upload.md)*
+[Job Attachments Snapshots](../job_attachments_snapshots.md) · [HASH_UPLOAD Operation](snapshot_operation_hash_upload.md) · Pipeline Architecture
 
 This document describes the internal pipeline architecture, threading model, and memory management of the HASH_UPLOAD operation.
 
