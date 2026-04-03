@@ -780,10 +780,10 @@ def test_hash_upload_filesystem(
     # Count files in data cache
     cache_files = list(data_cache_root.glob("*"))
     print_fn(
-        f"  Files processed: {stats.processed_files} ({stats.processed_bytes / (1024 * 1024):.2f} MB)"
+        f"  Files processed: {stats.uploaded_file_chunks} ({stats.uploaded_bytes / (1024 * 1024):.2f} MB)"
     )
     print_fn(
-        f"  Files skipped (already in cache): {stats.skipped_files} ({stats.skipped_bytes / (1024 * 1024):.2f} MB)"
+        f"  Files skipped (already in cache): {stats.upload_skipped_file_chunks} ({stats.upload_skipped_bytes / (1024 * 1024):.2f} MB)"
     )
     print_fn(f"  Objects in data cache: {len(cache_files)}")
     print_fn(f"  Total size: {total_bytes / (1024 * 1024):.2f} MB")
@@ -870,10 +870,10 @@ def test_hash_upload_s3(
     throughput = (total_bytes / (1024 * 1024)) / duration if duration > 0 else 0
 
     print_fn(
-        f"  Files processed: {stats.processed_files} ({stats.processed_bytes / (1024 * 1024):.2f} MB)"
+        f"  Files processed: {stats.uploaded_file_chunks} ({stats.uploaded_bytes / (1024 * 1024):.2f} MB)"
     )
     print_fn(
-        f"  Files skipped (already in cache): {stats.skipped_files} ({stats.skipped_bytes / (1024 * 1024):.2f} MB)"
+        f"  Files skipped (already in cache): {stats.upload_skipped_file_chunks} ({stats.upload_skipped_bytes / (1024 * 1024):.2f} MB)"
     )
     print_fn(f"  Total size: {total_bytes / (1024 * 1024):.2f} MB")
     print_fn(f"  Duration: {duration:.2f} seconds")
@@ -944,11 +944,11 @@ def test_download_filesystem(
         duration = time.perf_counter() - start
 
     stats = result.statistics
-    total_bytes = stats.processed_bytes
+    total_bytes = stats.downloaded_bytes
     throughput = (total_bytes / (1024 * 1024)) / duration if duration > 0 else 0
 
-    print_fn(f"  Files downloaded: {stats.processed_files}")
-    print_fn(f"  Files skipped: {stats.skipped_files}")
+    print_fn(f"  Files downloaded: {stats.downloaded_file_chunks}")
+    print_fn(f"  Files skipped: {stats.skipped_file_chunks}")
     print_fn(f"  Total bytes: {total_bytes / (1024 * 1024):.2f} MB")
     print_fn(f"  Duration: {duration:.2f} seconds")
     print_fn(f"  Throughput: {throughput:.2f} MB/s")
@@ -956,7 +956,7 @@ def test_download_filesystem(
     return TimingResult(
         operation="DOWNLOAD (filesystem)",
         duration_seconds=duration,
-        files_processed=stats.processed_files,
+        files_processed=stats.downloaded_file_chunks,
         bytes_processed=total_bytes,
         throughput_mb_s=throughput,
     )
@@ -1057,11 +1057,11 @@ def test_download_s3(
         heartbeat_thread.join(timeout=1.0)
 
     stats = result.statistics
-    total_bytes = stats.processed_bytes
+    total_bytes = stats.downloaded_bytes
     throughput = (total_bytes / (1024 * 1024)) / duration if duration > 0 else 0
 
-    print_fn(f"  Files downloaded: {stats.processed_files}")
-    print_fn(f"  Files skipped: {stats.skipped_files}")
+    print_fn(f"  Files downloaded: {stats.downloaded_file_chunks}")
+    print_fn(f"  Files skipped: {stats.skipped_file_chunks}")
     print_fn(f"  Total bytes: {total_bytes / (1024 * 1024):.2f} MB")
     print_fn(f"  Duration: {duration:.2f} seconds")
     print_fn(f"  Throughput: {throughput:.2f} MB/s")
@@ -1069,7 +1069,7 @@ def test_download_s3(
     return TimingResult(
         operation="DOWNLOAD (S3)",
         duration_seconds=duration,
-        files_processed=stats.processed_files,
+        files_processed=stats.downloaded_file_chunks,
         bytes_processed=total_bytes,
         throughput_mb_s=throughput,
     )
