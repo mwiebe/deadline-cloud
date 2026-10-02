@@ -29,10 +29,13 @@ from ..job_bundle.loader import (
     read_yaml_or_json_object,
     validate_directory_symlink_containment,
 )
+from .._path_utils import is_uri
 from ..job_bundle.saver import save_yaml_or_json_to_file
 from ..job_bundle._repository import S3BundleRepository as _S3BundleRepository
 from ..job_bundle.parameters import (
     JobParameter,
+    _has_expr_extension,
+    _path_list_with_absolute_items,
     apply_job_parameters,
     merge_queue_job_parameters,
     read_job_bundle_parameters,
@@ -327,6 +330,7 @@ def show_job_bundle_submitter(
             job_bundle_dir,
             parameters,
             AssetReferences(),
+            allow_uri_path_values=_has_expr_extension(template),
         )
 
         save_yaml_or_json_to_file(
@@ -418,9 +422,15 @@ def show_job_bundle_submitter(
         # e.g. from the CLI when this is called by the 'deadline bundle gui-submit' command.
         if parameter["name"] in job_parameters_dict:
             value = job_parameters_dict.pop(parameter["name"])["value"]
-            # Convert any path parameters to absolute
+            # Convert any path parameters to absolute. With the EXPR extension, URIs are kept.
+            allow_uri_path_values = _has_expr_extension(template)
             if parameter["type"] == "PATH":
-                value = os.path.abspath(value)
+                if not (allow_uri_path_values and is_uri(value)):
+                    value = os.path.abspath(value)
+            elif parameter["type"] == "LIST[PATH]":
+                value = _path_list_with_absolute_items(
+                    parameter, value, allow_uri_path_values=allow_uri_path_values
+                )
             # Validate the value against the parameter definition and ensure it has the correct type
             try:
                 value = validate_job_parameter_value(parameter, value)
