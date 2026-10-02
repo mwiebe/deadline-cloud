@@ -62,7 +62,8 @@ def valid_min_length() -> int:
 
 @pytest.fixture
 def valid_max_length() -> int:
-    return 2
+    # Long enough for the PATH default, which is checked against minLength and maxLength.
+    return 16
 
 
 @pytest.fixture(

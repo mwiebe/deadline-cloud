@@ -248,13 +248,13 @@ def test_validate_job_parameter_list_path_invalid_path_fields(
         pytest.param(
             {"minLength": 5, "maxLength": 4},
             ValueError,
-            '"item" -> "minLength" 5 greater than the maximum item length of 4',
+            '"item" -> "minLength" 5 greater than the maximum length of 4',
             id="item-min-over-max",
         ),
         pytest.param(
             {"minLength": 1025},
             ValueError,
-            "greater than the maximum item length of 1024",
+            "greater than the maximum length of 1024",
             id="item-min-over-cap",
         ),
     ],
@@ -444,19 +444,22 @@ def test_read_job_bundle_parameters_list_path_value_is_kept(
     assert param["value"] == ["/abs/x.blend", "y"]
 
 
-def test_read_job_bundle_parameters_list_path_allowed_values_default_kept(
+def test_read_job_bundle_parameters_list_path_allowed_values_checked_after_join(
     fresh_deadline_config, temp_job_bundle_dir
 ) -> None:
-    """Like a PATH with allowedValues, items constrained by item allowedValues are not
-    resolved, since the resolved path would not be an allowed value."""
+    """As OpenJD specifies, a default item constrained by item allowedValues is still joined
+    with the job bundle directory, and the joined path must be an allowed value. A relative
+    allowed value can't match it, so the bundle is rejected when it is loaded."""
     with open(os.path.join(temp_job_bundle_dir, "template.yaml"), "w", encoding="utf8") as f:
         f.write(
             LIST_PATH_TEMPLATE.replace(
                 "default: DEFAULT", 'default: ["a"]\n  item:\n    allowedValues: ["a", "b"]'
             )
         )
-    (param,) = read_job_bundle_parameters(temp_job_bundle_dir)
-    assert "value" not in param
+    with pytest.raises(
+        DeadlineOperationError, match="(?s)default for parameter 'Scenes'.*is not an allowed value"
+    ):
+        read_job_bundle_parameters(temp_job_bundle_dir)
 
 
 @pytest.mark.parametrize(
@@ -624,14 +627,26 @@ def test_apply_job_parameters_list_path_cli_items_made_absolute(temp_cwd) -> Non
     assert asset_references == AssetReferences(input_filenames={rel, absolute})
 
 
-def test_apply_job_parameters_list_path_allowed_values_not_made_absolute() -> None:
+def test_apply_job_parameters_list_path_allowed_values_checked_after_join(temp_cwd) -> None:
+    """As OpenJD specifies, an item constrained by item allowedValues is still joined with the
+    working directory, and the joined path is what allowedValues must contain."""
+    allowed = os.path.join(os.getcwd(), "b")
     param: Any = {
         "name": "Paths",
         "type": "LIST[PATH]",
-        "item": {"allowedValues": ["a", "b"]},
+        "item": {"allowedValues": ["b", allowed]},
     }
     apply_job_parameters([{"name": "Paths", "value": ["b"]}], "bundle", [param], AssetReferences())
-    assert param["value"] == ["b"]
+    assert param["value"] == [allowed]
+    _, job_params = submission.split_parameter_args([param], "bundle")
+    assert job_params["Paths"] == {"pathList": [allowed]}
+
+    relative_only: Any = {"name": "Paths", "type": "LIST[PATH]", "item": {"allowedValues": ["b"]}}
+    apply_job_parameters(
+        [{"name": "Paths", "value": ["b"]}], "bundle", [relative_only], AssetReferences()
+    )
+    with pytest.raises(DeadlineOperationError, match="is not an allowed value"):
+        submission.split_parameter_args([relative_only], "bundle")
 
 
 def test_apply_job_parameters_list_path_invalid_cli_value_unchanged() -> None:

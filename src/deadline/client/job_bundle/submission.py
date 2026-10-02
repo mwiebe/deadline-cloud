@@ -107,6 +107,7 @@ class AssetReferences:
 # converted before submission. Other types are sent as a string in their lower-cased type name.
 _VALIDATED_PARAMETER_WIRE_MEMBERS = {
     "BOOL": "bool",
+    "PATH": "path",
     "RANGE_EXPR": "rangeExpr",
     "LIST[STRING]": "stringList",
     "LIST[PATH]": "pathList",

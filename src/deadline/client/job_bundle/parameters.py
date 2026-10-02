@@ -422,6 +422,22 @@ def validate_job_parameter(
         )
 
     # Checked last so the list and item constraints it applies are already validated.
+    if input.get("type") == "PATH":
+        # A PATH is constrained exactly as one item of a LIST[PATH] is.
+        _validate_string_constraints(input, parameter_name=name)
+        if "default" in input:
+            path_constraints = {
+                field: input[field]
+                for field in ("allowedValues", "minLength", "maxLength")
+                if field in input
+            }
+            try:
+                validate_job_parameter_value(
+                    cast(JobParameter, {"name": name, "type": "PATH", **path_constraints}),
+                    input["default"],
+                )
+            except (ValueError, TypeError) as e:
+                raise type(e)(f'In "default": {e}') from e
     if input.get("type") in _LIST_TYPES:
         list_type = input["type"]
         _validate_list_length_range(input, parameter_name=name)
@@ -455,49 +471,57 @@ def _validate_list_string_item_constraints(
             raise ValueError(
                 f'Job parameter "{parameter_name}" has "item" -> "{field}" but type "{list_type}" only supports ({quoted})'
             )
-    if "allowedValues" in item:
-        allowed_values = item["allowedValues"]
+    _validate_string_constraints(item, parameter_name=parameter_name, field_prefix='"item" -> ')
+
+
+def _validate_string_constraints(
+    constraints: dict, *, parameter_name: str, field_prefix: str = ""
+) -> None:
+    """Validates the allowedValues, minLength and maxLength that constrain one string: a PATH
+    value, or with ``field_prefix='"item" -> '`` each item of a LIST[STRING] or LIST[PATH]."""
+    if "allowedValues" in constraints:
+        allowed_values = constraints["allowedValues"]
         if not isinstance(allowed_values, list):
             raise TypeError(
-                f'Job parameter "{parameter_name}" got {type(allowed_values).__name__} for "item" -> "allowedValues" but expected list'
+                f'Job parameter "{parameter_name}" got {type(allowed_values).__name__} for {field_prefix}"allowedValues" but expected list'
             )
         if not allowed_values:
             raise ValueError(
-                f'Job parameter "{parameter_name}" has an empty "item" -> "allowedValues" list'
+                f'Job parameter "{parameter_name}" has an empty {field_prefix}"allowedValues" list'
             )
         for i, allowed_value in enumerate(allowed_values):
             if not isinstance(allowed_value, str):
                 raise TypeError(
-                    f'Job parameter "{parameter_name}" got {type(allowed_value).__name__} for "item" -> "allowedValues" [{i}] but expected str'
+                    f'Job parameter "{parameter_name}" got {type(allowed_value).__name__} for {field_prefix}"allowedValues" [{i}] but expected str'
                 )
     for field in ("minLength", "maxLength"):
-        if field in item:
-            length = item[field]
+        if field in constraints:
+            length = constraints[field]
             if type(length) is not int:  # noqa: E721
                 raise TypeError(
-                    f'Job parameter "{parameter_name}" got {type(length).__name__} for "item" -> "{field}" but expected int'
+                    f'Job parameter "{parameter_name}" got {type(length).__name__} for {field_prefix}"{field}" but expected int'
                 )
             if length < 0:
                 raise ValueError(
-                    f'Job parameter "{parameter_name}" got {length} for "item" -> "{field}" but the value must be non-negative'
+                    f'Job parameter "{parameter_name}" got {length} for {field_prefix}"{field}" but the value must be non-negative'
                 )
 
-    # Reject constraints no item could satisfy, so the author learns at bundle load rather
+    # Reject constraints no value could satisfy, so the author learns at bundle load rather
     # than from a GUI that can never be submitted.
-    item_min = item.get("minLength", 0)
-    item_max = min(
-        item.get("maxLength", _MAX_STRING_LIST_ITEM_LENGTH), _MAX_STRING_LIST_ITEM_LENGTH
+    min_length = constraints.get("minLength", 0)
+    max_length = min(
+        constraints.get("maxLength", _MAX_STRING_LIST_ITEM_LENGTH), _MAX_STRING_LIST_ITEM_LENGTH
     )
-    if item_min > item_max:
+    if min_length > max_length:
         raise ValueError(
-            f'Job parameter "{parameter_name}" has "item" -> "minLength" {item_min} greater than '
-            f"the maximum item length of {item_max}"
+            f'Job parameter "{parameter_name}" has {field_prefix}"minLength" {min_length} greater than '
+            f"the maximum length of {max_length}"
         )
-    for i, allowed_value in enumerate(item.get("allowedValues", [])):
-        if not item_min <= len(allowed_value) <= item_max:
+    for i, allowed_value in enumerate(constraints.get("allowedValues", [])):
+        if not min_length <= len(allowed_value) <= max_length:
             raise ValueError(
-                f'Job parameter "{parameter_name}" has "item" -> "allowedValues" [{i}] of length '
-                f"{len(allowed_value)}, outside the item length range {item_min}-{item_max}"
+                f'Job parameter "{parameter_name}" has {field_prefix}"allowedValues" [{i}] of length '
+                f"{len(allowed_value)}, outside the length range {min_length}-{max_length}"
             )
 
 
@@ -772,6 +796,12 @@ def validate_job_parameter_value(
         if not isinstance(value, str):
             raise TypeError(
                 f"Job parameter {name!r} has type {param_type} but got value {value!r} of type {type(value)}."
+            )
+        # CreateJob's JobParameter.path holds at most this many characters, as each pathList item does.
+        if param_type == "PATH" and len(value) > _MAX_STRING_LIST_ITEM_LENGTH:
+            shown = value[:40] + "..."
+            raise ValueError(
+                f"Job parameter {name!r} value {shown!r} is longer than the maximum of {_MAX_STRING_LIST_ITEM_LENGTH} characters."
             )
     elif param_type == "BOOL":
         converted = _to_bool(value)
@@ -1181,20 +1211,19 @@ def _absolute_path_value(path: str, *, allow_uri_path_values: bool) -> str:
     a URI such as s3://bucket/key is kept as it is."""
     if not path or (allow_uri_path_values and is_uri(path)):
         return path
-    return os.path.abspath(path)
+    return _lexical_join(os.getcwd(), path)
 
 
 def _path_list_with_absolute_items(
     parameter: JobParameter, value: Any, *, allow_uri_path_values: bool = False
 ) -> Any:
     """Returns a LIST[PATH] value given on the command line as a list, with each relative item
-    made absolute against the current working directory, as a PATH value is. Items are kept
-    as they are when "item" -> "allowedValues" constrains them, empty items stay empty, and
-    with the EXPR extension URI items are kept. A value that is not a list of strings is
-    returned unchanged, for submission to report."""
+    made absolute against the current working directory, as a PATH value is. Empty items stay
+    empty, and with the EXPR extension URI items are kept. A value that is not a list of
+    strings is returned unchanged, for submission to report."""
     items = _parse_path_list(value)
-    if items is None or "allowedValues" in parameter.get("item", {}):
-        return value if items is None else items
+    if items is None:
+        return value
     return [
         _absolute_path_value(item, allow_uri_path_values=allow_uri_path_values) for item in items
     ]
@@ -1211,6 +1240,9 @@ def _add_path_asset_reference(
     parameter's dataFlow and objectType select. With the EXPR extension, a URI is not a
     local path, so job attachments neither upload, download nor map it."""
     data_flow = parameter.get("dataFlow", "NONE")
+    if path == "":
+        # An empty value names no path, so there is nothing to reference or transfer.
+        return
     if allow_uri_path_values and is_uri(path):
         if data_flow != "NONE":
             _logger.info(
@@ -1223,8 +1255,7 @@ def _add_path_asset_reference(
         # This path is referenced, but its contents are not necessarily
         # input or output.
         asset_references.referenced_paths.add(path)
-    elif path != "":
-        # While empty parameters are allowed, we don't want to add them to asset references
+    else:
         object_type = parameter.get("objectType")
 
         if "IN" in data_flow:
@@ -1284,9 +1315,10 @@ def apply_job_parameters(
         # Apply the job_parameters value if available
         parameter_value = param_dict.pop(parameter_name, None)
         if parameter_value is not None:
-            # Make PATH parameter values that are not constrained by allowedValues
-            # absolute by joining with the current working directory
-            if parameter_type == "PATH" and "allowedValues" not in parameter:
+            # Make relative PATH parameter values absolute by joining with the current
+            # working directory. As OpenJD specifies, this applies even when allowedValues
+            # constrains the value, which is checked after the join.
+            if parameter_type == "PATH":
                 if parameter_value == "":
                     continue
                 parameter_value = _absolute_path_value(
@@ -1325,14 +1357,12 @@ def apply_job_parameters(
             # A value that is not a list of paths is reported when the parameters are
             # formatted for CreateJob.
             for item in _parse_path_list(parameter_value) or []:
-                # Unlike a PATH with dataFlow NONE, an empty item is not a referenced path.
-                if item:
-                    _add_path_asset_reference(
-                        asset_references,
-                        parameter,
-                        item,
-                        allow_uri_path_values=allow_uri_path_values,
-                    )
+                _add_path_asset_reference(
+                    asset_references,
+                    parameter,
+                    item,
+                    allow_uri_path_values=allow_uri_path_values,
+                )
 
 
 def _resolve_bundle_path_default(
@@ -1355,7 +1385,16 @@ def _resolve_bundle_path_default(
             f"Job Template for job bundle {bundle_dir}:\n{what} '{default_real_path}' for parameter '{name}' specifies files outside of Job Bundle directory '{bundle_real_path}'.\nPATH values must be relative, and must resolve within the Job Bundle directory."
         )
 
-    return os.path.normpath(os.path.abspath(os.path.join(bundle_dir, default)))
+    return _lexical_join(os.path.abspath(bundle_dir), default)
+
+
+def _lexical_join(base_dir: str, path: str) -> str:
+    """Joins a relative path with an absolute base directory and normalizes the result
+    lexically, as OpenJD specifies for PATH values: "." components are removed and ".."
+    components are applied. Unlike os.path.abspath on Windows, which calls
+    GetFullPathName, this keeps trailing dots and spaces, so a component such as "..." is
+    kept."""
+    return os.path.normpath(os.path.join(base_dir, path))
 
 
 def read_job_bundle_parameters(bundle_dir: str) -> list[JobParameter]:
@@ -1421,11 +1460,14 @@ def read_job_bundle_parameters(bundle_dir: str) -> list[JobParameter]:
                 # values such as "deadline:*"
                 template_parameters[name] = parameter_value
 
-    # Make valueless PATH parameters with 'default' (but not constrained
-    # by allowedValues) absolute by joining with the job bundle directory.
-    # Each item of a LIST[PATH] default is resolved the same way. With the EXPR
-    # extension, a URI default is not a path in the bundle and is kept as it is.
+    # Make valueless PATH parameters with a 'default' absolute by joining with the job bundle
+    # directory, and each item of a LIST[PATH] default the same way. As OpenJD specifies, this
+    # applies even when allowedValues constrains the default, so the joined value is checked
+    # against the constraints here; the default as written is checked by
+    # validate_job_parameter below. With the EXPR extension, a URI default is not a path in the
+    # bundle and is kept as it is.
     allow_uri_path_values = _has_expr_extension(template)
+    joined_defaults: set[str] = set()
 
     def resolve_default(name: str, default: str, item_index: Optional[int] = None) -> str:
         if not default or (allow_uri_path_values and is_uri(default)):
@@ -1435,29 +1477,37 @@ def read_job_bundle_parameters(bundle_dir: str) -> list[JobParameter]:
     for name, parameter in template_parameters.items():
         if "value" in parameter:
             continue
-        if parameter["type"] == "PATH" and "allowedValues" not in parameter:
+        if parameter["type"] == "PATH":
             default = parameter.get("default")
-            if default:
+            if isinstance(default, str) and default:
                 parameter["value"] = resolve_default(name, default)
+                joined_defaults.add(name)
         elif parameter["type"] == "LIST[PATH]":
-            # A malformed item or default is reported by validate_job_parameter below.
-            item = parameter.get("item", {})
+            # A malformed default is reported by validate_job_parameter below.
             default = parameter.get("default")
-            if (
-                isinstance(item, dict)
-                and "allowedValues" not in item
-                and isinstance(default, list)
-                and all(isinstance(value, str) for value in default)
-            ):
+            if isinstance(default, list) and all(isinstance(value, str) for value in default):
                 parameter["value"] = [
                     resolve_default(name, value, index) for index, value in enumerate(default)
                 ]
+                joined_defaults.add(name)
 
     # Rearrange the dict from the template into a list
     parameters = [
         validate_job_parameter({"name": name, **values})
         for name, values in template_parameters.items()
     ]
+
+    for param in parameters:
+        if param["name"] in joined_defaults:
+            try:
+                validate_job_parameter_value(param, param["value"])
+            except (ValueError, TypeError) as e:
+                raise DeadlineOperationError(
+                    f"Job Template for job bundle {bundle_dir}:\nThe default for parameter "
+                    f"'{param['name']}', joined with the Job Bundle directory, is not a valid "
+                    f"value: {e}\nThe constraints of a PATH parameter apply to the joined path, so "
+                    "use allowedValues with absolute paths or URIs, not a relative default."
+                ) from e
 
     # Validate hidden parameters have values
     invalid_params = []

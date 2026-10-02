@@ -413,3 +413,71 @@ def test_gui_submit_uri_parameter_values_are_kept(qtbot, fresh_deadline_config, 
     scene, scenes = captured["initial_job_settings"].parameters
     assert scene["value"] == "s3://bucket/a.blend"
     assert scenes["value"] == ["s3://bucket/b.blend", os.path.abspath("rel.blend")]
+
+
+@pytest.mark.parametrize(
+    ("definition", "cli_value", "expected"),
+    [
+        pytest.param(
+            {"name": "Scene", "type": "PATH", "objectType": "FILE", "default": "bundle.blend"},
+            "",
+            "bundle.blend",
+            id="empty-keeps-bundle-value",
+        ),
+        pytest.param(
+            lambda: {
+                "name": "Scene",
+                "type": "PATH",
+                "allowedValues": ["b.blend", os.path.join(os.getcwd(), "b.blend")],
+            },
+            "b.blend",
+            lambda: os.path.join(os.getcwd(), "b.blend"),
+            id="allowed-values-checked-after-join",
+        ),
+    ],
+)
+def test_gui_submit_path_parameter_handled_like_bundle_submit(
+    qtbot, fresh_deadline_config, tmp_path, temp_cwd, definition, cli_value, expected
+):
+    """A PATH --parameter value is resolved as 'deadline bundle submit' resolves it, and as
+    each LIST[PATH] item is: an empty value keeps the bundle's value, and a relative value
+    is joined with the working directory even when allowedValues constrains it, as OpenJD
+    specifies. Cases that depend on the working directory give their definition and
+    expected value as functions."""
+    definition = definition() if callable(definition) else definition
+    expected = expected() if callable(expected) else expected
+    bundle_dir = _make_bundle(tmp_path)
+    captured = {}
+
+    def fake_dialog(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    bundle_parameter = dict(definition)
+    if "default" in definition:
+        bundle_parameter["value"] = definition["default"]
+    with (
+        patch(f"{MODULE}.validate_directory_symlink_containment"),
+        patch(
+            f"{MODULE}.read_yaml_or_json_object",
+            side_effect=lambda _dir, name, *a, **k: (
+                {"name": "Bundle Job", "steps": []} if name == "template" else None
+            ),
+        ),
+        patch(f"{MODULE}.read_job_bundle_parameters", return_value=[bundle_parameter]),
+        patch(f"{MODULE}.run_pre_gui_hooks", return_value={}),
+        patch(f"{MODULE}.SubmitJobToDeadlineDialog", side_effect=fake_dialog),
+        patch(f"{MODULE}.QApplication"),
+        patch(f"{MODULE}.QMessageBox"),
+        patch(f"{MODULE}._get_setting", side_effect=lambda name, config=None: "false"),
+        patch(f"{MODULE}._config_file") as cfg,
+        patch(f"{MODULE}._validate_and_warn_about_parameters", return_value=True),
+    ):
+        cfg.str2bool.side_effect = lambda v: str(v).lower() == "true"
+        show_job_bundle_submitter(
+            input_job_bundle_dir=bundle_dir,
+            job_parameters=[{"name": definition["name"], "value": cli_value}],
+        )
+
+    (scene,) = captured["initial_job_settings"].parameters
+    assert scene["value"] == expected
